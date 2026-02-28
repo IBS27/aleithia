@@ -12,7 +12,6 @@ from pathlib import Path
 
 import modal
 
-from modal_app.common import neighborhood_to_ca
 from modal_app.volume import app, volume, base_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
 
 ADJACENT_NEIGHBORHOODS = {
@@ -54,7 +53,7 @@ Format your response with clear sections:
 @app.function(
     image=base_image,
     volumes={"/data": volume},
-    secrets=[modal.Secret.from_name("alethia-secrets")],
+    secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=120,
 )
 async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_areas: list[str] | None = None) -> dict:
@@ -62,6 +61,10 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
 
     Gathers data from local volume + Supermemory to build a neighborhood brief.
     """
+    from modal_app.instrumentation import init_tracing, get_tracer
+    init_tracing()
+    tracer = get_tracer("alethia.agents")
+
     if focus_areas is None:
         focus_areas = ["permits", "sentiment", "competition", "safety", "demographics"]
 
@@ -73,106 +76,130 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
         "data_points": 0,
     }
 
-    # Pre-compute community area for matching (handles colloquial names too)
-    nb_community_area = neighborhood_to_ca(neighborhood)
+    span_ctx = tracer.start_as_current_span("neighborhood-intel-agent") if tracer else None
+    span = span_ctx.__enter__() if span_ctx else None
+    try:
+        if span:
+            span.set_attribute("openinference.span.kind", "CHAIN")
+            span.set_attribute("input.value", f"{business_type} in {neighborhood}")
+            span.set_attribute("agent.neighborhood", neighborhood)
+            span.set_attribute("agent.business_type", business_type)
 
-    # Read local volume data
-    for source in ["public_data", "news", "politics", "demographics"]:
-        source_dir = Path(RAW_DATA_PATH) / source
-        if not source_dir.exists():
-            continue
-
-        docs = []
-        for json_file in sorted(source_dir.rglob("*.json"), reverse=True)[:100]:
-            try:
-                doc = json.loads(json_file.read_text())
-                geo = doc.get("geo", {})
-                doc_neighborhood = geo.get("neighborhood", "")
-                doc_ca = geo.get("community_area", "")
-                if doc_neighborhood.lower() == neighborhood.lower():
-                    docs.append(doc)
-                elif nb_community_area and doc_ca == nb_community_area:
-                    docs.append(doc)
-            except Exception:
+        # Read local volume data
+        for source in ["public_data", "news", "politics", "demographics"]:
+            source_dir = Path(RAW_DATA_PATH) / source
+            if not source_dir.exists():
                 continue
 
-        if docs:
-            report["findings"][source] = {
-                "count": len(docs),
-                "samples": [{"title": d.get("title", ""), "content": d.get("content", "")[:200]} for d in docs[:5]],
-            }
-            report["data_points"] += len(docs)
+            docs = []
+            for json_file in sorted(source_dir.rglob("*.json"), reverse=True)[:100]:
+                try:
+                    doc = json.loads(json_file.read_text())
+                    doc_neighborhood = doc.get("geo", {}).get("neighborhood", "")
+                    if doc_neighborhood.lower() == neighborhood.lower():
+                        docs.append(doc)
+                except Exception:
+                    continue
 
-    # Read enriched data (classified)
-    enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
-    if enriched_dir.exists():
-        enriched_docs = []
-        for json_file in sorted(enriched_dir.rglob("*.json"), reverse=True)[:50]:
+            if docs:
+                report["findings"][source] = {
+                    "count": len(docs),
+                    "samples": [{"title": d.get("title", ""), "content": d.get("content", "")[:200]} for d in docs[:5]],
+                }
+                report["data_points"] += len(docs)
+
+        # Read enriched data (classified)
+        enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
+        if enriched_dir.exists():
+            enriched_docs = []
+            for json_file in sorted(enriched_dir.rglob("*.json"), reverse=True)[:50]:
+                try:
+                    doc = json.loads(json_file.read_text())
+                    doc_neighborhood = doc.get("geo", {}).get("neighborhood", "")
+                    if doc_neighborhood.lower() == neighborhood.lower():
+                        enriched_docs.append(doc)
+                except Exception:
+                    continue
+
+            if enriched_docs:
+                # Aggregate sentiment
+                sentiments = [d.get("sentiment", {}).get("label", "neutral") for d in enriched_docs]
+                positive = sentiments.count("positive")
+                negative = sentiments.count("negative")
+                report["findings"]["sentiment"] = {
+                    "positive": positive,
+                    "negative": negative,
+                    "neutral": len(sentiments) - positive - negative,
+                    "ratio": round(positive / max(len(sentiments), 1), 2),
+                }
+
+                # Aggregate classifications
+                all_labels = []
+                for d in enriched_docs:
+                    all_labels.extend(d.get("classification", {}).get("labels", []))
+                label_counts = {}
+                for label in all_labels:
+                    label_counts[label] = label_counts.get(label, 0) + 1
+                report["findings"]["top_categories"] = dict(
+                    sorted(label_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+                )
+
+        # Query Supermemory for additional context
+        api_key = os.environ.get("SUPERMEMORY_API_KEY", "")
+        if api_key:
             try:
-                doc = json.loads(json_file.read_text())
-                geo = doc.get("geo", {})
-                doc_neighborhood = geo.get("neighborhood", "")
-                doc_ca = geo.get("community_area", "")
-                if doc_neighborhood.lower() == neighborhood.lower():
-                    enriched_docs.append(doc)
-                elif nb_community_area and doc_ca == nb_community_area:
-                    enriched_docs.append(doc)
-            except Exception:
-                continue
+                from modal_app.supermemory import SupermemoryClient
+                sm = SupermemoryClient(api_key)
+                results = await sm.search(
+                    query=f"{business_type} in {neighborhood} Chicago permits zoning competition",
+                    container_tags=["chicago_data", f"chicago_news", f"chicago_public_data"],
+                    limit=10,
+                )
+                report["findings"]["supermemory"] = {
+                    "results_count": len(results),
+                    "snippets": [r.get("content", "")[:200] for r in results[:3]],
+                }
+                report["data_points"] += len(results)
+            except Exception as e:
+                report["findings"]["supermemory_error"] = str(e)
 
-        if enriched_docs:
-            # Aggregate sentiment
-            sentiments = [d.get("sentiment", {}).get("label", "neutral") for d in enriched_docs]
-            positive = sentiments.count("positive")
-            negative = sentiments.count("negative")
-            report["findings"]["sentiment"] = {
-                "positive": positive,
-                "negative": negative,
-                "neutral": len(sentiments) - positive - negative,
-                "ratio": round(positive / max(len(sentiments), 1), 2),
-            }
-
-            # Aggregate classifications
-            all_labels = []
-            for d in enriched_docs:
-                all_labels.extend(d.get("classification", {}).get("labels", []))
-            label_counts = {}
-            for label in all_labels:
-                label_counts[label] = label_counts.get(label, 0) + 1
-            report["findings"]["top_categories"] = dict(
-                sorted(label_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-            )
-
-    # Query Supermemory for additional context
-    api_key = os.environ.get("SUPERMEMORY_API_KEY", "")
-    if api_key:
-        try:
-            from modal_app.supermemory import SupermemoryClient
-            sm = SupermemoryClient(api_key)
-            results = await sm.search(
-                query=f"{business_type} in {neighborhood} Chicago permits zoning competition",
-                container_tags=["chicago_data", f"chicago_news", f"chicago_public_data"],
-                limit=10,
-            )
-            report["findings"]["supermemory"] = {
-                "results_count": len(results),
-                "snippets": [r.get("content", "")[:200] for r in results[:3]],
-            }
-            report["data_points"] += len(results)
-        except Exception as e:
-            report["findings"]["supermemory_error"] = str(e)
-
-    return report
+        if span:
+            span.set_attribute("output.value", json.dumps({"data_points": report["data_points"], "sources": list(report["findings"].keys())}))
+            span.set_attribute("agent.data_points", report["data_points"])
+        return report
+    except Exception as e:
+        if span:
+            span.set_attribute("error", str(e))
+        raise
+    finally:
+        if span_ctx:
+            span_ctx.__exit__(None, None, None)
 
 
 @app.function(
     image=base_image,
     volumes={"/data": volume},
-    secrets=[modal.Secret.from_name("alethia-secrets")],
+    secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=120,
 )
 async def regulatory_agent(business_type: str) -> dict:
     """Scans local + federal regulations relevant to business type."""
+    from modal_app.instrumentation import init_tracing, get_tracer
+    init_tracing()
+    tracer = get_tracer("alethia.agents")
+
+    BUSINESS_KEYWORDS = {
+        "restaurant": ["food", "health", "safety", "labor", "kitchen", "sanitation"],
+        "retail": ["commerce", "consumer", "safety", "trade", "merchandise"],
+        "bar": ["liquor", "alcohol", "safety", "noise", "entertainment"],
+        "cafe": ["food", "health", "safety", "beverage", "coffee"],
+        "grocery": ["food", "health", "safety", "produce", "retail"],
+        "salon": ["cosmetology", "health", "safety", "beauty"],
+        "fitness": ["health", "safety", "recreation", "gym"],
+    }
+    keywords = BUSINESS_KEYWORDS.get(business_type.lower(), ["business", "safety", "labor", "health"])
+    keywords.append(business_type.lower())
+
     report = {
         "business_type": business_type,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -180,49 +207,67 @@ async def regulatory_agent(business_type: str) -> dict:
         "data_points": 0,
     }
 
-    # Scan politics data for regulatory items
-    politics_dir = Path(RAW_DATA_PATH) / "politics"
-    if politics_dir.exists():
-        for json_file in sorted(politics_dir.rglob("*.json"), reverse=True)[:50]:
-            try:
-                doc = json.loads(json_file.read_text())
-                content = f"{doc.get('title', '')} {doc.get('content', '')}".lower()
-                if any(kw in content for kw in [business_type.lower(), "zoning", "license", "permit", "ordinance"]):
-                    report["regulations"].append({
-                        "title": doc.get("title", ""),
-                        "type": doc.get("metadata", {}).get("matter_type", ""),
-                        "status": doc.get("metadata", {}).get("status", ""),
-                        "relevance": "direct" if business_type.lower() in content else "related",
-                    })
-                    report["data_points"] += 1
-            except Exception:
-                continue
+    span_ctx = tracer.start_as_current_span("regulatory-agent") if tracer else None
+    span = span_ctx.__enter__() if span_ctx else None
+    try:
+        if span:
+            span.set_attribute("openinference.span.kind", "CHAIN")
+            span.set_attribute("input.value", business_type)
+            span.set_attribute("agent.business_type", business_type)
 
-    # Scan federal register data if available
-    federal_dir = Path(RAW_DATA_PATH) / "federal_register"
-    if federal_dir.exists():
-        for json_file in sorted(federal_dir.rglob("*.json"), reverse=True)[:30]:
-            try:
-                doc = json.loads(json_file.read_text())
-                content = f"{doc.get('title', '')} {doc.get('content', '')}".lower()
-                if any(kw in content for kw in [business_type.lower(), "food", "health", "safety", "labor"]):
-                    report["regulations"].append({
-                        "title": doc.get("title", ""),
-                        "type": "federal",
-                        "agency": doc.get("metadata", {}).get("agency", ""),
-                        "relevance": "federal",
-                    })
-                    report["data_points"] += 1
-            except Exception:
-                continue
+        # Scan politics data for regulatory items
+        politics_dir = Path(RAW_DATA_PATH) / "politics"
+        if politics_dir.exists():
+            for json_file in sorted(politics_dir.rglob("*.json"), reverse=True)[:50]:
+                try:
+                    doc = json.loads(json_file.read_text())
+                    content = f"{doc.get('title', '')} {doc.get('content', '')}".lower()
+                    if any(kw in content for kw in [business_type.lower(), "zoning", "license", "permit", "ordinance"]):
+                        report["regulations"].append({
+                            "title": doc.get("title", ""),
+                            "type": doc.get("metadata", {}).get("matter_type", ""),
+                            "status": doc.get("metadata", {}).get("status", ""),
+                            "relevance": "direct" if business_type.lower() in content else "related",
+                        })
+                        report["data_points"] += 1
+                except Exception:
+                    continue
 
-    return report
+        # Scan federal register data if available
+        federal_dir = Path(RAW_DATA_PATH) / "federal_register"
+        if federal_dir.exists():
+            for json_file in sorted(federal_dir.rglob("*.json"), reverse=True)[:30]:
+                try:
+                    doc = json.loads(json_file.read_text())
+                    content = f"{doc.get('title', '')} {doc.get('content', '')}".lower()
+                    if any(kw in content for kw in keywords):
+                        report["regulations"].append({
+                            "title": doc.get("title", ""),
+                            "type": "federal",
+                            "agency": doc.get("metadata", {}).get("agency", ""),
+                            "relevance": "federal",
+                        })
+                        report["data_points"] += 1
+                except Exception:
+                    continue
+
+        if span:
+            span.set_attribute("output.value", json.dumps({"data_points": report["data_points"], "regulation_count": len(report["regulations"])}))
+            span.set_attribute("agent.data_points", report["data_points"])
+        return report
+    except Exception as e:
+        if span:
+            span.set_attribute("error", str(e))
+        raise
+    finally:
+        if span_ctx:
+            span_ctx.__exit__(None, None, None)
 
 
 @app.function(
     image=base_image,
     volumes={"/data": volume},
-    secrets=[modal.Secret.from_name("alethia-secrets")],
+    secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=300,
 )
 async def orchestrate_query(user_id: str, question: str, business_type: str, target_neighborhood: str) -> dict:
@@ -234,64 +279,77 @@ async def orchestrate_query(user_id: str, question: str, business_type: str, tar
     4. Gather results
     5. Build synthesis prompt for LLM
     """
-    # Determine comparison neighborhoods
-    comparisons = ADJACENT_NEIGHBORHOODS.get(target_neighborhood, [])
-    if len(comparisons) < 2:
-        # Default comparisons if not in adjacency map
-        comparisons = ["Loop", "Lincoln Park"]
-    comparisons = comparisons[:2]
+    from modal_app.instrumentation import init_tracing, get_tracer
+    init_tracing()
+    tracer = get_tracer("alethia.agents")
 
-    # Fan-out via .spawn() — parallel agent execution
-    agent_handles = []
+    span_ctx = tracer.start_as_current_span("orchestrate-query") if tracer else None
+    span = span_ctx.__enter__() if span_ctx else None
+    try:
+        if span:
+            span.set_attribute("openinference.span.kind", "CHAIN")
+            span.set_attribute("input.value", question)
+            span.set_attribute("orchestrator.business_type", business_type)
+            span.set_attribute("orchestrator.target_neighborhood", target_neighborhood)
 
-    # Primary neighborhood agent (full analysis)
-    primary_handle = neighborhood_intel_agent.spawn(
-        neighborhood=target_neighborhood,
-        business_type=business_type,
-        focus_areas=["permits", "sentiment", "competition", "safety", "demographics"],
-    )
-    agent_handles.append(("primary", target_neighborhood, primary_handle))
+        # Determine comparison neighborhoods
+        comparisons = ADJACENT_NEIGHBORHOODS.get(target_neighborhood, [])
+        if len(comparisons) < 2:
+            # Default comparisons if not in adjacency map
+            comparisons = ["Loop", "Lincoln Park"]
+        comparisons = comparisons[:2]
 
-    # Comparison neighborhood agents
-    for comp_neighborhood in comparisons:
-        handle = neighborhood_intel_agent.spawn(
-            neighborhood=comp_neighborhood,
+        # Fan-out via .spawn() — parallel agent execution
+        agent_handles = []
+
+        # Primary neighborhood agent (full analysis)
+        primary_handle = neighborhood_intel_agent.spawn(
+            neighborhood=target_neighborhood,
             business_type=business_type,
-            focus_areas=["permits", "competition", "demographics"],
+            focus_areas=["permits", "sentiment", "competition", "safety", "demographics"],
         )
-        agent_handles.append(("comparison", comp_neighborhood, handle))
+        agent_handles.append(("primary", target_neighborhood, primary_handle))
 
-    # Regulatory agent
-    reg_handle = regulatory_agent.spawn(business_type=business_type)
-    agent_handles.append(("regulatory", "all", reg_handle))
+        # Comparison neighborhood agents
+        for comp_neighborhood in comparisons:
+            handle = neighborhood_intel_agent.spawn(
+                neighborhood=comp_neighborhood,
+                business_type=business_type,
+                focus_areas=["permits", "competition", "demographics"],
+            )
+            agent_handles.append(("comparison", comp_neighborhood, handle))
 
-    # Gather results
-    agent_results = {}
-    for agent_type, name, handle in agent_handles:
-        try:
-            result = handle.get()
-            agent_results[f"{agent_type}_{name}"] = result
-        except Exception as e:
-            agent_results[f"{agent_type}_{name}"] = {"error": str(e)}
+        # Regulatory agent
+        reg_handle = regulatory_agent.spawn(business_type=business_type)
+        agent_handles.append(("regulatory", "all", reg_handle))
 
-    # Build context for LLM synthesis
-    total_data_points = sum(
-        r.get("data_points", 0) for r in agent_results.values() if isinstance(r, dict)
-    )
+        # Gather results
+        agent_results = {}
+        for agent_type, name, handle in agent_handles:
+            try:
+                result = handle.get()
+                agent_results[f"{agent_type}_{name}"] = result
+            except Exception as e:
+                agent_results[f"{agent_type}_{name}"] = {"error": str(e)}
 
-    context = {
-        "question": question,
-        "user_id": user_id,
-        "business_type": business_type,
-        "target_neighborhood": target_neighborhood,
-        "comparison_neighborhoods": comparisons,
-        "agent_results": agent_results,
-        "total_data_points": total_data_points,
-        "agents_deployed": len(agent_handles),
-    }
+        # Build context for LLM synthesis
+        total_data_points = sum(
+            r.get("data_points", 0) for r in agent_results.values() if isinstance(r, dict)
+        )
 
-    # Build synthesis prompt
-    synthesis_prompt = f"""User question: {question}
+        context = {
+            "question": question,
+            "user_id": user_id,
+            "business_type": business_type,
+            "target_neighborhood": target_neighborhood,
+            "comparison_neighborhoods": comparisons,
+            "agent_results": agent_results,
+            "total_data_points": total_data_points,
+            "agents_deployed": len(agent_handles),
+        }
+
+        # Build synthesis prompt
+        synthesis_prompt = f"""User question: {question}
 
 Business type: {business_type}
 Target neighborhood: {target_neighborhood}
@@ -299,39 +357,35 @@ Comparison neighborhoods: {', '.join(comparisons)}
 
 Agent reports:
 """
-    for key, result in agent_results.items():
-        synthesis_prompt += f"\n--- {key} ---\n{json.dumps(result, indent=2, default=str)[:2000]}\n"
+        for key, result in agent_results.items():
+            synthesis_prompt += f"\n--- {key} ---\n{json.dumps(result, indent=2, default=str)[:2000]}\n"
 
-    synthesis_prompt += f"\nTotal data points analyzed: {total_data_points}"
+        synthesis_prompt += f"\nTotal data points analyzed: {total_data_points}"
 
-    # Generate response via LLM
-    from modal_app.llm import AlethiaLLM, SYSTEM_PROMPT
-    llm = AlethiaLLM()
+        # Build synthesis messages for the caller to stream via LLM
+        from modal_app.llm import SYSTEM_PROMPT
 
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT + "\n\n" + SYNTHESIS_SYSTEM_PROMPT},
-        {"role": "user", "content": synthesis_prompt},
-    ]
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT + "\n\n" + SYNTHESIS_SYSTEM_PROMPT},
+            {"role": "user", "content": synthesis_prompt},
+        ]
 
-    response = await llm.generate.remote.aio(messages, max_tokens=2048, temperature=0.7)
+        if span:
+            span.set_attribute("output.value", json.dumps({"agents_deployed": len(agent_handles), "total_data_points": total_data_points}))
+            span.set_attribute("orchestrator.agents_deployed", len(agent_handles))
+            span.set_attribute("orchestrator.total_data_points", total_data_points)
 
-    # Store conversation in Supermemory
-    api_key = os.environ.get("SUPERMEMORY_API_KEY", "")
-    if api_key:
-        try:
-            from modal_app.supermemory import SupermemoryClient
-            sm = SupermemoryClient(api_key)
-            await sm.store_conversation(user_id, [
-                {"role": "user", "content": question},
-                {"role": "assistant", "content": response},
-            ])
-        except Exception:
-            pass
-
-    return {
-        "response": response,
-        "agents_deployed": len(agent_handles),
-        "neighborhoods_analyzed": [target_neighborhood] + comparisons,
-        "total_data_points": total_data_points,
-        "context": context,
-    }
+        return {
+            "synthesis_messages": messages,
+            "agents_deployed": len(agent_handles),
+            "neighborhoods_analyzed": [target_neighborhood] + comparisons,
+            "total_data_points": total_data_points,
+            "context": context,
+        }
+    except Exception as e:
+        if span:
+            span.set_attribute("error", str(e))
+        raise
+    finally:
+        if span_ctx:
+            span_ctx.__exit__(None, None, None)

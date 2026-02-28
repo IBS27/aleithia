@@ -3,15 +3,15 @@
 Provides streaming and non-streaming text generation for the Alethia reasoning engine.
 Modal features: @modal.cls, @modal.enter, @modal.concurrent, gpu=H100, Image.run_commands()
 """
-from __future__ import annotations
+import json
 import uuid
 
 import modal
 
 from modal_app.volume import app, volume, weights_volume, vllm_image, VOLUME_MOUNT, WEIGHTS_MOUNT
 
-MODEL_NAME = "Qwen/Qwen3-8B"
-MODEL_DIR = f"{WEIGHTS_MOUNT}/qwen3-8b"
+MODEL_NAME = "Qwen/Qwen3-8B-FP8"
+MODEL_DIR = f"{WEIGHTS_MOUNT}/Qwen3-8B-FP8"
 
 SYSTEM_PROMPT = """You are Alethia, an AI-powered Chicago business intelligence analyst.
 You analyze real-time data from 7+ pipelines covering permits, inspections, licenses,
@@ -29,7 +29,7 @@ When answering questions:
     gpu="H100",
     image=vllm_image,
     volumes={VOLUME_MOUNT: volume, WEIGHTS_MOUNT: weights_volume},
-    secrets=[modal.Secret.from_name("alethia-secrets")],
+    secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     scaledown_window=300,
     timeout=600,
 )
@@ -39,6 +39,10 @@ class AlethiaLLM:
 
     @modal.enter()
     def load_model(self):
+        from modal_app.instrumentation import init_tracing, get_tracer
+        init_tracing()
+        self._tracer = get_tracer("alethia.llm")
+
         from vllm import AsyncLLMEngine, AsyncEngineArgs
 
         args = AsyncEngineArgs(
@@ -55,45 +59,81 @@ class AlethiaLLM:
         """Non-streaming generation. Returns complete response text."""
         from vllm import SamplingParams
 
-        prompt = self._build_prompt(messages)
-        params = SamplingParams(
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=0.9,
-        )
+        span_ctx = self._tracer.start_as_current_span("llm-generate") if self._tracer else None
+        span = span_ctx.__enter__() if span_ctx else None
+        try:
+            if span:
+                span.set_attribute("openinference.span.kind", "LLM")
+                span.set_attribute("llm.model_name", MODEL_NAME)
+                span.set_attribute("input.value", json.dumps(messages))
 
-        request_id = str(uuid.uuid4())
-        results_generator = self.engine.generate(prompt, params, request_id)
+            prompt = self._build_prompt(messages)
+            params = SamplingParams(
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=0.9,
+            )
 
-        final_output = None
-        async for output in results_generator:
-            final_output = output
+            request_id = str(uuid.uuid4())
+            results_generator = self.engine.generate(prompt, params, request_id)
 
-        if final_output is None:
-            return ""
-        return final_output.outputs[0].text
+            final_output = None
+            async for output in results_generator:
+                final_output = output
+
+            result = final_output.outputs[0].text if final_output else ""
+            if span:
+                span.set_attribute("output.value", result)
+            return result
+        except Exception as e:
+            if span:
+                span.set_attribute("error", str(e))
+            raise
+        finally:
+            if span_ctx:
+                span_ctx.__exit__(None, None, None)
 
     @modal.method()
     async def generate_stream(self, messages: list[dict], max_tokens: int = 2048, temperature: float = 0.7):
         """Streaming generation. Yields token chunks for SSE delivery."""
         from vllm import SamplingParams
 
-        prompt = self._build_prompt(messages)
-        params = SamplingParams(
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=0.9,
-        )
+        span_ctx = self._tracer.start_as_current_span("llm-generate-stream") if self._tracer else None
+        span = span_ctx.__enter__() if span_ctx else None
+        try:
+            if span:
+                span.set_attribute("openinference.span.kind", "LLM")
+                span.set_attribute("llm.model_name", MODEL_NAME)
+                span.set_attribute("input.value", json.dumps(messages))
 
-        request_id = str(uuid.uuid4())
-        results_generator = self.engine.generate(prompt, params, request_id)
+            prompt = self._build_prompt(messages)
+            params = SamplingParams(
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=0.9,
+            )
 
-        prev_len = 0
-        async for output in results_generator:
-            new_text = output.outputs[0].text[prev_len:]
-            prev_len = len(output.outputs[0].text)
-            if new_text:
-                yield new_text
+            request_id = str(uuid.uuid4())
+            results_generator = self.engine.generate(prompt, params, request_id)
+
+            full_output = ""
+            prev_len = 0
+            async for output in results_generator:
+                new_text = output.outputs[0].text[prev_len:]
+                prev_len = len(output.outputs[0].text)
+                if new_text:
+                    full_output += new_text
+                    yield new_text
+
+            if span:
+                span.set_attribute("output.value", full_output)
+        except Exception as e:
+            if span:
+                span.set_attribute("error", str(e))
+            raise
+        finally:
+            if span_ctx:
+                span_ctx.__exit__(None, None, None)
 
     def _build_prompt(self, messages: list[dict]) -> str:
         """Build a chat-format prompt from message list."""

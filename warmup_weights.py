@@ -12,11 +12,11 @@ image = modal.Image.debian_slim(python_version="3.12").pip_install(
 ).env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
 
 
-@app.function(image=image, volumes={"/models": weights_vol}, timeout=1800)
+@app.function(image=image, volumes={"/weights": weights_vol}, timeout=1800)
 def download_weights():
     from huggingface_hub import snapshot_download
 
-    snapshot_download("Qwen/Qwen3-8B-FP8", local_dir="/models/Qwen3-8B-FP8")
+    snapshot_download("Qwen/Qwen3-8B-FP8", local_dir="/weights/Qwen3-8B-FP8")
     weights_vol.commit()
     print("Weights downloaded and cached.")
 
