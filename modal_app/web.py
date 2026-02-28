@@ -164,11 +164,13 @@ async def status():
     enriched_count = len(list(enriched_dir.rglob("*.json"))) if enriched_dir.exists() else 0
 
     # Cost tracking
+    costs = {}
     try:
         cost_dict = modal.Dict.from_name("alethia-costs", create_if_missing=True)
-        costs = dict(cost_dict)
+        async for key in cost_dict.keys.aio():
+            costs[key] = await cost_dict.get.aio(key)
     except Exception:
-        costs = {}
+        pass
 
     return {
         "pipelines": pipeline_status,

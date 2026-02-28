@@ -205,7 +205,7 @@ async def news_ingester():
     from modal_app.classify import doc_queue
     for doc_data in all_docs:
         try:
-            doc_queue.put(doc_data)
+            await doc_queue.put.aio(doc_data)
         except Exception:
             pass
 

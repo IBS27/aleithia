@@ -3,6 +3,7 @@
 Uses modal.Queue for event bus between pipelines and classifiers.
 Modal features: @modal.batched, modal.Queue, @modal.cls, @modal.enter, gpu=T4
 """
+import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -79,7 +80,7 @@ async def process_queue_batch():
     docs = []
     while len(docs) < 100:
         try:
-            doc = doc_queue.get(timeout=5)
+            doc = await doc_queue.get.aio(timeout=5)
             docs.append(doc)
         except Exception:
             break
@@ -95,31 +96,39 @@ async def process_queue_batch():
 
     texts = [d.get("content", d.get("title", ""))[:512] for d in docs]
 
-    # Run classification and sentiment in parallel
-    classifications = []
-    sentiments = []
-    for text in texts:
-        classifications.append(classifier.classify.remote(text))
-        sentiments.append(analyzer.analyze.remote(text))
+    # Run classification and sentiment in parallel via asyncio.gather
+    classifications = await asyncio.gather(
+        *[classifier.classify.remote.aio(text) for text in texts],
+        return_exceptions=True,
+    )
+    sentiments = await asyncio.gather(
+        *[analyzer.analyze.remote.aio(text) for text in texts],
+        return_exceptions=True,
+    )
 
     # Enrich documents with classifications
     enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
     enriched_dir.mkdir(parents=True, exist_ok=True)
 
     for i, doc in enumerate(docs):
-        try:
-            cls_result = await classifications[i]
-            sent_result = await sentiments[i]
-            doc["classification"] = cls_result
-            doc["sentiment"] = sent_result
-        except Exception as e:
-            print(f"Classification error for doc {doc.get('id', i)}: {e}")
+        cls_result = classifications[i]
+        sent_result = sentiments[i]
+
+        if isinstance(cls_result, Exception):
+            print(f"Classification error for doc {doc.get('id', i)}: {cls_result}")
             doc["classification"] = {"labels": [], "scores": []}
+        else:
+            doc["classification"] = cls_result
+
+        if isinstance(sent_result, Exception):
+            print(f"Sentiment error for doc {doc.get('id', i)}: {sent_result}")
             doc["sentiment"] = {"label": "neutral", "score": 0.5}
+        else:
+            doc["sentiment"] = sent_result
 
         out_path = enriched_dir / f"{doc.get('id', f'doc-{i}')}.json"
         out_path.write_text(json.dumps(doc, indent=2, default=str))
 
-    volume.commit()
+    await volume.commit.aio()
     print(f"Classified {len(docs)} documents: saved to {enriched_dir}")
     return len(docs)
