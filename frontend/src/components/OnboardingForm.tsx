@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { UserProfile } from '../types/index.ts'
 
 const NEIGHBORHOODS = [
@@ -18,11 +18,22 @@ const BUSINESS_TYPES = [
 
 interface Props {
   onSubmit: (profile: UserProfile) => void
+  onCancel?: () => void
+  initialProfile?: UserProfile | null
 }
 
-export default function OnboardingForm({ onSubmit }: Props) {
-  const [businessType, setBusinessType] = useState('')
-  const [neighborhood, setNeighborhood] = useState('')
+export default function OnboardingForm({ onSubmit, onCancel, initialProfile }: Props) {
+  const [businessType, setBusinessType] = useState(initialProfile?.business_type ?? '')
+  const [neighborhood, setNeighborhood] = useState(initialProfile?.neighborhood ?? '')
+
+  useEffect(() => {
+    if (initialProfile?.business_type) {
+      setBusinessType(initialProfile.business_type)
+    }
+    if (initialProfile?.neighborhood) {
+      setNeighborhood(initialProfile.neighborhood)
+    }
+  }, [initialProfile])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -79,7 +90,7 @@ export default function OnboardingForm({ onSubmit }: Props) {
             </select>
           </div>
 
-          <div className="pt-2">
+          <div className="pt-2 space-y-2">
             <button
               type="submit"
               disabled={!businessType || !neighborhood}
@@ -87,6 +98,15 @@ export default function OnboardingForm({ onSubmit }: Props) {
             >
               Run Analysis
             </button>
+            {onCancel && (
+              <button
+                type="button"
+                onClick={onCancel}
+                className="w-full border border-white/20 text-white/60 hover:text-white hover:border-white/40 font-semibold py-3.5 text-sm tracking-wide transition-colors cursor-pointer"
+              >
+                Back
+              </button>
+            )}
           </div>
 
           <p className="text-center text-[10px] font-mono text-white/15 uppercase tracking-widest pt-2">

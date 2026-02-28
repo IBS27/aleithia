@@ -158,14 +158,19 @@ Format your response with clear sections:
 @app.function(
     image=base_image,
     volumes={"/data": volume},
-    secrets=[modal.Secret.from_name("alethia-secrets")],
+    secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=120,
 )
-async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_areas: list[str] | None = None) -> dict:
+async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_areas: list[str] | None = None, trace_context: dict | None = None) -> dict:
     """Query-time intelligence agent for a single neighborhood.
 
     Gathers data from local volume + Supermemory to build a neighborhood brief.
     """
+    from modal_app.instrumentation import init_tracing, get_tracer, extract_context
+    init_tracing()
+    tracer = get_tracer("alethia.agents")
+    parent_ctx = extract_context(trace_context)
+
     if focus_areas is None:
         focus_areas = ["permits", "sentiment", "competition", "safety", "demographics"]
 
@@ -178,154 +183,199 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
         "data_points": 0,
     }
 
-    # Pre-compute community area for matching (handles colloquial names too)
-    nb_community_area = neighborhood_to_ca(neighborhood)
+    span_ctx = tracer.start_as_current_span("neighborhood-intel-agent", context=parent_ctx) if tracer else None
+    span = span_ctx.__enter__() if span_ctx else None
+    try:
+        if span:
+            span.set_attribute("openinference.span.kind", "CHAIN")
+            span.set_attribute("input.value", f"{business_type} in {neighborhood}")
+            span.set_attribute("agent.neighborhood", neighborhood)
+            span.set_attribute("agent.business_type", business_type)
 
-    # Read local volume data
-    for source in ["public_data", "news", "politics", "demographics", "reddit", "reviews", "realestate", "tiktok"]:
-        source_dir = Path(RAW_DATA_PATH) / source
-        if not source_dir.exists():
-            continue
+        nb_community_area = neighborhood_to_ca(neighborhood)
 
-        docs = []
-        for json_file in sorted(source_dir.rglob("*.json"), reverse=True)[:100]:
-            try:
-                doc = json.loads(json_file.read_text())
-                if not isinstance(doc, dict):
+        # Read local volume data
+        for source in ["public_data", "news", "politics", "demographics", "reddit", "reviews", "realestate", "tiktok", "cctv"]:
+            source_dir = Path(RAW_DATA_PATH) / source
+            if not source_dir.exists():
+                continue
+
+            docs = []
+            for json_file in sorted(source_dir.rglob("*.json"), reverse=True)[:100]:
+                try:
+                    doc = json.loads(json_file.read_text())
+                    if not isinstance(doc, dict):
+                        continue
+                    geo = doc.get("geo", {})
+                    doc_neighborhood = geo.get("neighborhood", "")
+                    doc_ca = geo.get("community_area", "")
+                    if doc_neighborhood.lower() == neighborhood.lower():
+                        docs.append(doc)
+                    elif nb_community_area and doc_ca == nb_community_area:
+                        docs.append(doc)
+                except Exception:
                     continue
-                geo = doc.get("geo", {})
-                doc_neighborhood = geo.get("neighborhood", "")
-                doc_ca = geo.get("community_area", "")
-                if doc_neighborhood.lower() == neighborhood.lower():
-                    docs.append(doc)
-                elif nb_community_area and doc_ca == nb_community_area:
-                    docs.append(doc)
-            except Exception:
-                continue
 
-        if docs:
-            # Compute freshness from newest doc timestamp
-            newest_ts = None
-            for d in docs:
-                ts = d.get("timestamp")
-                if ts and (newest_ts is None or ts > newest_ts):
-                    newest_ts = ts
-            source_freshness = compute_freshness(timestamp_str=newest_ts) if newest_ts else compute_freshness()
+            if docs:
+                # Compute freshness from newest doc timestamp
+                newest_ts = None
+                for d in docs:
+                    ts = d.get("timestamp")
+                    if ts and (newest_ts is None or ts > newest_ts):
+                        newest_ts = ts
+                source_freshness = compute_freshness(timestamp_str=newest_ts) if newest_ts else compute_freshness()
 
-            report["findings"][source] = {
-                "count": len(docs),
-                "samples": [{"title": d.get("title", ""), "content": d.get("content", "")[:200]} for d in docs[:5]],
-                "freshness": source_freshness,
-            }
-            report["freshness"][source] = source_freshness
-            report["data_points"] += len(docs)
+                report["findings"][source] = {
+                    "count": len(docs),
+                    "samples": [{"title": d.get("title", ""), "content": d.get("content", "")[:200]} for d in docs[:5]],
+                    "freshness": source_freshness,
+                }
+                report["freshness"][source] = source_freshness
+                report["data_points"] += len(docs)
 
-    # Traffic: read from processed path (Documents, not raw API dicts)
-    traffic_dir = Path(RAW_DATA_PATH) / "processed" / "traffic"
-    if traffic_dir.exists():
-        traffic_docs = []
-        for json_file in sorted(traffic_dir.rglob("*.json"), reverse=True)[:50]:
-            try:
-                doc = json.loads(json_file.read_text())
-                if not isinstance(doc, dict) or "geo" not in doc:
+        # Traffic: read from processed path (Documents, not raw API dicts)
+        traffic_dir = Path(RAW_DATA_PATH) / "processed" / "traffic"
+        if traffic_dir.exists():
+            traffic_docs = []
+            for json_file in sorted(traffic_dir.rglob("*.json"), reverse=True)[:50]:
+                try:
+                    doc = json.loads(json_file.read_text())
+                    if not isinstance(doc, dict) or "geo" not in doc:
+                        continue
+                    geo = doc.get("geo", {})
+                    if geo.get("neighborhood", "").lower() == neighborhood.lower():
+                        traffic_docs.append(doc)
+                    elif nb_community_area and geo.get("community_area") == nb_community_area:
+                        traffic_docs.append(doc)
+                except Exception:
                     continue
-                geo = doc.get("geo", {})
-                if geo.get("neighborhood", "").lower() == neighborhood.lower():
-                    traffic_docs.append(doc)
-                elif nb_community_area and geo.get("community_area") == nb_community_area:
-                    traffic_docs.append(doc)
-            except Exception:
-                continue
-        if traffic_docs:
-            newest_ts = None
-            for d in traffic_docs:
-                ts = d.get("timestamp")
-                if ts and (newest_ts is None or ts > newest_ts):
-                    newest_ts = ts
-            traffic_freshness = compute_freshness(timestamp_str=newest_ts) if newest_ts else compute_freshness()
+            if traffic_docs:
+                newest_ts = None
+                for d in traffic_docs:
+                    ts = d.get("timestamp")
+                    if ts and (newest_ts is None or ts > newest_ts):
+                        newest_ts = ts
+                traffic_freshness = compute_freshness(timestamp_str=newest_ts) if newest_ts else compute_freshness()
 
-            report["findings"]["traffic"] = {
-                "count": len(traffic_docs),
-                "samples": [{"title": d.get("title", ""), "content": d.get("content", "")[:200]} for d in traffic_docs[:5]],
-                "freshness": traffic_freshness,
-            }
-            report["freshness"]["traffic"] = traffic_freshness
-            report["data_points"] += len(traffic_docs)
+                report["findings"]["traffic"] = {
+                    "count": len(traffic_docs),
+                    "samples": [{"title": d.get("title", ""), "content": d.get("content", "")[:200]} for d in traffic_docs[:5]],
+                    "freshness": traffic_freshness,
+                }
+                report["freshness"]["traffic"] = traffic_freshness
+                report["data_points"] += len(traffic_docs)
 
-    # Read enriched data (classified)
-    enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
-    if enriched_dir.exists():
-        enriched_docs = []
-        for json_file in sorted(enriched_dir.rglob("*.json"), reverse=True)[:50]:
+        # Read enriched data (classified)
+        enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
+        if enriched_dir.exists():
+            enriched_docs = []
+            for json_file in sorted(enriched_dir.rglob("*.json"), reverse=True)[:50]:
+                try:
+                    doc = json.loads(json_file.read_text())
+                    doc_neighborhood = doc.get("geo", {}).get("neighborhood", "")
+                    if doc_neighborhood.lower() == neighborhood.lower():
+                        enriched_docs.append(doc)
+                except Exception:
+                    continue
+
+            if enriched_docs:
+                # Aggregate sentiment
+                sentiments = [d.get("sentiment", {}).get("label", "neutral") for d in enriched_docs]
+                positive = sentiments.count("positive")
+                negative = sentiments.count("negative")
+                report["findings"]["sentiment"] = {
+                    "positive": positive,
+                    "negative": negative,
+                    "neutral": len(sentiments) - positive - negative,
+                    "ratio": round(positive / max(len(sentiments), 1), 2),
+                }
+
+                # Aggregate classifications
+                all_labels = []
+                for d in enriched_docs:
+                    all_labels.extend(d.get("classification", {}).get("labels", []))
+                label_counts = {}
+                for label in all_labels:
+                    label_counts[label] = label_counts.get(label, 0) + 1
+                report["findings"]["top_categories"] = dict(
+                    sorted(label_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+                )
+
+        # Extract foot traffic metrics from CCTV data
+        if "cctv" in report["findings"]:
+            cctv_samples = report["findings"]["cctv"].get("samples", [])
+            total_peds = 0
+            total_vehs = 0
+            cam_count = 0
+            for sample in cctv_samples:
+                content = sample.get("content", "")
+                import re
+                ped_match = re.search(r"(\d+) pedestrians", content)
+                veh_match = re.search(r"(\d+) vehicles", content)
+                if ped_match:
+                    total_peds += int(ped_match.group(1))
+                    cam_count += 1
+                if veh_match:
+                    total_vehs += int(veh_match.group(1))
+
+            if cam_count > 0:
+                avg_peds = total_peds / cam_count
+                report["findings"]["foot_traffic"] = {
+                    "avg_pedestrians": round(avg_peds, 1),
+                    "avg_vehicles": round(total_vehs / cam_count, 1),
+                    "density_level": "high" if avg_peds > 20 else "medium" if avg_peds > 5 else "low",
+                    "camera_count": cam_count,
+                }
+
+        # Query Supermemory for additional context
+        api_key = os.environ.get("SUPERMEMORY_API_KEY", "")
+        if api_key:
             try:
-                doc = json.loads(json_file.read_text())
-                geo = doc.get("geo", {})
-                doc_neighborhood = geo.get("neighborhood", "")
-                doc_ca = geo.get("community_area", "")
-                if doc_neighborhood.lower() == neighborhood.lower():
-                    enriched_docs.append(doc)
-                elif nb_community_area and doc_ca == nb_community_area:
-                    enriched_docs.append(doc)
-            except Exception:
-                continue
+                from modal_app.supermemory import SupermemoryClient
+                sm = SupermemoryClient(api_key)
+                results = await sm.search(
+                    query=f"{business_type} in {neighborhood} Chicago permits zoning competition",
+                    container_tags=["chicago_data", "chicago_news", "chicago_public_data", "chicago_reddit", "chicago_reviews", "chicago_politics", "chicago_cctv"],
+                    limit=10,
+                )
+                report["findings"]["supermemory"] = {
+                    "results_count": len(results),
+                    "snippets": [r.get("content", "")[:200] for r in results[:3]],
+                }
+                report["data_points"] += len(results)
+            except Exception as e:
+                report["findings"]["supermemory_error"] = str(e)
 
-        if enriched_docs:
-            # Aggregate sentiment
-            sentiments = [d.get("sentiment", {}).get("label", "neutral") for d in enriched_docs]
-            positive = sentiments.count("positive")
-            negative = sentiments.count("negative")
-            report["findings"]["sentiment"] = {
-                "positive": positive,
-                "negative": negative,
-                "neutral": len(sentiments) - positive - negative,
-                "ratio": round(positive / max(len(sentiments), 1), 2),
-            }
-
-            # Aggregate classifications
-            all_labels = []
-            for d in enriched_docs:
-                all_labels.extend(d.get("classification", {}).get("labels", []))
-            label_counts = {}
-            for label in all_labels:
-                label_counts[label] = label_counts.get(label, 0) + 1
-            report["findings"]["top_categories"] = dict(
-                sorted(label_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-            )
-
-    # Query Supermemory for additional context
-    api_key = os.environ.get("SUPERMEMORY_API_KEY", "")
-    if api_key:
-        try:
-            from modal_app.supermemory import SupermemoryClient
-            sm = SupermemoryClient(api_key)
-            results = await sm.search(
-                query=f"{business_type} in {neighborhood} Chicago permits zoning competition",
-                container_tags=["chicago_data", f"chicago_news", f"chicago_public_data"],
-                limit=10,
-            )
-            report["findings"]["supermemory"] = {
-                "results_count": len(results),
-                "snippets": [r.get("content", "")[:200] for r in results[:3]],
-            }
-            report["data_points"] += len(results)
-        except Exception as e:
-            report["findings"]["supermemory_error"] = str(e)
-
-    return report
+        if span:
+            span.set_attribute("output.value", json.dumps({"data_points": report["data_points"], "sources": list(report["findings"].keys())}))
+            span.set_attribute("agent.data_points", report["data_points"])
+        return report
+    except Exception as e:
+        if span:
+            span.set_attribute("error", str(e))
+        raise
+    finally:
+        if span_ctx:
+            span_ctx.__exit__(None, None, None)
 
 
 @app.function(
     image=base_image,
     volumes={"/data": volume},
-    secrets=[modal.Secret.from_name("alethia-secrets")],
+    secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=120,
 )
-async def regulatory_agent(business_type: str) -> dict:
+async def regulatory_agent(business_type: str, trace_context: dict | None = None) -> dict:
     """Scans live APIs + cached volume data for regulations relevant to business type.
 
     Fetches Legistar + Federal Register inline (~3-5s), deduplicates against
     volume cache, writes live results back to volume for dashboard freshness.
     """
+    from modal_app.instrumentation import init_tracing, get_tracer, extract_context
+    init_tracing()
+    tracer = get_tracer("alethia.agents")
+    parent_ctx = extract_context(trace_context)
+
     report = {
         "business_type": business_type,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -334,139 +384,175 @@ async def regulatory_agent(business_type: str) -> dict:
         "data_points": 0,
     }
 
-    # 1. Fetch live data from both APIs concurrently
-    live_legistar, live_federal = [], []
+    span_ctx = tracer.start_as_current_span("regulatory-agent", context=parent_ctx) if tracer else None
+    span = span_ctx.__enter__() if span_ctx else None
     try:
-        live_legistar, live_federal = await asyncio.gather(
-            _fetch_legistar_inline(business_type),
-            _fetch_federal_register_inline(business_type),
-        )
-    except Exception as e:
-        print(f"Live regulatory fetch failed, falling back to volume: {e}")
+        if span:
+            span.set_attribute("openinference.span.kind", "CHAIN")
+            span.set_attribute("input.value", business_type)
+            span.set_attribute("agent.business_type", business_type)
 
-    live_ids = set()
+        # 1. Fetch live data from both APIs concurrently
+        live_legistar, live_federal = [], []
+        try:
+            live_legistar, live_federal = await asyncio.gather(
+                _fetch_legistar_inline(business_type),
+                _fetch_federal_register_inline(business_type),
+            )
+        except Exception as e:
+            print(f"Live regulatory fetch failed, falling back to volume: {e}")
 
-    # Add live Legistar results
-    for item in live_legistar:
-        live_ids.add(item["id"])
-        report["regulations"].append({
-            "title": item["title"],
-            "type": item.get("type", ""),
-            "status": item.get("status", ""),
-            "date": item.get("date", ""),
-            "relevance": "direct",
-            "freshness": "live",
-        })
-        report["data_points"] += 1
+        live_ids = set()
 
-    # Add live Federal Register results
-    for item in live_federal:
-        live_ids.add(item["id"])
-        report["regulations"].append({
-            "title": item["title"],
-            "type": item.get("type", "federal"),
-            "agency": item.get("agency", ""),
-            "date": item.get("date", ""),
-            "url": item.get("url", ""),
-            "relevance": "federal",
-            "freshness": "live",
-        })
-        report["data_points"] += 1
+        # Add live Legistar results
+        for item in live_legistar:
+            live_ids.add(item["id"])
+            report["regulations"].append({
+                "title": item["title"],
+                "type": item.get("type", ""),
+                "status": item.get("status", ""),
+                "date": item.get("date", ""),
+                "relevance": "direct",
+                "freshness": "live",
+            })
+            report["data_points"] += 1
 
-    report["freshness"]["legistar"] = {
-        "source": "live_api",
-        "count": len(live_legistar),
-        "freshness_label": "fresh" if live_legistar else "unavailable",
-    }
-    report["freshness"]["federal_register"] = {
-        "source": "live_api",
-        "count": len(live_federal),
-        "freshness_label": "fresh" if live_federal else "unavailable",
-    }
+        # Add live Federal Register results
+        for item in live_federal:
+            live_ids.add(item["id"])
+            report["regulations"].append({
+                "title": item["title"],
+                "type": item.get("type", "federal"),
+                "agency": item.get("agency", ""),
+                "date": item.get("date", ""),
+                "url": item.get("url", ""),
+                "relevance": "federal",
+                "freshness": "live",
+            })
+            report["data_points"] += 1
 
-    # 2. Read volume data as fallback / supplement (dedup against live)
-    for source_name, source_dir_name in [("politics", "politics"), ("federal", "federal_register")]:
-        source_dir = Path(RAW_DATA_PATH) / source_dir_name
-        if not source_dir.exists():
-            continue
+        report["freshness"]["legistar"] = {
+            "source": "live_api",
+            "count": len(live_legistar),
+            "freshness_label": "fresh" if live_legistar else "unavailable",
+        }
+        report["freshness"]["federal_register"] = {
+            "source": "live_api",
+            "count": len(live_federal),
+            "freshness_label": "fresh" if live_federal else "unavailable",
+        }
 
-        newest_ts = None
-        for json_file in sorted(source_dir.rglob("*.json"), reverse=True)[:50]:
-            try:
-                doc = json.loads(json_file.read_text())
-                doc_id = doc.get("id", "")
-                if doc_id in live_ids:
-                    continue  # Already have live version
-                content = f"{doc.get('title', '')} {doc.get('content', '')}".lower()
-                keywords = [business_type.lower(), "zoning", "license", "permit", "ordinance"]
-                if source_name == "federal":
-                    keywords += ["food", "health", "safety", "labor"]
-                if any(kw in content for kw in keywords):
-                    ts = doc.get("timestamp")
-                    if ts and (newest_ts is None or ts > newest_ts):
-                        newest_ts = ts
-                    report["regulations"].append({
-                        "title": doc.get("title", ""),
-                        "type": doc.get("metadata", {}).get("matter_type", "") if source_name == "politics" else "federal",
-                        "status": doc.get("metadata", {}).get("status", ""),
-                        "agency": doc.get("metadata", {}).get("agency", "") if source_name == "federal" else "",
-                        "relevance": "direct" if business_type.lower() in content else "related",
-                        "freshness": "cached",
-                    })
-                    report["data_points"] += 1
-            except Exception:
+        # 2. Read volume data as fallback / supplement (dedup against live)
+        for source_name, source_dir_name in [("politics", "politics"), ("federal", "federal_register")]:
+            source_dir = Path(RAW_DATA_PATH) / source_dir_name
+            if not source_dir.exists():
                 continue
 
-        if newest_ts:
-            cached_freshness = compute_freshness(timestamp_str=newest_ts)
-            report["freshness"][f"{source_name}_cached"] = cached_freshness
+            newest_ts = None
+            for json_file in sorted(source_dir.rglob("*.json"), reverse=True)[:50]:
+                try:
+                    doc = json.loads(json_file.read_text())
+                    doc_id = doc.get("id", "")
+                    if doc_id in live_ids:
+                        continue  # Already have live version
+                    content = f"{doc.get('title', '')} {doc.get('content', '')}".lower()
+                    keywords = [business_type.lower(), "zoning", "license", "permit", "ordinance"]
+                    if source_name == "federal":
+                        keywords += ["food", "health", "safety", "labor"]
+                    if any(kw in content for kw in keywords):
+                        ts = doc.get("timestamp")
+                        if ts and (newest_ts is None or ts > newest_ts):
+                            newest_ts = ts
+                        report["regulations"].append({
+                            "title": doc.get("title", ""),
+                            "type": doc.get("metadata", {}).get("matter_type", "") if source_name == "politics" else "federal",
+                            "status": doc.get("metadata", {}).get("status", ""),
+                            "agency": doc.get("metadata", {}).get("agency", "") if source_name == "federal" else "",
+                            "relevance": "direct" if business_type.lower() in content else "related",
+                            "freshness": "cached",
+                        })
+                        report["data_points"] += 1
+                except Exception:
+                    continue
 
-    # 3. Write live data back to volume (fire-and-forget, benefits dashboard)
-    if live_legistar or live_federal:
-        try:
-            from modal_app.common import Document, SourceType
-            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if newest_ts:
+                cached_freshness = compute_freshness(timestamp_str=newest_ts)
+                report["freshness"][f"{source_name}_cached"] = cached_freshness
 
-            for item in live_legistar:
-                doc = Document(
-                    id=item["id"],
-                    source=SourceType.POLITICS,
-                    title=item["title"],
-                    content=f"{item.get('type', '')} — {item.get('status', '')}",
-                    url="",
-                    metadata={"matter_type": item.get("type", ""), "status": item.get("status", ""), "source": "legistar_live"},
-                )
-                out_dir = Path(RAW_DATA_PATH) / "politics" / today
-                out_dir.mkdir(parents=True, exist_ok=True)
-                (out_dir / f"{doc.id}.json").write_text(doc.model_dump_json())
+        # 3. Write live data back to volume (fire-and-forget, benefits dashboard)
+        if live_legistar or live_federal:
+            try:
+                from modal_app.common import Document, SourceType
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-            for item in live_federal:
-                doc = Document(
-                    id=item["id"],
-                    source=SourceType.POLITICS,
-                    title=item["title"],
-                    content=f"{item.get('type', '')} — {item.get('agency', '')}",
-                    url=item.get("url", ""),
-                    metadata={"agency": item.get("agency", ""), "source": "federal_register_live"},
-                )
-                out_dir = Path(RAW_DATA_PATH) / "federal_register" / today
-                out_dir.mkdir(parents=True, exist_ok=True)
-                (out_dir / f"{doc.id}.json").write_text(doc.model_dump_json())
+                for item in live_legistar:
+                    doc = Document(
+                        id=item["id"],
+                        source=SourceType.POLITICS,
+                        title=item["title"],
+                        content=f"{item.get('type', '')} — {item.get('status', '')}",
+                        url="",
+                        metadata={"matter_type": item.get("type", ""), "status": item.get("status", ""), "source": "legistar_live"},
+                    )
+                    out_dir = Path(RAW_DATA_PATH) / "politics" / today
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    (out_dir / f"{doc.id}.json").write_text(doc.model_dump_json())
 
-            volume.commit()
-        except Exception as e:
-            print(f"Failed to write live regulatory data to volume: {e}")
+                for item in live_federal:
+                    doc = Document(
+                        id=item["id"],
+                        source=SourceType.POLITICS,
+                        title=item["title"],
+                        content=f"{item.get('type', '')} — {item.get('agency', '')}",
+                        url=item.get("url", ""),
+                        metadata={"agency": item.get("agency", ""), "source": "federal_register_live"},
+                    )
+                    out_dir = Path(RAW_DATA_PATH) / "federal_register" / today
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    (out_dir / f"{doc.id}.json").write_text(doc.model_dump_json())
 
-    return report
+                volume.commit()
+            except Exception as e:
+                print(f"Failed to write live regulatory data to volume: {e}")
+
+        # Scan federal register data if available
+        federal_dir = Path(RAW_DATA_PATH) / "federal_register"
+        if federal_dir.exists():
+            for json_file in sorted(federal_dir.rglob("*.json"), reverse=True)[:30]:
+                try:
+                    doc = json.loads(json_file.read_text())
+                    content = f"{doc.get('title', '')} {doc.get('content', '')}".lower()
+                    if any(kw in content for kw in keywords):
+                        report["regulations"].append({
+                            "title": doc.get("title", ""),
+                            "type": "federal",
+                            "agency": doc.get("metadata", {}).get("agency", ""),
+                            "relevance": "federal",
+                        })
+                        report["data_points"] += 1
+                except Exception:
+                    continue
+
+        if span:
+            span.set_attribute("output.value", json.dumps({"data_points": report["data_points"], "regulation_count": len(report["regulations"])}))
+            span.set_attribute("agent.data_points", report["data_points"])
+        return report
+    except Exception as e:
+        if span:
+            span.set_attribute("error", str(e))
+        raise
+    finally:
+        if span_ctx:
+            span_ctx.__exit__(None, None, None)
 
 
 @app.function(
     image=base_image,
     volumes={"/data": volume},
-    secrets=[modal.Secret.from_name("alethia-secrets")],
+    secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=300,
 )
-async def orchestrate_query(user_id: str, question: str, business_type: str, target_neighborhood: str) -> dict:
+async def orchestrate_query(user_id: str, question: str, business_type: str, target_neighborhood: str, trace_context: dict | None = None) -> dict:
     """Orchestrate parallel agents for query-time intelligence.
 
     1. Get user profile from Supermemory
@@ -475,76 +561,95 @@ async def orchestrate_query(user_id: str, question: str, business_type: str, tar
     4. Gather results
     5. Build synthesis prompt for LLM
     """
-    # Determine comparison neighborhoods
-    comparisons = ADJACENT_NEIGHBORHOODS.get(target_neighborhood, [])
-    if len(comparisons) < 2:
-        # Default comparisons if not in adjacency map
-        comparisons = ["Loop", "Lincoln Park"]
-    comparisons = comparisons[:2]
+    from modal_app.instrumentation import init_tracing, get_tracer, extract_context, inject_context
+    init_tracing()
+    tracer = get_tracer("alethia.agents")
+    parent_ctx = extract_context(trace_context)
 
-    # Fan-out via .spawn() — parallel agent execution
-    agent_handles = []
-
-    # Primary neighborhood agent (full analysis)
-    primary_handle = neighborhood_intel_agent.spawn(
-        neighborhood=target_neighborhood,
-        business_type=business_type,
-        focus_areas=["permits", "sentiment", "competition", "safety", "demographics"],
-    )
-    agent_handles.append(("primary", target_neighborhood, primary_handle))
-
-    # Comparison neighborhood agents
-    for comp_neighborhood in comparisons:
-        handle = neighborhood_intel_agent.spawn(
-            neighborhood=comp_neighborhood,
-            business_type=business_type,
-            focus_areas=["permits", "competition", "demographics"],
-        )
-        agent_handles.append(("comparison", comp_neighborhood, handle))
-
-    # Regulatory agent
-    reg_handle = regulatory_agent.spawn(business_type=business_type)
-    agent_handles.append(("regulatory", "all", reg_handle))
-
-    # TikTok: fire-and-forget scrape — results land on volume for Community tab on next refresh
+    span_ctx = tracer.start_as_current_span("orchestrate-query", context=parent_ctx) if tracer else None
+    span = span_ctx.__enter__() if span_ctx else None
     try:
-        from modal_app.pipelines.tiktok import ingest_tiktok
-        tiktok_query = f"{target_neighborhood} {business_type} chicago"
-        ingest_tiktok.spawn(
-            queries=[tiktok_query],
-            max_videos=5,
-            transcribe=False,
+        if span:
+            span.set_attribute("openinference.span.kind", "CHAIN")
+            span.set_attribute("input.value", question)
+            span.set_attribute("orchestrator.business_type", business_type)
+            span.set_attribute("orchestrator.target_neighborhood", target_neighborhood)
+
+        # Determine comparison neighborhoods
+        comparisons = ADJACENT_NEIGHBORHOODS.get(target_neighborhood, [])
+        if len(comparisons) < 2:
+            # Default comparisons if not in adjacency map
+            comparisons = ["Loop", "Lincoln Park"]
+        comparisons = comparisons[:2]
+
+        # Capture current trace context to propagate to child agents
+        child_ctx = inject_context()
+
+        # Fan-out via .spawn() — parallel agent execution
+        agent_handles = []
+
+        # Primary neighborhood agent (full analysis)
+        primary_handle = neighborhood_intel_agent.spawn(
+            neighborhood=target_neighborhood,
+            business_type=business_type,
+            focus_areas=["permits", "sentiment", "competition", "safety", "demographics"],
+            trace_context=child_ctx,
         )
-    except Exception:
-        pass
+        agent_handles.append(("primary", target_neighborhood, primary_handle))
 
-    # Gather results
-    agent_results = {}
-    for agent_type, name, handle in agent_handles:
+        # Comparison neighborhood agents
+        for comp_neighborhood in comparisons:
+            handle = neighborhood_intel_agent.spawn(
+                neighborhood=comp_neighborhood,
+                business_type=business_type,
+                focus_areas=["permits", "competition", "demographics"],
+                trace_context=child_ctx,
+            )
+            agent_handles.append(("comparison", comp_neighborhood, handle))
+
+        # Regulatory agent
+        reg_handle = regulatory_agent.spawn(business_type=business_type, trace_context=child_ctx)
+        agent_handles.append(("regulatory", "all", reg_handle))
+
+        # TikTok: fire-and-forget scrape — results land on volume for Community tab on next refresh
         try:
-            result = handle.get()
-            agent_results[f"{agent_type}_{name}"] = result
-        except Exception as e:
-            agent_results[f"{agent_type}_{name}"] = {"error": str(e)}
+            from modal_app.pipelines.tiktok import ingest_tiktok
+            tiktok_query = f"{target_neighborhood} {business_type} chicago"
+            ingest_tiktok.spawn(
+                queries=[tiktok_query],
+                max_videos=5,
+                transcribe=False,
+            )
+        except Exception:
+            pass
 
-    # Build context for LLM synthesis
-    total_data_points = sum(
-        r.get("data_points", 0) for r in agent_results.values() if isinstance(r, dict)
-    )
+        # Gather results
+        agent_results = {}
+        for agent_type, name, handle in agent_handles:
+            try:
+                result = handle.get()
+                agent_results[f"{agent_type}_{name}"] = result
+            except Exception as e:
+                agent_results[f"{agent_type}_{name}"] = {"error": str(e)}
 
-    context = {
-        "question": question,
-        "user_id": user_id,
-        "business_type": business_type,
-        "target_neighborhood": target_neighborhood,
-        "comparison_neighborhoods": comparisons,
-        "agent_results": agent_results,
-        "total_data_points": total_data_points,
-        "agents_deployed": len(agent_handles),
-    }
+        # Build context for LLM synthesis
+        total_data_points = sum(
+            r.get("data_points", 0) for r in agent_results.values() if isinstance(r, dict)
+        )
 
-    # Build synthesis prompt
-    synthesis_prompt = f"""User question: {question}
+        context = {
+            "question": question,
+            "user_id": user_id,
+            "business_type": business_type,
+            "target_neighborhood": target_neighborhood,
+            "comparison_neighborhoods": comparisons,
+            "agent_results": agent_results,
+            "total_data_points": total_data_points,
+            "agents_deployed": len(agent_handles),
+        }
+
+        # Build synthesis prompt
+        synthesis_prompt = f"""User question: {question}
 
 Business type: {business_type}
 Target neighborhood: {target_neighborhood}
@@ -552,38 +657,51 @@ Comparison neighborhoods: {', '.join(comparisons)}
 
 Agent reports:
 """
-    for key, result in agent_results.items():
-        synthesis_prompt += f"\n--- {key} ---\n{json.dumps(result, indent=2, default=str)[:2000]}\n"
+        for key, result in agent_results.items():
+            synthesis_prompt += f"\n--- {key} ---\n{json.dumps(result, indent=2, default=str)[:2000]}\n"
 
-    synthesis_prompt += f"\nTotal data points analyzed: {total_data_points}"
+        synthesis_prompt += f"\nTotal data points analyzed: {total_data_points}"
 
-    # Append freshness warnings for aging/stale sources
-    freshness_warnings = []
-    for key, result in agent_results.items():
-        if not isinstance(result, dict):
-            continue
-        for source, freshness in result.get("freshness", {}).items():
-            if isinstance(freshness, dict):
-                label = freshness.get("freshness_label", "")
-                age = freshness.get("age_human", "")
-                if label in ("aging", "stale"):
-                    freshness_warnings.append(f"WARNING: {source} data is {label} ({age})")
+        # Append freshness warnings for aging/stale sources
+        freshness_warnings = []
+        for key, result in agent_results.items():
+            if not isinstance(result, dict):
+                continue
+            for source, freshness in result.get("freshness", {}).items():
+                if isinstance(freshness, dict):
+                    label = freshness.get("freshness_label", "")
+                    age = freshness.get("age_human", "")
+                    if label in ("aging", "stale"):
+                        freshness_warnings.append(f"WARNING: {source} data is {label} ({age})")
 
-    if freshness_warnings:
-        synthesis_prompt += "\n\nDATA FRESHNESS WARNINGS:\n" + "\n".join(freshness_warnings)
-        synthesis_prompt += "\nNote any stale data in your response and lower confidence accordingly."
+        if freshness_warnings:
+            synthesis_prompt += "\n\nDATA FRESHNESS WARNINGS:\n" + "\n".join(freshness_warnings)
+            synthesis_prompt += "\nNote any stale data in your response and lower confidence accordingly."
 
-    # Build synthesis messages for streaming by web.py (LLM call + Supermemory store happen there)
-    from modal_app.llm import SYSTEM_PROMPT
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT + "\n\n" + SYNTHESIS_SYSTEM_PROMPT},
-        {"role": "user", "content": synthesis_prompt},
-    ]
+        # Build synthesis messages for the caller to stream via LLM
+        from modal_app.llm import SYSTEM_PROMPT
 
-    return {
-        "synthesis_messages": messages,
-        "agents_deployed": len(agent_handles),
-        "neighborhoods_analyzed": [target_neighborhood] + comparisons,
-        "total_data_points": total_data_points,
-        "context": context,
-    }
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT + "\n\n" + SYNTHESIS_SYSTEM_PROMPT},
+            {"role": "user", "content": synthesis_prompt},
+        ]
+
+        if span:
+            span.set_attribute("output.value", json.dumps({"agents_deployed": len(agent_handles), "total_data_points": total_data_points}))
+            span.set_attribute("orchestrator.agents_deployed", len(agent_handles))
+            span.set_attribute("orchestrator.total_data_points", total_data_points)
+
+        return {
+            "synthesis_messages": messages,
+            "agents_deployed": len(agent_handles),
+            "neighborhoods_analyzed": [target_neighborhood] + comparisons,
+            "total_data_points": total_data_points,
+            "context": context,
+        }
+    except Exception as e:
+        if span:
+            span.set_attribute("error", str(e))
+        raise
+    finally:
+        if span_ctx:
+            span_ctx.__exit__(None, None, None)

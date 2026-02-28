@@ -24,17 +24,21 @@ COST_RATES = {
 
 # Expected freshness per source (in minutes)
 FRESHNESS_THRESHOLDS = {
-    "news": 60,         # Every 30 min, alert after 60
-    "reddit": 120,      # Every 1 hour, alert after 2 hours
+    "news": 60,          # Every 30 min, alert after 60
+    "reddit": 120,       # Every 1 hour, alert after 2 hours
     "public_data": 1500, # Daily, alert after 25 hours
-    "politics": 1500,   # Daily
+    "politics": 1500,    # Daily
     "demographics": 44640, # Monthly
-    "reviews": 1500,    # Daily
+    "reviews": 1500,     # Daily
     "realestate": 10800, # Weekly
-    "tiktok": 1500,     # Daily, alert after 25 hours
+    "tiktok": 1500,      # Daily, alert after 25 hours
+    "traffic": 180,      # Every 1 hour, alert after 3 hours
+    "cctv": 15,          # Every 5 min, alert after 15
+    "federal_register": 1500, # Daily
 }
 
 cost_dict = modal.Dict.from_name("alethia-costs", create_if_missing=True)
+restart_dict = modal.Dict.from_name("alethia-restarts", create_if_missing=True)
 
 
 def log_cost(function_name: str, gpu: str, duration_seconds: float):
@@ -131,42 +135,64 @@ async def data_reconciler():
                 "doc_count": len(json_files),
             }
 
-    # Auto-restart stale pipelines
+    # Auto-restart stale pipelines (with backoff: max 3 restarts per source per hour)
+    hour_key = now.strftime("%Y-%m-%d-%H")
     restarted = []
+    skipped = []
     for source in stale_sources:
+        # Check restart backoff
+        backoff_key = f"{source}_{hour_key}"
+        try:
+            restart_count = restart_dict[backoff_key]
+        except KeyError:
+            restart_count = 0
+        if restart_count >= 3:
+            skipped.append(source)
+            print(f"Reconciler: skipping {source} — restarted {restart_count}x this hour")
+            continue
+
         try:
             if source == "news":
                 from modal_app.pipelines.news import news_ingester
                 await news_ingester.spawn.aio()
-                restarted.append(source)
             elif source == "reddit":
                 from modal_app.pipelines.reddit import reddit_ingester
                 await reddit_ingester.spawn.aio()
-                restarted.append(source)
             elif source == "public_data":
                 from modal_app.pipelines.public_data import public_data_ingester
                 await public_data_ingester.spawn.aio()
-                restarted.append(source)
             elif source == "politics":
                 from modal_app.pipelines.politics import politics_ingester
                 await politics_ingester.spawn.aio()
-                restarted.append(source)
+            elif source == "demographics":
+                from modal_app.pipelines.demographics import demographics_ingester
+                await demographics_ingester.spawn.aio()
             elif source == "reviews":
                 from modal_app.pipelines.reviews import review_ingester
                 await review_ingester.spawn.aio()
-                restarted.append(source)
             elif source == "realestate":
                 from modal_app.pipelines.realestate import realestate_ingester
                 await realestate_ingester.spawn.aio()
-                restarted.append(source)
             elif source == "tiktok":
                 from modal_app.pipelines.tiktok import ingest_tiktok
                 ingest_tiktok.spawn()
-                restarted.append(source)
+            elif source == "federal_register":
+                from modal_app.pipelines.federal_register import federal_register_ingester
+                await federal_register_ingester.spawn.aio()
+            elif source == "traffic":
+                from modal_app.pipelines.traffic import traffic_ingester
+                await traffic_ingester.spawn.aio()
+            elif source == "cctv":
+                from modal_app.pipelines.cctv import cctv_ingester
+                await cctv_ingester.spawn.aio()
+            else:
+                continue
+            restarted.append(source)
+            restart_dict[backoff_key] = restart_count + 1
         except Exception as e:
             print(f"Failed to restart {source}: {e}")
 
-    print(f"Reconciler: {len(stale_sources)} stale, {len(restarted)} restarted")
+    print(f"Reconciler: {len(stale_sources)} stale, {len(restarted)} restarted, {len(skipped)} skipped (backoff)")
     print(f"Status: {json.dumps(status_report, indent=2, default=str)}")
 
     return {

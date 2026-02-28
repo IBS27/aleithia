@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
+import { SignedIn, SignedOut, SignInButton, SignUpButton, useClerk, useUser } from '@clerk/clerk-react'
 import type { UserProfile, NeighborhoodData, DataSources, ChatMessage, RiskScore } from '../types/index.ts'
 import { api, streamChat } from '../api.ts'
+import type { ProcessStage } from './ProcessFlow.tsx'
 import RiskCard from './RiskCard.tsx'
 import ChatPanel from './ChatPanel.tsx'
 import MapView from './MapView.tsx'
@@ -87,6 +89,17 @@ function computeRiskScore(data: NeighborhoodData, profile: UserProfile): RiskSco
     })
   }
 
+  if (data.cctv && data.cctv.cameras.length > 0) {
+    const density = data.cctv.density
+    factors.push({
+      label: `${data.cctv.cameras.length} CCTV cameras — ${density} foot traffic`,
+      pct: density === 'high' ? 5 : density === 'medium' ? 10 : 15,
+      source: 'cctv',
+      severity: density === 'low' ? 'medium' as const : 'low' as const,
+      description: `Live CCTV analysis shows ~${data.cctv.avg_pedestrians} avg pedestrians and ~${data.cctv.avg_vehicles} avg vehicles across ${data.cctv.cameras.length} nearby cameras.`,
+    })
+  }
+
   const metrics = data.metrics || {}
   if (metrics.active_permits) {
     factors.push({
@@ -155,6 +168,8 @@ interface Props {
 }
 
 export default function Dashboard({ profile, onReset }: Props) {
+  const { signOut } = useClerk()
+  const { user } = useUser()
   const [neighborhoodData, setNeighborhoodData] = useState<NeighborhoodData | null>(null)
   const [sources, setSources] = useState<DataSources | null>(null)
   const [riskScore, setRiskScore] = useState<RiskScore | null>(null)
@@ -165,10 +180,13 @@ export default function Dashboard({ profile, onReset }: Props) {
   const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null)
   const [agentActive, setAgentActive] = useState(false)
   const [agentElapsedMs, setAgentElapsedMs] = useState<number | undefined>(undefined)
+  const [processStage, setProcessStage] = useState<ProcessStage>('idle')
+  const [chatQuestion, setChatQuestion] = useState('')
+  const processLogs = useRef<string[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
-  const userIdRef = useRef(`user_${Date.now()}`)
+  const userId = user?.id ?? `anon_${Date.now()}`
 
   const refreshData = async () => {
     try {
@@ -206,6 +224,9 @@ export default function Dashboard({ profile, onReset }: Props) {
     setAgentActive(true)
     setAgentInfo(null)
     setStatusMessage('')
+    setProcessStage('deploying')
+    setChatQuestion(message)
+    processLogs.current = [`[${new Date().toISOString()}] query: ${message}`]
     const startTime = Date.now()
 
     // Add empty assistant message for streaming
@@ -216,14 +237,26 @@ export default function Dashboard({ profile, onReset }: Props) {
       await streamChat(message, profile, {
         onStatus: (content) => {
           setStatusMessage(content)
+          processLogs.current.push(`[+${Date.now() - startTime}ms] status: ${content}`)
+          if (content.toLowerCase().includes('synth')) {
+            setProcessStage('synthesizing')
+          }
         },
         onAgents: (data) => {
           setAgentInfo(data)
           setAgentActive(false)
           setAgentElapsedMs(Date.now() - startTime)
+          setProcessStage('agents_complete')
+          processLogs.current.push(`[+${Date.now() - startTime}ms] agents: ${data.agents_deployed} deployed, ${data.data_points} pts, neighborhoods=[${data.neighborhoods.join(', ')}]`)
+          if (data.agent_summaries) {
+            for (const a of data.agent_summaries) {
+              processLogs.current.push(`  agent ${a.name}: ${a.data_points} pts${a.sources ? ` sources=[${a.sources.join(',')}]` : ''}${a.regulation_count ? ` regs=${a.regulation_count}` : ''}${a.error ? ' ERROR' : ''}`)
+            }
+          }
         },
         onToken: (token) => {
           setStatusMessage('')
+          setProcessStage('streaming')
           setMessages(prev => {
             const updated = [...prev]
             const last = updated[updated.length - 1]
@@ -236,6 +269,19 @@ export default function Dashboard({ profile, onReset }: Props) {
         onDone: () => {
           setIsStreaming(false)
           setChatLoading(false)
+          setProcessStage('complete')
+          processLogs.current.push(`[+${Date.now() - startTime}ms] done, total=${Date.now() - startTime}ms`)
+
+          if (user) {
+            api.saveUserSettings(user.id, profile.business_type, profile.neighborhood).catch(() => {})
+          }
+
+          setMessages(prev => {
+            const updated = [...prev]
+            updated[updated.length - 1] = { ...updated[updated.length - 1], timestamp: new Date() }
+            return updated
+          })
+
           // Auto-refresh data after chat — TikTok scrape may have landed new data on volume
           setTimeout(() => refreshData(), 30_000)
         },
@@ -244,6 +290,8 @@ export default function Dashboard({ profile, onReset }: Props) {
           setIsStreaming(false)
           setAgentActive(false)
           setStatusMessage('')
+          setProcessStage('complete')
+          processLogs.current.push(`[+${Date.now() - startTime}ms] error: ${_errorMsg} (local fallback)`)
 
           const nb = profile.neighborhood
           const biz = profile.business_type.toLowerCase()
@@ -294,11 +342,12 @@ export default function Dashboard({ profile, onReset }: Props) {
           })
           setChatLoading(false)
         },
-      }, userIdRef.current)
+      }, userId)
     } catch {
       setIsStreaming(false)
       setChatLoading(false)
       setAgentActive(false)
+      setProcessStage('complete')
     }
   }
 
@@ -324,11 +373,32 @@ export default function Dashboard({ profile, onReset }: Props) {
             {profile.business_type} <span className="text-white/10 mx-1">/</span> <span className="text-white/50">{profile.neighborhood}</span>
           </span>
         </div>
-        <div className="flex items-center gap-5">
+        <div className="flex items-center gap-3">
           <Timer running={loading} />
           <button onClick={refreshData} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
             Refresh
           </button>
+
+          <SignedOut>
+            <SignInButton mode="modal">
+              <button className="text-[10px] font-mono uppercase tracking-wider text-white/30 hover:text-white/60 transition-colors cursor-pointer">
+                Log in
+              </button>
+            </SignInButton>
+            <SignUpButton mode="modal">
+              <button className="text-[10px] font-mono uppercase tracking-wider text-white/30 hover:text-white/60 transition-colors cursor-pointer">
+                Sign up
+              </button>
+            </SignUpButton>
+          </SignedOut>
+
+          <SignedIn>
+            {user && <span className="text-[10px] font-mono text-white/25">{user.primaryEmailAddress?.emailAddress}</span>}
+            <button onClick={() => signOut()} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
+              Sign out
+            </button>
+          </SignedIn>
+
           <button onClick={onReset} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
             New Search
           </button>
@@ -393,7 +463,7 @@ export default function Dashboard({ profile, onReset }: Props) {
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     {riskScore && <RiskCard score={riskScore} />}
                     {neighborhoodData?.metrics && (
-                      <DemographicsCard metrics={neighborhoodData.metrics} demographics={neighborhoodData.demographics} />
+                      <DemographicsCard metrics={neighborhoodData.metrics} demographics={neighborhoodData.demographics} cctv={neighborhoodData.cctv} />
                     )}
                   </div>
 
@@ -402,7 +472,7 @@ export default function Dashboard({ profile, onReset }: Props) {
                   )}
 
                   {neighborhoodData && (
-                    <div className="grid grid-cols-3 lg:grid-cols-6 gap-3">
+                    <div className="grid grid-cols-3 lg:grid-cols-7 gap-3">
                       <StatCard
                         label="Food Inspections"
                         value={neighborhoodData.inspection_stats.total}
@@ -437,6 +507,12 @@ export default function Dashboard({ profile, onReset }: Props) {
                         label="Community"
                         value={(neighborhoodData.reddit?.length || 0) + (neighborhoodData.tiktok?.length || 0)}
                         sub="posts"
+                        severity="nominal"
+                      />
+                      <StatCard
+                        label="CCTV Cameras"
+                        value={neighborhoodData.cctv?.cameras.length ?? 0}
+                        sub={neighborhoodData.cctv?.density ?? 'no data'}
                         severity="nominal"
                       />
                     </div>
@@ -502,6 +578,9 @@ export default function Dashboard({ profile, onReset }: Props) {
             agentActive={agentActive}
             agentElapsedMs={agentElapsedMs}
             statusMessage={statusMessage}
+            processStage={processStage}
+            chatQuestion={chatQuestion}
+            processLogs={processLogs.current}
           />
         </div>
       </div>

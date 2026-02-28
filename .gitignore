@@ -79,4 +79,4 @@ backend/data/
 !docs/plans/*.md
 !data_sources.md
 !docs/SETUP.md
-!architecture.md
+frontend/package-lock.json

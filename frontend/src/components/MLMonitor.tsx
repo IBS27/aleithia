@@ -40,6 +40,15 @@ const MODELS: ModelCard[] = [
     maxBatch: 32,
     status: 'online',
   },
+  {
+    name: 'YOLOv8n',
+    provider: 'Ultralytics',
+    gpu: 'T4',
+    task: 'CCTV Object Detection',
+    params: '3.2M',
+    maxBatch: 1,
+    status: 'online',
+  },
 ]
 
 const TRAINING_DATA = {
@@ -77,12 +86,14 @@ export default function MLMonitor() {
     h100_llm: 'H100',
     t4_classifier: 'T4',
     t4_sentiment: 'T4',
+    t4_cctv: 'T4',
   }
 
   const gpuTaskMap: Record<string, string> = {
     h100_llm: 'Qwen3-8B LLM',
     t4_classifier: 'Doc Classifier',
     t4_sentiment: 'Sentiment Analyzer',
+    t4_cctv: 'CCTV Detector',
   }
 
   return (
@@ -97,7 +108,7 @@ export default function MLMonitor() {
             </span>
           )}
         </div>
-        <div className="grid grid-cols-3 divide-x divide-white/[0.06]">
+        <div className="grid grid-cols-4 divide-x divide-white/[0.06]">
           {status ? Object.entries(status.gpu_status).map(([key, state]) => (
             <div key={key} className="px-4 py-3">
               <div className="flex items-center gap-2 mb-2">
@@ -110,7 +121,7 @@ export default function MLMonitor() {
               </div>
             </div>
           )) : (
-            <div className="col-span-3 px-4 py-6 text-center">
+            <div className="col-span-4 px-4 py-6 text-center">
               <span className="text-[10px] font-mono text-white/20">{error ? 'Failed to connect' : 'Loading...'}</span>
             </div>
           )}
@@ -124,7 +135,7 @@ export default function MLMonitor() {
         </div>
         <div className="divide-y divide-white/[0.06]">
           {MODELS.map((model) => {
-            const gpuKey = model.gpu === 'H100' ? 'h100_llm' : model.task.includes('Classification') ? 't4_classifier' : 't4_sentiment'
+            const gpuKey = model.gpu === 'H100' ? 'h100_llm' : model.task.includes('Classification') ? 't4_classifier' : model.task.includes('CCTV') ? 't4_cctv' : 't4_sentiment'
             const liveStatus = status?.gpu_status[gpuKey]
             const isOnline = liveStatus === 'available'
 
@@ -263,7 +274,7 @@ export default function MLMonitor() {
               ['modal.Period', '5 cron schedules'],
               ['modal.Retries', 'Pipeline resilience'],
               ['gpu="H100"', 'LLM inference'],
-              ['gpu="T4"', 'Classification x2'],
+              ['gpu="T4"', 'Classification x2 + CCTV'],
               ['Image.pip_install', '10 custom images'],
               ['modal.web_endpoint', 'SSE streaming'],
             ].map(([feature, usage]) => (
@@ -275,7 +286,7 @@ export default function MLMonitor() {
           </div>
           <div className="mt-3 pt-2 border-t border-white/[0.06] flex items-center justify-between">
             <span className="text-[10px] font-mono text-white/25">Total Modal features</span>
-            <span className="text-xs font-mono font-bold text-white/60">17</span>
+            <span className="text-xs font-mono font-bold text-white/60">18</span>
           </div>
         </div>
       </div>

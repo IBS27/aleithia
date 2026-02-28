@@ -133,6 +133,7 @@ for _sub in ("data/raw", "data/cache", "data/dedup", "data/processed"):
 from modal_app.pipelines import news, reddit, politics, public_data  # noqa: E402
 from modal_app.pipelines import demographics, federal_register        # noqa: E402
 from modal_app.pipelines import realestate, reviews                   # noqa: E402
+from modal_app.pipelines import cctv                                  # noqa: E402
 
 # ── Reporting helpers ─────────────────────────────────────────────────────────
 
@@ -203,6 +204,7 @@ async def run_all():
     await _run("DEMOGRAPHICS (Census)", demographics._fetch_census)
     await _run("FEDERAL REGISTER", federal_register._fetch_federal_register)
     await _run("REAL ESTATE (placeholders)", realestate._create_placeholder_listings)
+    await _run("CCTV (IDOT cameras)", cctv._fetch_idot_cameras)
 
     # ── API-key gated ─────────────────────────────────────────────────────
 

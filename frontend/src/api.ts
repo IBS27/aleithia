@@ -3,10 +3,16 @@ import type { DataSources, GeoJSON, NeighborhoodData, Document } from './types'
 // Modal deployed endpoint — set via VITE_MODAL_URL, fallback to local proxy
 const API_BASE = import.meta.env.VITE_MODAL_URL || '/api/data'
 
-async function fetchJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`)
+async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, init)
   if (!res.ok) throw new Error(`API error: ${res.status}`)
   return res.json()
+}
+
+export interface SavedSettings {
+  user_id: string
+  location_type: string
+  neighborhood: string
 }
 
 export interface StreamChatCallbacks {
@@ -155,4 +161,20 @@ export const api = {
     const qs = neighborhood ? `?neighborhood=${encodeURIComponent(neighborhood)}` : ''
     return fetchJSON<Document[]>(`/traffic${qs}`)
   },
+  getUserSettings: (userId: string) => fetchJSON<SavedSettings>('/user/settings', {
+    headers: {
+      'x-user-id': userId,
+    },
+  }),
+  saveUserSettings: (userId: string, locationType: string, neighborhood: string) => fetchJSON<SavedSettings>('/user/settings', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-user-id': userId,
+    },
+    body: JSON.stringify({
+      location_type: locationType,
+      neighborhood,
+    }),
+  }),
 }

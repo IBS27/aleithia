@@ -11,7 +11,7 @@ from pathlib import Path
 import httpx
 import modal
 
-from modal_app.common import Document, SourceType, detect_neighborhood
+from modal_app.common import Document, SourceType, detect_neighborhood, safe_volume_commit
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
 from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
@@ -156,7 +156,7 @@ async def _fetch_federal_register_fallback() -> list[dict]:
 )
 async def federal_register_ingester():
     """Ingest relevant federal regulations for small business impact analysis."""
-    chain = FallbackChain("federal_register", "all_agencies")
+    chain = FallbackChain("federal_register", "all_agencies", cache_ttl_hours=168)
     all_docs = await chain.execute([
         _fetch_federal_register,
         _fetch_federal_register_fallback,
@@ -173,7 +173,7 @@ async def federal_register_ingester():
 
     if not new_docs:
         seen.save()
-        await volume.commit.aio()
+        await safe_volume_commit(volume, "federal_register")
         print("Federal Register ingester: no new documents")
         return 0
 
@@ -190,6 +190,6 @@ async def federal_register_ingester():
         seen.add(doc_data["id"])
 
     seen.save()
-    await volume.commit.aio()
+    await safe_volume_commit(volume, "federal_register")
     print(f"Federal Register ingester complete: {len(new_docs)} documents saved to {out_dir}")
     return len(new_docs)

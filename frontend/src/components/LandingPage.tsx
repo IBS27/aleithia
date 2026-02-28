@@ -1,4 +1,5 @@
 import { Suspense } from 'react'
+import { SignedIn, SignedOut, SignInButton, SignUpButton, useClerk } from '@clerk/clerk-react'
 import Spline from '@splinetool/react-spline'
 import type { Application } from '@splinetool/runtime'
 import CityGlobe from './CityGlobe'
@@ -50,6 +51,8 @@ const DATA_PILLARS = [
 ]
 
 export default function LandingPage({ onGetStarted }: Props) {
+  const { signOut } = useClerk()
+
   return (
     <div className="bg-[#06080d] text-white">
       {/* ── Hero ── */}
@@ -69,12 +72,36 @@ export default function LandingPage({ onGetStarted }: Props) {
             <span className="text-lg font-semibold tracking-tight text-white uppercase">
               Alethia
             </span>
-            <button
-              onClick={onGetStarted}
-              className="pointer-events-auto px-6 py-2 text-sm font-medium bg-white text-[#06080d] hover:bg-gray-200 transition-colors cursor-pointer"
-            >
-              Get Started
-            </button>
+            <div className="pointer-events-auto flex items-center gap-2">
+              <SignedOut>
+                <SignInButton mode="modal">
+                  <button className="px-4 py-2 text-sm font-medium border border-white/20 text-white/80 hover:text-white hover:border-white/40 transition-colors cursor-pointer">
+                    Log in
+                  </button>
+                </SignInButton>
+                <SignUpButton mode="modal">
+                  <button className="px-4 py-2 text-sm font-medium border border-white/20 text-white/80 hover:text-white hover:border-white/40 transition-colors cursor-pointer">
+                    Sign up
+                  </button>
+                </SignUpButton>
+              </SignedOut>
+
+              <SignedIn>
+                <button
+                  onClick={() => signOut()}
+                  className="px-4 py-2 text-sm font-medium border border-white/20 text-white/80 hover:text-white hover:border-white/40 transition-colors cursor-pointer"
+                >
+                  Sign out
+                </button>
+              </SignedIn>
+
+              <button
+                onClick={onGetStarted}
+                className="px-6 py-2 text-sm font-medium bg-white text-[#06080d] hover:bg-gray-200 transition-colors cursor-pointer"
+              >
+                Get Started
+              </button>
+            </div>
           </nav>
 
           <div className="flex-1 flex items-center justify-center px-10">

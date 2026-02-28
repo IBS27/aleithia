@@ -4,6 +4,7 @@ Cadence: Hourly
 Sources: r/chicago, r/chicagofood, r/ChicagoNWside, r/SouthSideChicago
 Pattern: async + FallbackChain (asyncpraw → reddit JSON → cache) + detect_neighborhood
 """
+import asyncio
 import json
 import os
 from datetime import datetime, timezone
@@ -12,7 +13,7 @@ from pathlib import Path
 import httpx
 import modal
 
-from modal_app.common import Document, SourceType, REDDIT_SUBREDDITS, detect_neighborhood, gather_with_limit
+from modal_app.common import Document, SourceType, REDDIT_SUBREDDITS, detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
 from modal_app.volume import app, volume, reddit_image, RAW_DATA_PATH
@@ -50,44 +51,50 @@ async def _fetch_via_asyncpraw(client_id: str, client_secret: str) -> list[dict]
 
     for sub_name in REDDIT_SUBREDDITS:
         try:
-            subreddit = await reddit.subreddit(sub_name)
-            seen_ids: set[str] = set()
+            async def _fetch_subreddit(name: str) -> list[dict]:
+                sub_docs = []
+                subreddit = await reddit.subreddit(name)
+                seen_ids: set[str] = set()
 
-            # Get hot + new posts
-            for listing_fn in [subreddit.hot, subreddit.new]:
-                limit = 25 if listing_fn == subreddit.hot else 15
-                async for submission in listing_fn(limit=limit):
-                    text = f"{submission.title}\n\n{submission.selftext}"
-                    if not _is_relevant(text):
-                        continue
+                for listing_fn in [subreddit.hot, subreddit.new]:
+                    limit = 25 if listing_fn == subreddit.hot else 15
+                    async for submission in listing_fn(limit=limit):
+                        text = f"{submission.title}\n\n{submission.selftext}"
+                        if not _is_relevant(text):
+                            continue
 
-                    doc_id = f"reddit-{submission.id}"
-                    if doc_id in seen_ids:
-                        continue
-                    seen_ids.add(doc_id)
+                        doc_id = f"reddit-{submission.id}"
+                        if doc_id in seen_ids:
+                            continue
+                        seen_ids.add(doc_id)
 
-                    neighborhood = detect_neighborhood(text)
+                        neighborhood = detect_neighborhood(text)
 
-                    all_docs.append({
-                        "id": doc_id,
-                        "source": SourceType.REDDIT.value,
-                        "title": submission.title,
-                        "content": submission.selftext[:3000] if submission.selftext else submission.title,
-                        "url": f"https://reddit.com{submission.permalink}",
-                        "timestamp": datetime.fromtimestamp(submission.created_utc, tz=timezone.utc).isoformat(),
-                        "metadata": {
-                            "subreddit": sub_name,
-                            "score": submission.score,
-                            "num_comments": submission.num_comments,
-                            "upvote_ratio": submission.upvote_ratio,
-                            "flair": submission.link_flair_text or "",
-                            "author": str(submission.author) if submission.author else "[deleted]",
-                        },
-                        "geo": {"neighborhood": neighborhood} if neighborhood else {},
-                    })
+                        sub_docs.append({
+                            "id": doc_id,
+                            "source": SourceType.REDDIT.value,
+                            "title": submission.title,
+                            "content": submission.selftext[:3000] if submission.selftext else submission.title,
+                            "url": f"https://reddit.com{submission.permalink}",
+                            "timestamp": datetime.fromtimestamp(submission.created_utc, tz=timezone.utc).isoformat(),
+                            "metadata": {
+                                "subreddit": name,
+                                "score": submission.score,
+                                "num_comments": submission.num_comments,
+                                "upvote_ratio": submission.upvote_ratio,
+                                "flair": submission.link_flair_text or "",
+                                "author": str(submission.author) if submission.author else "[deleted]",
+                            },
+                            "geo": {"neighborhood": neighborhood} if neighborhood else {},
+                        })
+                return sub_docs
 
-            print(f"r/{sub_name}: found {sum(1 for d in all_docs if d.get('metadata', {}).get('subreddit') == sub_name)} relevant posts")
+            sub_docs = await asyncio.wait_for(_fetch_subreddit(sub_name), timeout=30)
+            all_docs.extend(sub_docs)
+            print(f"r/{sub_name}: found {len(sub_docs)} relevant posts")
 
+        except asyncio.TimeoutError:
+            print(f"r/{sub_name}: timed out after 30s, skipping")
         except Exception as e:
             print(f"r/{sub_name} error: {e}")
 
@@ -183,7 +190,7 @@ async def reddit_ingester():
     client_secret = os.environ.get("REDDIT_CLIENT_SECRET", "")
 
     # FallbackChain: asyncpraw OAuth → RSS feeds → cache
-    chain = FallbackChain("reddit", "all_subs")
+    chain = FallbackChain("reddit", "all_subs", cache_ttl_hours=48)
     all_docs = await chain.execute([
         lambda: _fetch_via_asyncpraw(client_id, client_secret),
         _fetch_all_rss,
@@ -200,7 +207,7 @@ async def reddit_ingester():
 
     if not new_docs:
         seen.save()
-        await volume.commit.aio()
+        await safe_volume_commit(volume, "reddit")
         print("Reddit ingester: no new documents")
         return 0
 
@@ -218,13 +225,9 @@ async def reddit_ingester():
 
     # Push to classification queue
     from modal_app.classify import doc_queue
-    for doc_data in new_docs:
-        try:
-            await doc_queue.put.aio(doc_data)
-        except Exception:
-            pass
+    await safe_queue_push(doc_queue, new_docs, "reddit")
 
     seen.save()
-    await volume.commit.aio()
+    await safe_volume_commit(volume, "reddit")
     print(f"Reddit ingester complete: {len(new_docs)} documents saved to {out_dir}")
     return len(new_docs)

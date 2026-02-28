@@ -21,6 +21,7 @@ class SourceType(str, Enum):
     VISION = "vision"
     TRAFFIC = "traffic"
     TIKTOK = "tiktok"
+    CCTV = "cctv"
 
 
 class Document(BaseModel):
@@ -100,6 +101,21 @@ class NeighborhoodVisionAnalysis(BaseModel):
     person_count: int
     vehicle_count: int
     source_video: str = ""  # YouTube URL used for training
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class CCTVAnalysis(BaseModel):
+    """Per-frame CCTV analysis from YOLOv8n on IDOT highway cameras."""
+    camera_id: str
+    location: str
+    lat: float
+    lng: float
+    direction: str = ""
+    pedestrians: int = 0
+    vehicles: int = 0
+    bicycles: int = 0
+    density_level: str = "low"  # low / medium / high
+    annotated_image_path: str = ""
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -520,3 +536,28 @@ def compute_freshness(timestamp_str: str | None = None, file_mtime: float | None
         label = "stale"
 
     return {"age_seconds": age_seconds, "age_human": age_human, "freshness_label": label}
+
+
+async def safe_queue_push(queue, docs: list[dict], source: str) -> int:
+    """Push docs to classification queue with logging. Returns failure count."""
+    failures = 0
+    for doc in docs:
+        try:
+            await queue.put.aio(doc)
+        except Exception as e:
+            failures += 1
+            if failures == 1:
+                print(f"safe_queue_push [{source}]: first failure: {e}")
+    if failures:
+        print(f"safe_queue_push [{source}]: {failures}/{len(docs)} failed")
+    return failures
+
+
+async def safe_volume_commit(vol, source: str) -> bool:
+    """Commit volume with error logging. Returns True on success."""
+    try:
+        await vol.commit.aio()
+        return True
+    except Exception as e:
+        print(f"safe_volume_commit [{source}]: failed: {e}")
+        return False

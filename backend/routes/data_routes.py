@@ -8,11 +8,47 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Header, HTTPException, Query
+from pydantic import BaseModel, Field
 
 router = APIRouter()
 
 DATA_DIR = Path(__file__).parent.parent / "data"
+SETTINGS_FILE = Path(__file__).parent.parent / "user_settings.json"
+
+
+class UserSettings(BaseModel):
+    location_type: str = Field(..., min_length=1)
+    neighborhood: str = Field(..., min_length=1)
+
+
+class UserSettingsResponse(UserSettings):
+    user_id: str
+
+
+def _read_settings_store() -> dict[str, dict[str, str]]:
+    if not SETTINGS_FILE.exists():
+        return {}
+    try:
+        with open(SETTINGS_FILE) as fh:
+            payload = json.load(fh)
+            if isinstance(payload, dict):
+                return payload
+            return {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _write_settings_store(data: dict[str, dict[str, str]]) -> None:
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(SETTINGS_FILE, "w") as fh:
+        json.dump(data, fh, indent=2)
+
+
+def _require_user_id(x_user_id: Optional[str]) -> str:
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail="Missing x-user-id header")
+    return x_user_id
 
 
 def _load_all(source: str) -> list[dict]:
@@ -59,6 +95,38 @@ def _filter_by_type(docs: list[dict], dataset: str) -> list[dict]:
         d for d in docs
         if d.get("metadata", {}).get("dataset") == dataset
     ]
+
+
+@router.get("/user/settings", response_model=UserSettingsResponse)
+async def get_user_settings(x_user_id: Optional[str] = Header(default=None)):
+    """Get saved query settings for a user."""
+    user_id = _require_user_id(x_user_id)
+    store = _read_settings_store()
+    entry = store.get(user_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="No settings found for user")
+    return {
+        "user_id": user_id,
+        "location_type": entry.get("location_type", ""),
+        "neighborhood": entry.get("neighborhood", ""),
+    }
+
+
+@router.put("/user/settings", response_model=UserSettingsResponse)
+async def put_user_settings(payload: UserSettings, x_user_id: Optional[str] = Header(default=None)):
+    """Save last queried settings for a user."""
+    user_id = _require_user_id(x_user_id)
+    store = _read_settings_store()
+    store[user_id] = {
+        "location_type": payload.location_type,
+        "neighborhood": payload.neighborhood,
+    }
+    _write_settings_store(store)
+    return {
+        "user_id": user_id,
+        "location_type": payload.location_type,
+        "neighborhood": payload.neighborhood,
+    }
 
 
 @router.get("/sources")
