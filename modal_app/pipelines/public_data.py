@@ -28,7 +28,7 @@ DATE_FIELDS = {
     "food_inspections": "inspection_date",
     "building_permits": "issue_date",
     "crimes": "date",
-    "cta_ridership_L": "service_date",
+    "cta_ridership_L": "month_beginning",
     "cta_ridership_bus": "date",
 }
 
@@ -166,6 +166,6 @@ async def public_data_ingester():
         fpath = out_dir / f"{doc.id}.json"
         fpath.write_text(doc.model_dump_json(indent=2))
 
-    volume.commit()
+    await volume.commit.aio()
     print(f"Public data ingester complete: {len(all_docs)} documents saved to {out_dir}")
     return len(all_docs)

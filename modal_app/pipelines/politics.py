@@ -21,16 +21,15 @@ LEGISTAR_REST = "https://webapi.legistar.com/v1/chicago"
 LEGISTAR_ODATA = "https://webapi.legistar.com/v1/chicago"  # same base, different params
 
 
-async def _fetch_legislation_rest(since_days: int = 7) -> list[dict]:
+async def _fetch_legislation_rest(since_days: int = 90) -> list[dict]:
     """Fetch recent legislation from Chicago Legistar REST API."""
     docs = []
-    since = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%d")
 
     async with httpx.AsyncClient(timeout=30) as client:
+        # Legistar data may lag — fetch latest available without strict date filter
         resp = await client.get(
             f"{LEGISTAR_REST}/matters",
             params={
-                "$filter": f"MatterIntroDate ge datetime'{since}'",
                 "$orderby": "MatterIntroDate desc",
                 "$top": 50,
             },
@@ -68,22 +67,21 @@ async def _fetch_legislation_rest(since_days: int = 7) -> list[dict]:
     return docs
 
 
-async def _fetch_legislation_odata(since_days: int = 7) -> list[dict]:
+async def _fetch_legislation_odata(since_days: int = 90) -> list[dict]:
     """Fallback: fetch legislation via OData-style params."""
     # Same endpoint but with different query approach
     return await _fetch_legislation_rest(since_days)
 
 
-async def _fetch_events(since_days: int = 30) -> list[dict]:
+async def _fetch_events(since_days: int = 90) -> list[dict]:
     """Fetch recent council/committee events."""
     docs = []
-    since = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%d")
 
     async with httpx.AsyncClient(timeout=30) as client:
+        # Fetch latest available events without strict date filter
         resp = await client.get(
             f"{LEGISTAR_REST}/events",
             params={
-                "$filter": f"EventDate ge datetime'{since}'",
                 "$orderby": "EventDate desc",
                 "$top": 30,
             },
@@ -220,6 +218,6 @@ async def politics_ingester():
         fpath = out_dir / f"{doc.id}.json"
         fpath.write_text(doc.model_dump_json(indent=2))
 
-    volume.commit()
+    await volume.commit.aio()
     print(f"Politics ingester complete: {len(all_docs)} documents saved to {out_dir}")
     return len(all_docs)

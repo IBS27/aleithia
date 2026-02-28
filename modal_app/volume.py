@@ -10,8 +10,8 @@ RAW_DATA_PATH = f"{VOLUME_MOUNT}/raw"
 PROCESSED_DATA_PATH = f"{VOLUME_MOUNT}/processed"
 CACHE_PATH = f"{VOLUME_MOUNT}/cache"
 
-# Base image with common dependencies
-base_image = (
+# Internal base (no local source — derived images add pip_install then local source last)
+_base = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
         "httpx==0.27.0",
@@ -20,30 +20,35 @@ base_image = (
     )
 )
 
-# Image for pipelines that need additional dependencies
-reddit_image = base_image.pip_install("asyncpraw==7.7.1")
+# add_local_python_source must be LAST — no pip_install after it
+base_image = _base.add_local_python_source("modal_app")
 
-politics_image = base_image.pip_install(
+reddit_image = _base.pip_install("asyncpraw==7.7.1").add_local_python_source("modal_app")
+
+politics_image = _base.pip_install(
     "pymupdf==1.24.0",
     "pdfplumber==0.11.0",
-)
+).add_local_python_source("modal_app")
 
-data_image = base_image.pip_install("pandas==2.2.0")
+data_image = _base.pip_install("pandas==2.2.0").add_local_python_source("modal_app")
 
 # Vision pipeline images
 video_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
     .pip_install("yt-dlp==2024.8.6")
+    .add_local_python_source("modal_app")
 )
 
 label_image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install("openai==1.50.0", "httpx==0.27.0", "pillow==10.4.0")
+    .add_local_python_source("modal_app")
 )
 
 yolo_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("libgl1-mesa-glx", "libglib2.0-0")
     .pip_install("ultralytics==8.2.0", "opencv-python-headless==4.9.0.80")
+    .add_local_python_source("modal_app")
 )

@@ -167,7 +167,7 @@ def _build_geo_metrics(summaries: dict[str, DatasetSummary]) -> dict:
     volumes={"/data": volume},
     timeout=300,
 )
-def compress_raw_data(sources: list[str] | None = None, days: int = 7):
+def compress_raw_data(days: int = 7):
     """Compress raw data into neighborhood-level summaries.
 
     Reads /data/raw/{source}/ → writes /data/processed/summaries/ and
@@ -177,8 +177,7 @@ def compress_raw_data(sources: list[str] | None = None, days: int = 7):
         sources: List of sources to compress. Default: public_data, demographics, reviews
         days: How many days of data to include
     """
-    if sources is None:
-        sources = ["public_data", "demographics", "reviews"]
+    sources = ["public_data", "demographics", "reviews"]
 
     summaries: dict[str, DatasetSummary] = {}
 

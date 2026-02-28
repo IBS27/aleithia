@@ -228,6 +228,6 @@ async def review_ingester():
         fpath = out_dir / f"{doc.id}.json"
         fpath.write_text(doc.model_dump_json(indent=2))
 
-    volume.commit()
+    await volume.commit.aio()
     print(f"Review ingester complete: {len(all_docs)} documents saved to {out_dir}")
     return len(all_docs)

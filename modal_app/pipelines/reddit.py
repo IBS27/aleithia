@@ -98,10 +98,11 @@ async def _fetch_via_json(sub_name: str) -> list[dict]:
     """Fetch from reddit.com JSON API (no auth required)."""
     docs = []
     async with httpx.AsyncClient(timeout=15, headers={
-        "User-Agent": "alethia:v0.1 (educational hackathon project)"
+        "User-Agent": "Mozilla/5.0 (compatible; Alethia/0.1; educational project)"
     }) as client:
-        resp = await client.get(f"https://www.reddit.com/r/{sub_name}/hot.json", params={"limit": 25})
+        resp = await client.get(f"https://www.reddit.com/r/{sub_name}/hot.json", params={"limit": 50})
         if resp.status_code != 200:
+            print(f"Reddit JSON [{sub_name}]: HTTP {resp.status_code}")
             return docs
 
         for child in resp.json().get("data", {}).get("children", []):
@@ -176,6 +177,6 @@ async def reddit_ingester():
         fpath = out_dir / f"{doc.id}.json"
         fpath.write_text(doc.model_dump_json(indent=2))
 
-    volume.commit()
+    await volume.commit.aio()
     print(f"Reddit ingester complete: {len(all_docs)} documents saved to {out_dir}")
     return len(all_docs)
