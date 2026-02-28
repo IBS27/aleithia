@@ -61,13 +61,15 @@ def log_cost(function_name: str, gpu: str, duration_seconds: float):
         }
 
 
-def get_total_cost() -> dict:
+async def get_total_cost() -> dict:
     """Get total accumulated cost across all functions."""
     total = 0.0
     breakdown = {}
     try:
-        for key in cost_dict.keys():
-            entry = cost_dict[key]
+        async for key in cost_dict.keys.aio():
+            entry = await cost_dict.get.aio(key)
+            if entry is None:
+                continue
             total += entry.get("total_cost", 0)
             fn = entry.get("function", "unknown")
             breakdown[fn] = breakdown.get(fn, 0) + entry.get("total_cost", 0)
@@ -134,19 +136,19 @@ async def data_reconciler():
         try:
             if source == "news":
                 from modal_app.pipelines.news import news_ingester
-                news_ingester.spawn()
+                await news_ingester.spawn.aio()
                 restarted.append(source)
             elif source == "reddit":
                 from modal_app.pipelines.reddit import reddit_ingester
-                reddit_ingester.spawn()
+                await reddit_ingester.spawn.aio()
                 restarted.append(source)
             elif source == "public_data":
                 from modal_app.pipelines.public_data import public_data_ingester
-                public_data_ingester.spawn()
+                await public_data_ingester.spawn.aio()
                 restarted.append(source)
             elif source == "politics":
                 from modal_app.pipelines.politics import politics_ingester
-                politics_ingester.spawn()
+                await politics_ingester.spawn.aio()
                 restarted.append(source)
         except Exception as e:
             print(f"Failed to restart {source}: {e}")
@@ -158,5 +160,5 @@ async def data_reconciler():
         "stale_sources": stale_sources,
         "restarted": restarted,
         "status": status_report,
-        "costs": get_total_cost(),
+        "costs": await get_total_cost(),
     }
