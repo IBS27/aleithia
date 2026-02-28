@@ -32,6 +32,7 @@ FRESHNESS_THRESHOLDS = {
     "reviews": 1500,     # Daily
     "realestate": 10800, # Weekly
     "traffic": 180,      # Every 1 hour, alert after 3 hours
+    "cctv": 15,          # Every 5 min, alert after 15
     "federal_register": 1500, # Daily
 }
 
@@ -177,6 +178,9 @@ async def data_reconciler():
             elif source == "traffic":
                 from modal_app.pipelines.traffic import traffic_ingester
                 await traffic_ingester.spawn.aio()
+            elif source == "cctv":
+                from modal_app.pipelines.cctv import cctv_ingester
+                await cctv_ingester.spawn.aio()
             else:
                 continue
             restarted.append(source)

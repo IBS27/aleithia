@@ -33,6 +33,7 @@ interface Props {
   question?: string
   agentInfo: AgentInfo | null
   elapsedMs?: number
+  logs?: string[]
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -106,11 +107,12 @@ function ConnectorLine({ active, done }: { active: boolean; done: boolean }) {
 
 // ── Main component ───────────────────────────────────────────────────────
 
-export default function ProcessFlow({ stage, question, agentInfo, elapsedMs }: Props) {
+export default function ProcessFlow({ stage, question, agentInfo, elapsedMs, logs }: Props) {
   if (stage === 'idle') return null
 
   // Auto-expand while active, collapse when complete
   const [userToggled, setUserToggled] = useState<boolean | null>(null)
+  const [copied, setCopied] = useState(false)
   const isComplete = stage === 'complete'
   const expanded = userToggled !== null ? userToggled : !isComplete
 
@@ -160,9 +162,35 @@ export default function ProcessFlow({ stage, question, agentInfo, elapsedMs }: P
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {complete && elapsedMs !== undefined && (
             <span className="text-[9px] font-mono text-white/15">{(elapsedMs / 1000).toFixed(1)}s</span>
+          )}
+          {complete && logs && logs.length > 0 && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation()
+                navigator.clipboard.writeText(logs.join('\n'))
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1500)
+              }}
+              onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.click() }}
+              className="p-0.5 hover:bg-white/[0.06] rounded transition-colors"
+              title="Copy logs"
+            >
+              {copied ? (
+                <svg className="w-3 h-3 text-emerald-400/60" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              ) : (
+                <svg className="w-3 h-3 text-white/20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <rect x="9" y="9" width="13" height="13" rx="2" strokeWidth={2} />
+                  <path strokeWidth={2} d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                </svg>
+              )}
+            </span>
           )}
           <svg
             className={`w-3 h-3 text-white/20 transition-transform ${expanded ? 'rotate-180' : ''}`}

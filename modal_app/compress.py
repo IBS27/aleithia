@@ -132,6 +132,12 @@ def _build_geo_metrics(summaries: dict[str, DatasetSummary]) -> dict:
         for hood, count in pd_summary.counts_by_neighborhood.items():
             neighborhood_data[hood]["active_permits"] += count
 
+    # Aggregate from CCTV summary — foot traffic intensity
+    if "cctv" in summaries:
+        cctv_summary = summaries["cctv"]
+        for hood, count in cctv_summary.counts_by_neighborhood.items():
+            neighborhood_data[hood]["foot_traffic_intensity"] = min(count * 5.0, 100.0)
+
     # Aggregate from reviews summary
     if "reviews" in summaries:
         rv_summary = summaries["reviews"]
@@ -177,7 +183,7 @@ def compress_raw_data(days: int = 7):
         sources: List of sources to compress. Default: public_data, demographics, reviews
         days: How many days of data to include
     """
-    sources = ["public_data", "demographics", "reviews"]
+    sources = ["public_data", "demographics", "reviews", "cctv"]
 
     summaries: dict[str, DatasetSummary] = {}
 

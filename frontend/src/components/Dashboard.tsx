@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { SignedIn, SignedOut, SignInButton, SignUpButton, useClerk, useUser } from '@clerk/clerk-react'
 import type { UserProfile, NeighborhoodData, DataSources, ChatMessage, RiskScore } from '../types/index.ts'
 import { api, streamChat } from '../api.ts'
@@ -86,6 +86,17 @@ function computeRiskScore(data: NeighborhoodData, profile: UserProfile): RiskSco
     })
   }
 
+  if (data.cctv && data.cctv.cameras.length > 0) {
+    const density = data.cctv.density
+    factors.push({
+      label: `${data.cctv.cameras.length} CCTV cameras — ${density} foot traffic`,
+      pct: density === 'high' ? 5 : density === 'medium' ? 10 : 15,
+      source: 'cctv',
+      severity: density === 'low' ? 'medium' as const : 'low' as const,
+      description: `Live CCTV analysis shows ~${data.cctv.avg_pedestrians} avg pedestrians and ~${data.cctv.avg_vehicles} avg vehicles across ${data.cctv.cameras.length} nearby cameras.`,
+    })
+  }
+
   const metrics = data.metrics || {}
   if (metrics.active_permits) {
     factors.push({
@@ -135,6 +146,7 @@ export default function Dashboard({ profile, onReset }: Props) {
   const [agentElapsedMs, setAgentElapsedMs] = useState<number | undefined>(undefined)
   const [processStage, setProcessStage] = useState<ProcessStage>('idle')
   const [chatQuestion, setChatQuestion] = useState('')
+  const processLogs = useRef<string[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
@@ -179,6 +191,7 @@ export default function Dashboard({ profile, onReset }: Props) {
     setStatusMessage('')
     setProcessStage('deploying')
     setChatQuestion(message)
+    processLogs.current = [`[${new Date().toISOString()}] query: ${message}`]
     const startTime = Date.now()
 
     // Add empty assistant message for streaming
@@ -189,6 +202,7 @@ export default function Dashboard({ profile, onReset }: Props) {
       await streamChat(message, profile, {
         onStatus: (content) => {
           setStatusMessage(content)
+          processLogs.current.push(`[+${Date.now() - startTime}ms] status: ${content}`)
           if (content.toLowerCase().includes('synth')) {
             setProcessStage('synthesizing')
           }
@@ -198,6 +212,12 @@ export default function Dashboard({ profile, onReset }: Props) {
           setAgentActive(false)
           setAgentElapsedMs(Date.now() - startTime)
           setProcessStage('agents_complete')
+          processLogs.current.push(`[+${Date.now() - startTime}ms] agents: ${data.agents_deployed} deployed, ${data.data_points} pts, neighborhoods=[${data.neighborhoods.join(', ')}]`)
+          if (data.agent_summaries) {
+            for (const a of data.agent_summaries) {
+              processLogs.current.push(`  agent ${a.name}: ${a.data_points} pts${a.sources ? ` sources=[${a.sources.join(',')}]` : ''}${a.regulation_count ? ` regs=${a.regulation_count}` : ''}${a.error ? ' ERROR' : ''}`)
+            }
+          }
         },
         onToken: (token) => {
           setStatusMessage('')
@@ -215,6 +235,7 @@ export default function Dashboard({ profile, onReset }: Props) {
           setIsStreaming(false)
           setChatLoading(false)
           setProcessStage('complete')
+          processLogs.current.push(`[+${Date.now() - startTime}ms] done, total=${Date.now() - startTime}ms`)
 
           if (user) {
             api.saveUserSettings(user.id, profile.business_type, profile.neighborhood).catch(() => {})
@@ -232,6 +253,7 @@ export default function Dashboard({ profile, onReset }: Props) {
           setAgentActive(false)
           setStatusMessage('')
           setProcessStage('complete')
+          processLogs.current.push(`[+${Date.now() - startTime}ms] error: ${_errorMsg} (local fallback)`)
 
           const nb = profile.neighborhood
           const biz = profile.business_type.toLowerCase()
@@ -404,12 +426,12 @@ export default function Dashboard({ profile, onReset }: Props) {
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     {riskScore && <RiskCard score={riskScore} />}
                     {neighborhoodData?.metrics && (
-                      <DemographicsCard metrics={neighborhoodData.metrics} demographics={neighborhoodData.demographics} />
+                      <DemographicsCard metrics={neighborhoodData.metrics} demographics={neighborhoodData.demographics} cctv={neighborhoodData.cctv} />
                     )}
                   </div>
 
                   {neighborhoodData && (
-                    <div className="grid grid-cols-4 gap-3">
+                    <div className="grid grid-cols-5 gap-3">
                       <StatCard
                         label="Food Inspections"
                         value={neighborhoodData.inspection_stats.total}
@@ -432,6 +454,12 @@ export default function Dashboard({ profile, onReset }: Props) {
                         label="Intel Items"
                         value={neighborhoodData.news.length + neighborhoodData.politics.length}
                         sub="recent"
+                        severity="nominal"
+                      />
+                      <StatCard
+                        label="CCTV Cameras"
+                        value={neighborhoodData.cctv?.cameras.length ?? 0}
+                        sub={neighborhoodData.cctv?.density ?? 'no data'}
                         severity="nominal"
                       />
                     </div>
@@ -491,6 +519,7 @@ export default function Dashboard({ profile, onReset }: Props) {
             statusMessage={statusMessage}
             processStage={processStage}
             chatQuestion={chatQuestion}
+            processLogs={processLogs.current}
           />
         </div>
       </div>

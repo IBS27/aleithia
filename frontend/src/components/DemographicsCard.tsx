@@ -1,4 +1,4 @@
-import type { NeighborhoodMetrics } from '../types/index.ts'
+import type { NeighborhoodMetrics, CCTVData } from '../types/index.ts'
 
 interface Demographics {
   total_population?: number
@@ -17,6 +17,7 @@ interface Demographics {
 interface Props {
   metrics: NeighborhoodMetrics
   demographics?: Demographics | null
+  cctv?: CCTVData
 }
 
 function fmt$(v: number): string {
@@ -24,7 +25,7 @@ function fmt$(v: number): string {
   return `$${v}`
 }
 
-export default function DemographicsCard({ metrics, demographics }: Props) {
+export default function DemographicsCard({ metrics, demographics, cctv }: Props) {
   const hasDemographics = demographics && demographics.total_population && demographics.total_population > 0
 
   const items = [
@@ -74,6 +75,35 @@ export default function DemographicsCard({ metrics, demographics }: Props) {
             <div className="bg-white/[0.02] border border-white/[0.04] p-3">
               <div className="text-lg font-bold font-mono text-white">{demographics!.renter_pct || 0}%</div>
               <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mt-0.5">Renters</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Foot Traffic — Live CCTV */}
+      {cctv && cctv.cameras.length > 0 && (
+        <div className="mb-5 pb-4 border-b border-white/[0.06]">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mb-3">Foot Traffic — Live CCTV</div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-white/[0.02] border border-white/[0.04] p-3">
+              <div className="text-lg font-bold font-mono text-white">{Math.round(cctv.avg_pedestrians)}</div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mt-0.5">Avg Pedestrians</div>
+            </div>
+            <div className="bg-white/[0.02] border border-white/[0.04] p-3">
+              <div className="text-lg font-bold font-mono text-white">{Math.round(cctv.avg_vehicles)}</div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mt-0.5">Avg Vehicles</div>
+            </div>
+            <div className="bg-white/[0.02] border border-white/[0.04] p-3">
+              <div className="text-lg font-bold font-mono text-white">{cctv.cameras.length}</div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mt-0.5">Cameras</div>
+            </div>
+            <div className="bg-white/[0.02] border border-white/[0.04] p-3">
+              <div className={`text-lg font-bold font-mono ${
+                cctv.density === 'high' ? 'text-red-400' :
+                cctv.density === 'medium' ? 'text-yellow-400' :
+                'text-emerald-400'
+              }`}>{cctv.density}</div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mt-0.5">Density</div>
             </div>
           </div>
         </div>

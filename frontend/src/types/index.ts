@@ -124,6 +124,25 @@ export interface Demographics {
   tracts_counted?: number
 }
 
+export interface CCTVCamera {
+  camera_id: string
+  lat: number
+  lng: number
+  distance_km: number
+  pedestrians: number
+  vehicles: number
+  bicycles: number
+  density_level: 'low' | 'medium' | 'high' | 'unknown'
+  timestamp: string
+}
+
+export interface CCTVData {
+  cameras: CCTVCamera[]
+  avg_pedestrians: number
+  avg_vehicles: number
+  density: string
+}
+
 export interface NeighborhoodData {
   neighborhood: string
   metrics: NeighborhoodMetrics
@@ -140,6 +159,7 @@ export interface NeighborhoodData {
   }
   permit_count: number
   license_count: number
+  cctv?: CCTVData
 }
 
 export interface GeoFeature {
