@@ -1,0 +1,71 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+.venv/
+venv/
+env/
+.python-version
+
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+pip-log.txt
+
+# Environment / Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Docker
+docker-compose.override.yml
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editors / IDEs
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*.sw?
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*~
+
+# Testing / Coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Modal
+.modal/
