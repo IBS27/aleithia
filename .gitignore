@@ -70,6 +70,9 @@ htmlcov/
 # Modal
 .modal/
 
+# Downloaded data (from Modal Volume)
+backend/data/
+
 # Markdown docs — only keep planning docs and CLAUDE.md
 *.md
 !CLAUDE.md

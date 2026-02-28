@@ -24,6 +24,7 @@ export interface NeighborhoodMetrics {
   active_permits: number
   crime_incidents_30d: number
   avg_review_rating: number
+  review_count?: number
 }
 
 export interface ChatMessage {
@@ -35,4 +36,108 @@ export interface ChatMessage {
 export interface UserProfile {
   business_type: string
   neighborhood: string
+}
+
+// Raw data types from API
+export interface Document {
+  id: string
+  source: string
+  title: string
+  content: string
+  url: string
+  timestamp: string
+  metadata: Record<string, unknown>
+  geo: {
+    lat?: string
+    lng?: string
+    neighborhood?: string
+    ward?: string
+    community_area?: string
+  }
+}
+
+export interface InspectionRecord extends Document {
+  metadata: {
+    dataset: 'food_inspections'
+    raw_record: {
+      inspection_id: string
+      dba_name: string
+      aka_name: string
+      facility_type: string
+      risk: string
+      address: string
+      city: string
+      state: string
+      zip: string
+      inspection_date: string
+      inspection_type: string
+      results: string
+      violations: string
+    }
+  }
+}
+
+export interface PermitRecord extends Document {
+  metadata: {
+    dataset: 'building_permits'
+    raw_record: {
+      id: string
+      permit_: string
+      permit_status: string
+      permit_type: string
+      work_type: string
+      work_description: string
+      street_number: string
+      street_direction: string
+      street_name: string
+      building_fee_paid: string
+      issue_date: string
+    }
+  }
+}
+
+export interface LicenseRecord extends Document {
+  metadata: {
+    dataset: 'business_licenses'
+    raw_record: {
+      legal_name: string
+      doing_business_as_name: string
+      address: string
+      license_description: string
+      ward: string
+      community_area: string
+    }
+  }
+}
+
+export interface NeighborhoodData {
+  neighborhood: string
+  metrics: NeighborhoodMetrics
+  inspections: InspectionRecord[]
+  permits: PermitRecord[]
+  licenses: LicenseRecord[]
+  news: Document[]
+  politics: Document[]
+  inspection_stats: {
+    total: number
+    failed: number
+    passed: number
+  }
+  permit_count: number
+  license_count: number
+}
+
+export interface GeoFeature {
+  type: 'Feature'
+  geometry: { type: 'Point'; coordinates: [number, number] }
+  properties: NeighborhoodMetrics
+}
+
+export interface GeoJSON {
+  type: 'FeatureCollection'
+  features: GeoFeature[]
+}
+
+export interface DataSources {
+  [key: string]: { count: number; active: boolean }
 }
