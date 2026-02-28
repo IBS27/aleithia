@@ -25,7 +25,7 @@ modal secret create alethia-secrets \
   GOOGLE_PLACES_API_KEY=your_key \
   SOCRATA_APP_TOKEN=your_token \
   CENSUS_API_KEY=your_key \
-  OPENAI_API_KEY=your_key
+  SUPERMEMORY_API_KEY=your_key
 ```
 
 **Note:** Most pipelines work without API keys (using public endpoints or fallback data), but keys improve rate limits and data quality.
@@ -40,53 +40,116 @@ modal secret create alethia-secrets \
 | `GOOGLE_PLACES_API_KEY` | [Google Cloud Console](https://console.cloud.google.com/) | Optional |
 | `SOCRATA_APP_TOKEN` | [data.cityofchicago.org](https://data.cityofchicago.org/profile/edit/developer_settings) | Optional — public access works |
 | `CENSUS_API_KEY` | [census.gov/developers](https://api.census.gov/data/key_signup.html) | Optional — works without key |
-| `OPENAI_API_KEY` | [platform.openai.com](https://platform.openai.com/) | Required for vision pipeline |
+| `SUPERMEMORY_API_KEY` | [supermemory.ai](https://supermemory.ai) | Optional — for RAG + user profiles |
 
-## 4. Run Pipelines
+## 4. Deploy Everything
+
+```bash
+# Deploy all 18 functions at once (recommended)
+modal deploy -m modal_app
+
+# This deploys:
+# - 5 cron jobs: news (30min), reddit (1hr), public_data (daily),
+#                process_queue_batch (2min), data_reconciler (5min)
+# - 5 on-demand pipelines: politics, demographics, reviews, realestate, federal_register
+# - GPU inference: AlethiaLLM (H100), DocClassifier (T4), SentimentAnalyzer (T4)
+# - Web API: https://gt12889--alethia-serve.modal.run
+# - Utilities: compress, supermemory sync, model download
+```
+
+## 5. Run Individual Pipelines
 
 ```bash
 # Test individual pipelines
-modal run modal_app/pipelines/news.py::news_ingester
-modal run modal_app/pipelines/politics.py::politics_ingester
-modal run modal_app/pipelines/reddit.py::reddit_ingester
-modal run modal_app/pipelines/reviews.py::review_ingester
-modal run modal_app/pipelines/public_data.py::public_data_ingester
-modal run modal_app/pipelines/demographics.py::demographics_ingester
-modal run modal_app/pipelines/realestate.py::realestate_ingester
+modal run -m modal_app.pipelines.news::news_ingester
+modal run -m modal_app.pipelines.politics::politics_ingester
+modal run -m modal_app.pipelines.reddit::reddit_ingester
+modal run -m modal_app.pipelines.reviews::review_ingester
+modal run -m modal_app.pipelines.public_data::public_data_ingester
+modal run -m modal_app.pipelines.demographics::demographics_ingester
+modal run -m modal_app.pipelines.realestate::realestate_ingester
+modal run -m modal_app.pipelines.federal_register::federal_register_ingester
 
 # Run data compression
-modal run modal_app/compress.py::compress_raw_data
+modal run -m modal_app.compress::compress_raw_data
 
-# Vision pipeline (requires OpenAI key)
-modal run modal_app/pipelines/vision.py --youtube-url "https://youtube.com/watch?v=..."
-
-# Deploy all (starts scheduled cron jobs)
-modal deploy modal_app/pipelines/news.py
-modal deploy modal_app/pipelines/politics.py
-modal deploy modal_app/pipelines/reddit.py
-modal deploy modal_app/pipelines/reviews.py
-modal deploy modal_app/pipelines/public_data.py
-modal deploy modal_app/pipelines/demographics.py
-modal deploy modal_app/pipelines/realestate.py
+# Run GPU classifier manually
+modal run -m modal_app.classify::process_queue_batch
 ```
 
-## 5. Verify Data
+## 6. Verify Deployment
 
 ```bash
+# Check API health
+curl https://gt12889--alethia-serve.modal.run/health
+
+# Check metrics (doc counts, sources, neighborhoods)
+curl https://gt12889--alethia-serve.modal.run/metrics
+
+# Check pipeline status (freshness, GPU status, costs)
+curl https://gt12889--alethia-serve.modal.run/status
+
+# Check data sources
+curl https://gt12889--alethia-serve.modal.run/sources
+
 # Check volume contents
 modal volume ls alethia-data /raw/
+modal volume ls alethia-data /processed/
+```
 
-# Check processed summaries
+## 7. Verify Data
+
+```bash
+# Check raw data per source
+modal volume ls alethia-data /raw/news/
+modal volume ls alethia-data /raw/public_data/
+modal volume ls alethia-data /raw/politics/
+modal volume ls alethia-data /raw/demographics/
+
+# Check enriched (classified) documents
+modal volume ls alethia-data /processed/enriched/
+
+# Check compressed summaries
 modal volume ls alethia-data /processed/summaries/
 
 # Check GeoJSON output
 modal volume ls alethia-data /processed/geo/
 ```
 
-## 6. Local Development
+## 8. Local Frontend Development
 
 ```bash
-docker compose up
+cd frontend
+npm install
+npm run dev
+# Runs at http://localhost:5173
+# Point API calls to: https://gt12889--alethia-serve.modal.run
 ```
 
-This starts the FastAPI backend (port 8000) and React frontend (port 5173).
+## Architecture Overview
+
+```
+                    Modal Compute Layer
+┌──────────────────────────────────────────────────────┐
+│                                                      │
+│  DATA PIPELINES (8)          GPU INFERENCE            │
+│  ├─ news (30min cron)        ├─ Qwen3 8B (H100)      │
+│  ├─ reddit (1hr cron)        ├─ DocClassifier (T4)    │
+│  ├─ public_data (daily)      └─ SentimentAnalyzer(T4) │
+│  ├─ politics (on-demand)                              │
+│  ├─ demographics (on-demand)  AGENT SWARM              │
+│  ├─ reviews (on-demand)       ├─ neighborhood_intel    │
+│  ├─ realestate (on-demand)    ├─ regulatory_agent      │
+│  └─ federal_register (on-demand) └─ orchestrate_query  │
+│                                                      │
+│  INFRASTRUCTURE               WEB API                 │
+│  ├─ modal.Queue (event bus)   └─ FastAPI @asgi_app    │
+│  ├─ modal.Dict (cost track)      8 endpoints live     │
+│  ├─ reconciler (5min cron)                            │
+│  └─ Supermemory sync                                  │
+│                                                      │
+│  STORAGE                                              │
+│  ├─ alethia-data (Volume)                             │
+│  └─ alethia-weights (Volume, model weights)           │
+└──────────────────────────────────────────────────────┘
+```

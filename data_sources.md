@@ -1,10 +1,16 @@
-# Data Ingestion Pipelines (Layer 1)
+# Data Ingestion Pipelines
 
-Chicago-focused data source collectors, each running as Modal functions on independent cron schedules. All output is normalized into the common event schema before writing to the store.
+Chicago-focused data source collectors, each running as Modal functions. All output is normalized into the common `Document` schema before writing to Modal Volume. Pipelines push documents to `modal.Queue` for GPU classification.
+
+**Live stats:** 1,889+ documents | 47 neighborhoods | 5 active cron sources | 3 on-demand sources
 
 ---
 
-## 1. Local News
+## 1. Local News — `news_ingester`
+
+**File:** `modal_app/pipelines/news.py`
+**Schedule:** Every 30 minutes (cron)
+**Pattern:** async + FallbackChain (NewsAPI → RSS → cache)
 
 **Sources:**
 - Block Club Chicago (RSS)
@@ -14,191 +20,165 @@ Chicago-focused data source collectors, each running as Modal functions on indep
 - Patch.com Chicago neighborhoods (RSS)
 - NewsAPI for broader coverage
 
-**Cadence:** Every 30 minutes
-
 **What we collect:**
 - Article headline, body text, publication date
 - Author, source outlet
-- Geo-tags if present (neighborhood mentions, addresses)
-- Article category/section (crime, development, politics, food, etc.)
+- Geo-tags via `detect_neighborhood()` (neighborhood mentions, addresses)
+- Article category/section
 
-**Technical notes:**
-- RSS feeds are the primary mechanism — lightweight, no auth needed for most
-- NewsAPI as a fallback/supplement (requires API key, free tier has limits)
-- Deduplication by URL to avoid re-ingesting the same article across feeds
-- Store raw HTML/text for later re-enrichment if the extraction logic improves
+**Pipeline integration:** Pushes to `doc_queue` via `await doc_queue.put.aio(doc_data)` for GPU classification.
 
 ---
 
-## 2. Local Politics (Policy Discussions & Hearings)
+## 2. Local Politics — `politics_ingester`
+
+**File:** `modal_app/pipelines/politics.py`
+**Schedule:** On-demand (reconciler triggers when stale)
+**Pattern:** async + FallbackChain + PDF parsing (pymupdf/pdfplumber)
 
 **Sources:**
 - Chicago Legistar API (council meetings, legislation, voting records)
 - Zoning Board of Appeals meeting agendas and minutes (PDF)
 - Plan Commission hearing transcripts (PDF)
 - Chicago City Clerk ordinance filings
-- Cook County Board of Commissioners (Legistar)
-- Illinois General Assembly legislation tracker (for state-level impacts)
-
-**Cadence:** Daily
 
 **What we collect:**
 - Meeting date, committee/body, agenda items
-- Legislation text, sponsors, status (introduced, passed, tabled, etc.)
-- Voting records per alderman
-- Zoning change applications (address, current/proposed zoning, applicant)
-- Hearing transcripts (raw text extracted from PDFs)
+- Legislation text, sponsors, status
+- Zoning change applications
+- Hearing transcripts (raw text extracted from PDFs via `_extract_pdf_text()`)
 
-**Technical notes:**
-- Legistar has a structured REST API — most reliable source
-- PDF transcripts require `pymupdf` or `pdfplumber` for text extraction
-- Some documents are scanned images — need OCR fallback (Tesseract or an LLM vision call)
-- Map each piece of legislation to the ward(s) and neighborhood(s) it affects
-- Track legislation lifecycle: introduction -> committee -> vote -> outcome
+**Pipeline integration:** Pushes to `doc_queue` for classification. Uses `modal.Retries(max_retries=2, backoff_coefficient=2.0)`.
 
 ---
 
 ## 3. Social Media & Reviews
 
-### 3a. Reddit
+### 3a. Reddit — `reddit_ingester`
+
+**File:** `modal_app/pipelines/reddit.py`
+**Schedule:** Every 1 hour (cron)
+**Pattern:** async + FallbackChain (asyncpraw → JSON API → cache)
 
 **Sources:**
-- r/chicago
-- r/chicagofood
-- r/ChicagoSuburbs
-- Neighborhood-specific subs (r/LoganSquare, r/WickerPark, etc.)
-
-**Cadence:** Every 1 hour
+- r/chicago, r/chicagofood, r/ChicagoNWside, r/SouthSideChicago
 
 **What we collect:**
 - Post title, body, score, comment count, created timestamp
-- Top-level comments (up to N per post)
+- Top-level comments
 - Subreddit, flair/tags
-- Author (anonymized — we care about volume/sentiment, not identity)
 
-**Technical notes:**
-- Reddit API via `asyncpraw` (requires app credentials, free tier is sufficient)
-- Filter by minimum score threshold to reduce noise
-- Track post velocity per subreddit as a signal (spike in posts about a neighborhood = something happening)
+**Note:** Requires Reddit API credentials (`REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`). Falls back to Reddit JSON API (may return 403).
 
-### 3b. Review Platforms (Yelp, Google)
+### 3b. Review Platforms — `review_ingester`
+
+**File:** `modal_app/pipelines/reviews.py`
+**Schedule:** On-demand
+**Pattern:** async + FallbackChain + `gather_with_limit` + review velocity computation
 
 **Sources:**
-- Yelp Fusion API (business search, business details, review counts)
-- Google Places API (ratings, review counts, place details)
-
-**Cadence:** Daily
+- Yelp Fusion API (business search across 8 neighborhoods, 9 categories)
+- Google Places API (business search)
 
 **What we collect:**
 - Business name, category, location (lat/lng, neighborhood)
-- Current rating, total review count
-- Rating/review count delta since last pull (computed)
-- Price level, hours, attributes (outdoor seating, delivery, etc.)
-- New review snippets where available via API
+- Rating, review count, price level
+- Review velocity annotation (`high` / `medium` / `low`)
 
-**Technical notes:**
-- Yelp Fusion API gives up to 50 results per search, 5000 calls/day on free tier
-- Google Places API is pay-per-call — budget accordingly
-- Primary signal is **review velocity** (rate of new reviews) and **rating trajectory**, not individual review text
-- Focus on restaurant, retail, nightlife, and service categories initially
-- Track openings and closures by watching businesses appear/disappear between pulls
+**Neighborhoods searched:** Lincoln Park, Wicker Park, Logan Square, West Loop, Pilsen, Hyde Park, Andersonville, Chinatown
 
 ### 3c. TikTok / Instagram (Deferred)
 
-**Status:** Deferred — no reliable public API for local content discovery.
-
-**Potential approaches for later:**
-- Track specific known accounts (local food bloggers, neighborhood pages)
-- Use trend aggregator services if they emerge
-- Manual curation of a watchlist of Chicago-relevant creators
+**Status:** Deferred — no reliable public API.
 
 ---
 
 ## 4. Public Data (Chicago Data Portal & Government APIs)
 
-### 4a. Transit
+### 4a. Public Data Portal — `public_data_ingester`
 
-**Sources:**
-- CTA ridership data (data.cityofchicago.org, Socrata API)
-- CTA bus and rail station entries (daily totals)
-- Divvy bikeshare trip data (monthly dumps)
-- Metra ridership reports (quarterly)
+**File:** `modal_app/pipelines/public_data.py`
+**Schedule:** Daily (cron)
+**Pattern:** async + FallbackChain (Socrata API → direct HTTP → cache)
 
-**Cadence:** Daily (ridership), weekly (Divvy), quarterly (Metra)
-
-**What we collect:**
-- Station/stop-level ridership counts by day
-- Route-level totals
-- Divvy station trip starts/ends (proxy for foot traffic patterns)
-
-### 4b. Crime & Safety
-
-**Sources:**
-- Chicago Police Department CLEAR data (data.cityofchicago.org)
-- CPD community area crime stats
-
-**Cadence:** Daily
-
-**What we collect:**
-- Incident type, date, location (lat/lng, block, community area)
-- Arrest made (boolean)
-- Aggregated counts by neighborhood and category over time windows
-
-### 4c. Permits & Licensing
-
-**Sources:**
-- Business license applications and renewals (data.cityofchicago.org)
+**Sources (via data.cityofchicago.org Socrata API):**
+- Business license applications and renewals
 - Building permits (new construction, renovation, demolition)
-- Liquor license applications
-- Sidewalk cafe permits
 - Food establishment inspections
+- CTA ridership data
 
-**Cadence:** Daily
+**Live count:** 459 documents
 
-**What we collect:**
-- License/permit type, status, application date, approval date
-- Business name, address, ward, community area
-- For inspections: pass/fail, violation types
+### 4b. Demographics — `demographics_ingester`
 
-**Technical notes:**
-- Permit filings are leading indicators — a spike in renovation permits in a neighborhood signals incoming change
-- Liquor license applications directly relevant to restaurant/bar viability analysis
-- Track license revocations and non-renewals as negative signals
-
-### 4d. Demographics & Economic
+**File:** `modal_app/pipelines/demographics.py`
+**Schedule:** On-demand
+**Pattern:** async + FallbackChain (Census API with key → Census API without key → cache)
 
 **Sources:**
 - U.S. Census Bureau ACS 5-year estimates (API)
-- Census Bureau population estimates (annual)
-- Bureau of Labor Statistics (local employment data)
-- Cook County Assessor (property values, assessed valuations)
-- CoStar or LoopNet (commercial lease listings — may require paid access)
+- Population, income, housing data per Chicago community area
 
-**Cadence:** Monthly (employment), quarterly (property), annually (census)
+**Live count:** 1,332 documents (77 community areas × multiple variables)
 
-**What we collect:**
-- Population by community area, age distribution, income distribution
-- Employment/unemployment rates
-- Median property values, assessment changes
-- Commercial vacancy rates, asking rents per neighborhood
-- New commercial lease listings (location, size, asking price, type)
+### 4c. Real Estate — `realestate_ingester`
 
-**Technical notes:**
-- Census/ACS data is relatively static — ingest once, refresh on new releases
-- Property and commercial data are strong signals for neighborhood trajectory
-- BLS local data has significant lag (~2 months) — useful for trend confirmation, not leading indicators
+**File:** `modal_app/pipelines/realestate.py`
+**Schedule:** On-demand
+**Pattern:** async + FallbackChain (LoopNet API → placeholder listings → cache)
+
+**Sources:**
+- LoopNet commercial property search (8 Chicago areas)
+- Placeholder listings for demo (retail, restaurant, office across neighborhoods)
+
+**Live count:** 8 documents (placeholder data — LoopNet requires CoStar API for production)
 
 ---
 
-## Priority Order for Implementation
+## 5. Federal Regulations — `federal_register_ingester`
 
-| Priority | Source | Rationale |
-|----------|--------|-----------|
-| 1 | Reddit (3a) | Easiest API, richest unstructured signal, real-time pulse |
-| 2 | Chicago Data Portal — permits & licensing (4c) | Structured, free, direct business relevance |
-| 3 | Chicago Data Portal — transit & crime (4a, 4b) | Structured, free, complements permit data |
-| 4 | Local News (1) | RSS is straightforward, good for event detection |
-| 5 | Yelp/Google Reviews (3b) | Competitive landscape signal, API rate limits manageable |
-| 6 | Local Politics (2) | Highest value but hardest — PDF parsing, domain knowledge |
-| 7 | Demographics/Economic (4d) | Slow-moving, can backfill later |
-| 8 | TikTok/Instagram (3c) | No viable API path currently |
+**File:** `modal_app/pipelines/federal_register.py`
+**Schedule:** On-demand
+**Pattern:** async + FallbackChain + `modal.Retries`
+
+**Sources:**
+- Federal Register API (free, no auth required)
+- Agencies: SBA, FDA, OSHA, EPA
+
+**What we collect:**
+- Regulation title, abstract, document number
+- Agency, document type, action
+- Filtered for business-relevant keywords (small business, restaurant, food service, etc.)
+
+---
+
+## GPU Classification Pipeline
+
+### DocClassifier + SentimentAnalyzer — `process_queue_batch`
+
+**File:** `modal_app/classify.py`
+**Schedule:** Every 2 minutes (cron)
+**GPU:** T4 (2 instances — one per model)
+
+**Models:**
+- `facebook/bart-large-mnli` (406M params) — zero-shot classification into: regulatory, economic, safety, infrastructure, community, business
+- `cardiffnlp/twitter-roberta-base-sentiment-latest` — sentiment analysis (positive/negative/neutral)
+
+**Pattern:** Drains `modal.Queue`, classifies up to 100 docs per batch via `asyncio.gather()` (parallel), saves enriched docs to `/data/processed/enriched/`.
+
+---
+
+## Pipeline Schedule Summary
+
+| Pipeline | Schedule | Source Count | Status |
+|----------|----------|-------------|--------|
+| `news_ingester` | 30 min cron | 30 docs | Active |
+| `reddit_ingester` | 1 hr cron | — | Needs API keys |
+| `public_data_ingester` | Daily cron | 459 docs | Active |
+| `process_queue_batch` | 2 min cron | — | Active (GPU classifier) |
+| `data_reconciler` | 5 min cron | — | Active (self-healing) |
+| `politics_ingester` | On-demand | 80 docs | Active |
+| `demographics_ingester` | On-demand | 1,332 docs | Active |
+| `review_ingester` | On-demand | — | Needs API keys |
+| `realestate_ingester` | On-demand | 8 docs | Active (placeholders) |
+| `federal_register_ingester` | On-demand | — | Active |
