@@ -27,3 +27,14 @@
   ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
   ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
 }
+
+@layer utilities {
+  .animate-scroll-x {
+    animation: scroll-x 30s linear infinite;
+  }
+}
+
+@keyframes scroll-x {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}

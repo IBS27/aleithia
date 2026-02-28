@@ -89,28 +89,27 @@ export default function ChatPanel({ messages, onSend, loading, isStreaming, agen
         {/* Agent swarm status */}
         {statusMessage && (
           <div className="flex justify-start">
-            <div className="bg-indigo-900/30 border border-indigo-800/50 rounded-2xl px-4 py-2.5 text-sm text-indigo-300">
+            <div className="bg-white/[0.03] border border-white/[0.06] px-4 py-2.5 text-xs text-white/40">
               <div className="flex items-center gap-2">
-                <div className="animate-spin w-3 h-3 border border-indigo-400 border-t-transparent rounded-full" />
-                {statusMessage}
+                <div className="animate-spin w-3 h-3 border border-white/30 border-t-white/60 rounded-full" />
+                <span className="font-mono">{statusMessage}</span>
               </div>
             </div>
           </div>
         )}
 
-        {/* Agent info card */}
         {agentInfo && (
-          <div className="bg-gray-800/50 border border-gray-700 rounded-xl px-4 py-3 text-xs space-y-1">
-            <div className="flex items-center gap-2 text-indigo-400 font-medium">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <div className="bg-white/[0.02] border border-white/[0.06] px-4 py-3 text-[10px] font-mono space-y-1">
+            <div className="flex items-center gap-2 text-white/50 font-medium uppercase tracking-wider">
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
               {agentInfo.agents_deployed} agents deployed
             </div>
-            <div className="text-gray-400">
+            <div className="text-white/30">
               Analyzed: {agentInfo.neighborhoods.join(', ')}
             </div>
-            <div className="text-gray-500">
+            <div className="text-white/20">
               {agentInfo.data_points} data points processed
             </div>
           </div>

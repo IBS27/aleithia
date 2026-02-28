@@ -26,6 +26,25 @@ function tuneScene(app: Application) {
   })
 }
 
+const SOURCES = [
+  { icon: '💬', name: 'Reddit' },
+  { icon: '⭐', name: 'Yelp' },
+  { icon: '📍', name: 'Google Places' },
+  { icon: '🏛️', name: 'Legistar' },
+  { icon: '📊', name: 'Chicago Data Portal' },
+  { icon: '📰', name: 'NewsAPI' },
+  { icon: '🚇', name: 'CTA Transit' },
+  { icon: '📋', name: 'Census Bureau' },
+  { icon: '🏗️', name: 'Building Permits' },
+]
+
+const STATS = [
+  { value: '9', label: 'Live Sources' },
+  { value: '77', label: 'Neighborhoods' },
+  { value: '140K+', label: 'Records Indexed' },
+  { value: '< 30s', label: 'Analysis Time' },
+]
+
 const DATA_PILLARS = [
   {
     label: '01',
@@ -110,6 +129,41 @@ export default function LandingPage({ onGetStarted }: Props) {
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* ── Data Sources Ticker ── */}
+      <section className="relative border-t border-white/[0.04] py-10 overflow-hidden">
+        <p className="text-center text-[10px] font-mono uppercase tracking-[0.3em] text-white/20 mb-6">
+          Powered by 9 live data sources
+        </p>
+        <div className="relative">
+          <div className="absolute left-0 top-0 bottom-0 w-24 bg-gradient-to-r from-[#06080d] to-transparent z-10" />
+          <div className="absolute right-0 top-0 bottom-0 w-24 bg-gradient-to-l from-[#06080d] to-transparent z-10" />
+          <div className="flex animate-scroll-x gap-12 w-max">
+            {[...SOURCES, ...SOURCES].map((s, i) => (
+              <div key={i} className="flex items-center gap-2.5 shrink-0 opacity-40 hover:opacity-70 transition-opacity">
+                <span className="text-lg">{s.icon}</span>
+                <span className="text-xs font-mono text-white/60 whitespace-nowrap">{s.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Live Stats ── */}
+      <section className="border-t border-white/[0.04] py-16">
+        <div className="max-w-5xl mx-auto px-10 grid grid-cols-2 sm:grid-cols-4 gap-8">
+          {STATS.map((s) => (
+            <div key={s.label} className="text-center">
+              <p className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-1">
+                {s.value}
+              </p>
+              <p className="text-xs font-mono text-white/30 uppercase tracking-wider">
+                {s.label}
+              </p>
+            </div>
+          ))}
         </div>
       </section>
 
