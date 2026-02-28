@@ -8,6 +8,7 @@ Modal features: .spawn(), @modal.function
 import asyncio
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -309,7 +310,6 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
             cam_count = 0
             for sample in cctv_samples:
                 content = sample.get("content", "")
-                import re
                 ped_match = re.search(r"(\d+) pedestrians", content)
                 veh_match = re.search(r"(\d+) vehicles", content)
                 if ped_match:
@@ -514,24 +514,6 @@ async def regulatory_agent(business_type: str, trace_context: dict | None = None
                 volume.commit()
             except Exception as e:
                 print(f"Failed to write live regulatory data to volume: {e}")
-
-        # Scan federal register data if available
-        federal_dir = Path(RAW_DATA_PATH) / "federal_register"
-        if federal_dir.exists():
-            for json_file in sorted(federal_dir.rglob("*.json"), reverse=True)[:30]:
-                try:
-                    doc = json.loads(json_file.read_text())
-                    content = f"{doc.get('title', '')} {doc.get('content', '')}".lower()
-                    if any(kw in content for kw in keywords):
-                        report["regulations"].append({
-                            "title": doc.get("title", ""),
-                            "type": "federal",
-                            "agency": doc.get("metadata", {}).get("agency", ""),
-                            "relevance": "federal",
-                        })
-                        report["data_points"] += 1
-                except Exception:
-                    continue
 
         if span:
             span.set_attribute("output.value", json.dumps({"data_points": report["data_points"], "regulation_count": len(report["regulations"])}))

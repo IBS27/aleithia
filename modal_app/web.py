@@ -12,9 +12,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import modal
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
 from modal_app.volume import app, volume, web_image, VOLUME_MOUNT, RAW_DATA_PATH, PROCESSED_DATA_PATH
 from modal_app.common import CHICAGO_NEIGHBORHOODS, COMMUNITY_AREA_MAP, detect_neighborhood, neighborhood_to_ca
@@ -621,6 +622,52 @@ async def neighborhood(name: str):
     finally:
         if span_ctx:
             span_ctx.__exit__(None, None, None)
+
+
+# ── User settings ─────────────────────────────────────────────────────────────
+
+SETTINGS_PATH = Path(PROCESSED_DATA_PATH) / "user_settings.json"
+
+
+class _UserSettingsPayload(BaseModel):
+    location_type: str = Field(..., min_length=1)
+    neighborhood: str = Field(..., min_length=1)
+
+
+def _read_settings_store() -> dict:
+    if SETTINGS_PATH.exists():
+        try:
+            return json.loads(SETTINGS_PATH.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def _write_settings_store(store: dict) -> None:
+    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_PATH.write_text(json.dumps(store, indent=2))
+    volume.commit()
+
+
+@web_app.get("/user/settings")
+async def get_user_settings(x_user_id: str = Header(default="")):
+    if not x_user_id:
+        return JSONResponse({"error": "Missing x-user-id header"}, status_code=401)
+    store = _read_settings_store()
+    entry = store.get(x_user_id)
+    if not entry:
+        return JSONResponse({"error": "No settings found"}, status_code=404)
+    return {"user_id": x_user_id, "location_type": entry.get("location_type", ""), "neighborhood": entry.get("neighborhood", "")}
+
+
+@web_app.put("/user/settings")
+async def put_user_settings(payload: _UserSettingsPayload, x_user_id: str = Header(default="")):
+    if not x_user_id:
+        return JSONResponse({"error": "Missing x-user-id header"}, status_code=401)
+    store = _read_settings_store()
+    store[x_user_id] = {"location_type": payload.location_type, "neighborhood": payload.neighborhood}
+    _write_settings_store(store)
+    return {"user_id": x_user_id, "location_type": payload.location_type, "neighborhood": payload.neighborhood}
 
 
 # ── Standalone data endpoints (used by api.ts) ──────────────────────────────
