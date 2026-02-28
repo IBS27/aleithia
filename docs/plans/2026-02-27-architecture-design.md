@@ -1,8 +1,9 @@
 # Alethia Architecture Design
 
-**Date:** 2026-02-27
+**Date:** 2026-02-27 (updated 2026-02-28)
 **Project:** Alethia — Regulatory Intelligence for Small Businesses
 **Event:** HackIllinois 2026
+**Status:** DEPLOYED — `https://gt12889--alethia-serve.modal.run`
 
 ## Goal
 
@@ -25,130 +26,137 @@ Build an AI-powered regulatory intelligence platform that aggregates live Chicag
 
 ---
 
-## System Architecture
+## System Architecture (Deployed)
 
 ```
-┌─────────────────── MODAL COMPUTE LAYER ───────────────────────────┐
-│                                                                    │
-│  ┌─────────────────── DATA PIPELINES (cron) ──────────────────┐  │
-│  │                                                             │  │
-│  │  ┌──────────────┐  ┌───────────────┐  ┌────────────────┐  │  │
-│  │  │ News Ingester│  │ Politics      │  │ Reddit        ││ Reviews       │  │  │
-│  │  │ (30 min)     │  │ Ingester      │  │ Ingester      ││ Ingester      │  │  │
-│  │  │              │  │ (daily)       │  │ (hourly)      ││ (daily)       │  │  │
-│  │  │ - NewsAPI    │  │ - Legistar    │  │ - asyncpraw   ││ - Yelp Fusion │  │  │
-│  │  │ - RSS feeds  │  │   API         │  │ - r/chicago   ││ - Google      │  │  │
-│  │  │ - Local news │  │ - PDF parse   │  │ - r/chicagofood│  Places     │  │  │
-│  │  │   sources    │  │  (pymupdf/    │  │ - neighborhood││ - Review      │  │  │
-│  │  │              │  │   pdfplumber) │  │   subs        ││   velocity    │  │  │
-│  │  │              │  │ - LLM summary │  │               ││               │  │  │
-│  │  └──────┬───────┘  └──────┬────────┘  └───────┬────────┘  │  │
-│  │         │                 │                    │           │  │
-│  │  ┌──────▼─────────────────▼────────────────────▼────────┐ │  │
-│  │  │              Public Data Ingester (daily/weekly)      │ │  │
-│  │  │  - data.cityofchicago.org (Socrata API)              │ │  │
-│  │  │  - CTA ridership, crime stats, permits, licenses     │ │  │
-│  │  │  - Census/ACS demographics (monthly)                 │ │  │
-│  │  │  - Commercial real estate (CoStar API / LoopNet)      │ │  │
-│  │  └──────────────────────┬───────────────────────────────┘ │  │
-│  └─────────────────────────┼─────────────────────────────────┘  │
-│                            │                                     │
-│                     ┌──────▼──────┐                              │
-│                     │ PROCESSING  │                              │
-│                     │ - Embed all │                              │
-│                     │   docs      │                              │
-│                     │ - Entity    │                              │
-│                     │   extraction│                              │
-│                     │ - Geo-tag   │                              │
-│                     │ - Classify  │                              │
-│                     └──────┬──────┘                              │
-│                            │                                     │
-│  ┌─────────────────── INFERENCE ──────────────────────────────┐  │
-│  │  ┌────────────────┐        ┌──────────────────────────┐   │  │
-│  │  │ Embedding Model│        │ Llama 3.1 8B (A10G GPU)  │   │  │
-│  │  │ (MiniLM)       │        │ - Risk/opportunity score │   │  │
-│  │  │ - Doc embedding│        │ - Regulation analysis    │   │  │
-│  │  │ - Query embed  │        │ - Summarization          │   │  │
-│  │  │ - Similarity   │        │ - PDF transcript extract │   │  │
-│  │  └────────────────┘        └──────────────────────────┘   │  │
-│  └────────────────────────────────────────────────────────────┘  │
-│                                                                    │
-│  ┌─────────────────── STORAGE ────────────────────────────────┐  │
-│  │  Modal Volume: embedded docs, raw data, vector index       │  │
-│  └────────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────────┘
+┌─────────────────────── MODAL COMPUTE LAYER ──────────────────────────────┐
+│                                                                          │
+│  ┌───────────────── DATA PIPELINES (8 functions) ─────────────────────┐ │
+│  │                                                                     │ │
+│  │  news_ingester     reddit_ingester    public_data_ingester          │ │
+│  │  (30min cron)      (1hr cron)         (daily cron)                  │ │
+│  │  - NewsAPI         - asyncpraw        - Socrata API                 │ │
+│  │  - RSS feeds       - JSON fallback    - Permits, crime, transit     │ │
+│  │                                                                     │ │
+│  │  politics_ingester  demographics_ingester  reviews_ingester         │ │
+│  │  (on-demand)        (on-demand)            (on-demand)              │ │
+│  │  - Legistar API     - Census/ACS API       - Yelp Fusion           │ │
+│  │  - PDF parse        - 77 community areas   - Google Places          │ │
+│  │                                                                     │ │
+│  │  realestate_ingester    federal_register_ingester                   │ │
+│  │  (on-demand)            (on-demand)                                 │ │
+│  │  - LoopNet              - SBA, FDA, OSHA, EPA                      │ │
+│  └──────────────┬──────────────────────────────────────────────────────┘ │
+│                 │ await doc_queue.put.aio()                              │
+│                 ▼                                                        │
+│  ┌──── modal.Queue ("new-docs") ────┐                                   │
+│  └──────────────┬───────────────────┘                                   │
+│                 │ process_queue_batch (2min cron)                        │
+│                 ▼                                                        │
+│  ┌───────────────── GPU INFERENCE (3 models) ────────────────────────┐  │
+│  │                                                                    │  │
+│  │  DocClassifier (T4)          SentimentAnalyzer (T4)               │  │
+│  │  bart-large-mnli (406M)      roberta-sentiment                    │  │
+│  │  @modal.batched(32)          @modal.batched(32)                   │  │
+│  │  asyncio.gather() parallel   asyncio.gather() parallel            │  │
+│  │                                                                    │  │
+│  │  AlethiaLLM (H100)                                                │  │
+│  │  Qwen3 8B via vLLM                                                │  │
+│  │  @modal.concurrent(20)                                            │  │
+│  │  Streaming token generation                                       │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+│  ┌───────────────── AGENT SWARM (.spawn() fan-out) ──────────────────┐  │
+│  │  neighborhood_intel_agent — per-neighborhood analysis              │  │
+│  │  regulatory_agent — federal + local regulation scan                │  │
+│  │  orchestrate_query — fan out 4 agents, synthesize via LLM         │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+│  ┌───────────────── INFRASTRUCTURE ──────────────────────────────────┐  │
+│  │  data_reconciler (5min cron) — auto-restart stale pipelines       │  │
+│  │  modal.Dict ("alethia-costs") — compute cost tracking             │  │
+│  │  compress_raw_data — volume optimization                          │  │
+│  │  Supermemory sync — RAG context + user profiles                   │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+│  ┌───────────────── STORAGE ─────────────────────────────────────────┐  │
+│  │  alethia-data (Volume) — raw docs, enriched docs, summaries, geo  │  │
+│  │  alethia-weights (Volume) — Qwen3 8B model weights (16GB)         │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+│  ┌───────────────── WEB API (@modal.asgi_app) ───────────────────────┐  │
+│  │  FastAPI → https://gt12889--alethia-serve.modal.run               │  │
+│  │  POST /chat        — agent swarm + streaming SSE                  │  │
+│  │  GET  /brief/{n}   — neighborhood intelligence brief              │  │
+│  │  GET  /alerts      — regulatory alerts by business type           │  │
+│  │  GET  /status      — pipeline monitor (states, GPU, costs)        │  │
+│  │  GET  /metrics     — scale numbers (docs, sources, neighborhoods) │  │
+│  │  GET  /sources     — per-source freshness                         │  │
+│  │  GET  /neighborhood/{n} — neighborhood detail                     │  │
+│  │  GET  /health      — healthcheck                                  │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────┘
          │                              │
-         │ Query + Retrieve             │ Store user context
+         │ Search + Retrieve            │ Store user context
          ▼                              ▼
 ┌──────────────────┐          ┌──────────────────┐
-│  FastAPI Backend  │◄────────►│   Supermemory    │
-│  - REST API       │          │   - User Profiles│
-│  - WebSocket chat │          │   - Memory       │
-│  - Orchestration  │          │   - Retrieval    │
-└────────┬──────────┘          │   - Connectors   │
-         │                     │   - Multi-modal  │
-         │ (Chat generation)   └──────────────────┘
-         ▼
-┌──────────────────┐
-│  OpenAI API      │
-│  - Chat response │
-│  - Summarization │
+│   Supermemory    │          │  modal.Dict       │
+│   - User Profiles│          │  - Cost tracking  │
+│   - RAG context  │          │  - Pipeline state  │
+│   - Doc sync     │          └──────────────────┘
+│   - Conversations│
 └──────────────────┘
          │
          ▼
 ┌──────────────────────────────────────────────────┐
-│          FRONTEND (React + Tailwind)              │
-│          Hosted on Cloudflare Pages               │
+│          FRONTEND (React 19 + TypeScript + Vite)  │
 │  ┌──────────┐ ┌──────────────┐ ┌──────────────┐ │
 │  │ Onboard  │ │ Chat Panel   │ │ Dashboard    │ │
-│  │ (biz     │ │ (streaming)  │ │ (live data   │ │
-│  │  profile)│ │              │ │  cards, map) │ │
+│  │ (biz     │ │ (streaming   │ │ (live data   │ │
+│  │  profile)│ │  SSE tokens) │ │  cards, map) │ │
 │  └──────────┘ └──────────────┘ └──────────────┘ │
 └──────────────────────────────────────────────────┘
 ```
 
-## Approach
+## Approach (Updated)
 
-**Monolith FastAPI + React SPA.** Single backend handles orchestration — Modal for all compute (data pipelines + inference), Supermemory for user context, OpenAI for chat generation. Frontend is a standalone SPA on Cloudflare Pages.
+**All-Modal architecture.** No separate backend server — FastAPI runs directly on Modal via `@modal.asgi_app()`. All compute (pipelines, GPU inference, web serving, agent orchestration) runs on Modal. Supermemory for user context and RAG. Frontend is a standalone SPA.
 
-**Why monolith:** Maximum coding speed. One backend, one frontend. Easy to demo, easy to debug. 36-hour constraint means simplicity wins.
+**Key change from original plan:** Replaced "Llama 3.1 8B on A10G" with "Qwen3 8B on H100" for better throughput. Replaced "OpenAI for chat generation" with self-hosted LLM on Modal (more impressive for judges, no external API dependency for chat).
 
 ## Data Sources
 
-| Source | API/Method | Cadence | Modal Function | Output |
-|--------|-----------|---------|---------------|--------|
-| Local News | NewsAPI, RSS feeds (Chicago Tribune, Block Club Chicago) | 30 min | `news_ingester` | Articles + metadata (source, timestamp, geo-tags) |
-| City Council | Chicago Legistar API | Daily | `politics_ingester` | Legislation, agendas, minutes |
-| Meeting Transcripts | Zoning Board, Plan Commission PDFs | Daily | `politics_ingester` (pymupdf/pdfplumber + Llama summarize) | Extracted text, entity summaries |
-| Reddit | asyncpraw (r/chicago, r/chicagofood, neighborhood subs) | Hourly | `reddit_ingester` | Posts + sentiment |
-| Yelp | Yelp Fusion API | Daily | `review_ingester` | Business ratings, review velocity |
-| Google Places | Places API | Daily | `review_ingester` | Ratings, review velocity |
-| City Data Portal | Socrata API (data.cityofchicago.org) | Daily | `public_data_ingester` | CTA ridership, crime, permits, licenses |
-| Census/ACS | Census API | Monthly | `demographics_ingester` | Demographics by neighborhood |
-| Real Estate | CoStar API / LoopNet scrape | Weekly | `realestate_ingester` | Commercial listings, pricing |
-| TikTok/Instagram | Deferred — no public API | N/A | — | Nice to have, defer |
+| Source | API/Method | Cadence | Modal Function | Live Docs |
+|--------|-----------|---------|---------------|-----------|
+| Local News | NewsAPI + RSS feeds | 30 min (cron) | `news_ingester` | 30 |
+| City Council | Chicago Legistar API + PDF parse | On-demand | `politics_ingester` | 80 |
+| Reddit | asyncpraw + JSON fallback | 1 hr (cron) | `reddit_ingester` | — (needs keys) |
+| Yelp/Google | Yelp Fusion + Google Places | On-demand | `review_ingester` | — (needs keys) |
+| City Data Portal | Socrata API | Daily (cron) | `public_data_ingester` | 459 |
+| Census/ACS | Census API | On-demand | `demographics_ingester` | 1,332 |
+| Real Estate | LoopNet + placeholders | On-demand | `realestate_ingester` | 8 |
+| Federal Register | Federal Register API | On-demand | `federal_register_ingester` | — |
 
-## Processing Pipeline
+**Total live:** 1,889+ documents across 47 neighborhoods
+
+## Processing Pipeline (Deployed)
 
 Every ingested document goes through:
 
-1. **Raw storage** → Modal Volume (JSON + original files)
-2. **Entity extraction** → Llama 3.1 8B on Modal extracts: businesses mentioned, neighborhoods, regulation types, sentiment
-3. **Embedding** → MiniLM embeds each document for semantic search
-4. **Geo-tagging** → Attach Chicago neighborhood/ward metadata
-5. **Classification** → Categorize: `regulation`, `news`, `sentiment`, `opportunity`, `risk`
-6. **Vector index update** → Add to searchable index on Modal Volume
+1. **Raw storage** → Modal Volume `/raw/{source}/{date}/{id}.json`
+2. **Queue push** → `await doc_queue.put.aio(doc_data)` to `modal.Queue`
+3. **GPU classification** → `DocClassifier` (bart-large-mnli) categorizes into 6 labels
+4. **GPU sentiment** → `SentimentAnalyzer` (roberta) scores positive/negative/neutral
+5. **Enriched storage** → Modal Volume `/processed/enriched/{id}.json`
+6. **Compression** → Summaries + GeoJSON in `/processed/summaries/` and `/processed/geo/`
 
-## AI Inference (Modal)
+## AI Inference (Modal) — Deployed
 
-Two models running on Modal:
+Three GPU models running on Modal:
 
-- **Embedding model** (`sentence-transformers/all-MiniLM-L6-v2`): Runs on CPU or small GPU. Embeds documents and queries for semantic search.
-- **Llama 3.1 8B** (via vLLM on A10G GPU): Entity extraction from documents, risk/opportunity scoring, PDF transcript summarization, regulation analysis.
-
-**Why both on Modal:** Judges want "ambitious applications running inference on Modal." Running the full pipeline — ingestion, embedding, LLM analysis — on Modal is genuinely ambitious and solves a real-world problem.
-
-**Credits:** $250 via code `VVN-YQS-E55` at modal.com/credits
+- **DocClassifier** (`facebook/bart-large-mnli`, 406M params, T4): Zero-shot classification into regulatory/economic/safety/infrastructure/community/business. Batch size 32 via `@modal.batched`.
+- **SentimentAnalyzer** (`cardiffnlp/twitter-roberta-base-sentiment-latest`, T4): Sentiment scoring. Batch size 32 via `@modal.batched`.
+- **AlethiaLLM** (Qwen3 8B via vLLM, H100): Streaming chat responses, intelligence briefs, agent synthesis. 20 concurrent inputs via `@modal.concurrent`.
 
 ## Supermemory Integration
 
@@ -156,108 +164,55 @@ Two models running on Modal:
 |-----------------|---------------|
 | **User Profiles** | Business type, location (neighborhood), industry, size, regulatory concerns |
 | **Memory** | Past queries, analysis results, recommendations per user |
-| **Retrieval** | Augment RAG — pull user-relevant context alongside Modal vector search |
-| **Connectors** | Link user's Yelp page, permits, business license data |
-| **Multi-modal Extractors** | Extract context from uploaded docs (leases, permits, signage photos) |
+| **Retrieval** | Augment RAG — pull user-relevant context alongside Modal volume data |
+| **Doc Sync** | Pipeline data pushed to Supermemory for searchable RAG context |
 
-**Flow:** User onboards → profile in Supermemory → every query enriched with profile + memory → recommendations personalize over time → "the app learns you."
+**Flow:** User onboards → profile in Supermemory → every query enriched with profile + memory → agent swarm retrieves from Supermemory + volume → LLM synthesizes → recommendations personalize over time.
 
-## OpenAI Integration
+## Modal Features Used (17)
 
-Use OpenAI API for the chat generation step:
-- Takes retrieved context (from Modal RAG + Supermemory) and generates natural language responses
-- Streaming via WebSocket for responsive UX
-- This separates concerns: Modal handles compute-heavy inference, OpenAI handles conversational generation
+| # | Feature | Where Used |
+|---|---------|------------|
+| 1 | `modal.App` | `volume.py` — single app for all functions |
+| 2 | `modal.Volume` | `volume.py` — `alethia-data` + `alethia-weights` |
+| 3 | `modal.Secret` | All pipeline + web functions |
+| 4 | `modal.Image` | `volume.py` — 10 custom images (base, reddit, politics, data, vllm, classify, web, video, label, yolo) |
+| 5 | `modal.Period` | 5 cron schedules (news, reddit, public_data, classifier, reconciler) |
+| 6 | `.map()` | Batch fan-out in pipelines |
+| 7 | `gpu="T4"` | `classify.py` — DocClassifier + SentimentAnalyzer |
+| 8 | `@modal.cls` + `@modal.enter` | `llm.py`, `classify.py` — model loading |
+| 9 | `@modal.concurrent` | `llm.py` — 20 concurrent LLM inputs |
+| 10 | `gpu="H100"` | `llm.py` — Qwen3 8B via vLLM |
+| 11 | `Image.pip_install()` | All custom images |
+| 12 | `@modal.batched` | `classify.py` — batch GPU inference (32 docs) |
+| 13 | `modal.Queue` | `classify.py` — event bus between pipelines and classifier |
+| 14 | `modal.Retries` | `politics.py`, `federal_register.py` — auto-retry on failure |
+| 15 | `.spawn()` | `agents.py` — query-time fan-out of 4 agents |
+| 16 | `@modal.asgi_app` | `web.py` — FastAPI hosted on Modal |
+| 17 | `modal.Dict` | `reconciler.py` — shared cost tracking state |
 
-## Frontend Architecture
+## Deployment (Actual)
 
-Chat + Dashboard hybrid (split-panel layout):
+| Component | Platform | Status |
+|-----------|----------|--------|
+| All compute | Modal (18 functions) | **DEPLOYED** |
+| Web API | Modal `@modal.asgi_app` | **LIVE** at `https://gt12889--alethia-serve.modal.run` |
+| LLM | Modal H100 (Qwen3 8B) | **DEPLOYED** |
+| Classification | Modal T4 (2 models) | **DEPLOYED** |
+| User Memory | Supermemory | **DEPLOYED** |
+| Frontend | Local dev (Vite) | **RUNNING** |
+| Domain | TBD | Not yet configured |
 
-```
-┌─────────────────────────────────────────────────────┐
-│  HEADER: Alethia logo + business name + location    │
-├─────────────────────┬───────────────────────────────┤
-│                     │                               │
-│   CHAT PANEL        │   DASHBOARD PANEL             │
-│   (40% width)       │   (60% width)                 │
-│                     │                               │
-│   "What permits     │   ┌─────────────────────┐    │
-│    do I need to     │   │ RISK SCORE    ██░ 7 │    │
-│    open a           │   │ 3 new regulations   │    │
-│    restaurant       │   │ affecting you       │    │
-│    in Lincoln       │   └─────────────────────┘    │
-│    Park?"           │                               │
-│                     │   ┌─────────────────────┐    │
-│   [AI response      │   │ ACTION ITEMS        │    │
-│    streams here     │   │ □ File food permit  │    │
-│    with citations]  │   │ □ Zoning review     │    │
-│                     │   │ ✓ Business license  │    │
-│                     │   └─────────────────────┘    │
-│                     │                               │
-│                     │   ┌─────────────────────┐    │
-│                     │   │ LOCAL PULSE         │    │
-│                     │   │ News · Reddit ·     │    │
-│                     │   │ Reviews trending    │    │
-│                     │   │ in your area        │    │
-│                     │   └─────────────────────┘    │
-│                     │                               │
-│                     │   ┌─────────────────────┐    │
-│                     │   │ NEIGHBORHOOD MAP    │    │
-│                     │   │ [Chicago map with   │    │
-│                     │   │  ward overlays]     │    │
-│                     │   └─────────────────────┘    │
-│                     │                               │
-├─────────────────────┴───────────────────────────────┤
-│  FOOTER: "Not legal advice" disclaimer              │
-└─────────────────────────────────────────────────────┘
-```
-
-**Key screens:**
-1. **Onboarding** — Business type, location, industry → stored in Supermemory User Profile
-2. **Main view** — Chat + Dashboard side-by-side
-3. **Deep dive** — Click risk card → full regulation details, sources, recommendations
-
-## End-to-End Data Flow
-
-```
-1. INGEST (Modal cron functions)
-   News/Politics/Social/Public → Raw docs → Modal Volume
-
-2. PROCESS (Modal GPU functions)
-   Raw docs → Embed (MiniLM) → Extract entities (Llama) → Classify → Index
-
-3. QUERY (User interaction)
-   User question → FastAPI WebSocket
-   → Modal: embed query, search vector index, retrieve top-k docs
-   → Supermemory: pull user profile + memory + past context
-   → OpenAI: generate response from retrieved context
-   → Stream response back to frontend
-
-4. UPDATE (Post-query)
-   → Supermemory: store query + response in user Memory
-   → Dashboard: refresh risk cards, action items from analysis
-```
-
-## Deployment
-
-| Component | Platform | Why |
-|-----------|----------|-----|
-| Frontend | Cloudflare Pages | Sponsor track + global CDN |
-| Backend | Railway or Render | Easy Python hosting |
-| AI Inference | Modal (A10G GPU) | Sponsor track + GPU compute |
-| Data Pipelines | Modal (cron) | Unified with inference |
-| User Memory | Supermemory | Sponsor track |
-| Domain | alethia.tech | MLH .tech domain prize |
-
-## Key Technical Decisions
+## Key Technical Decisions (Updated)
 
 | Decision | Rationale |
 |----------|-----------|
-| Monolith over microservices | 36-hour hackathon — simplicity wins |
-| Modal for everything compute | Single platform for pipelines + inference = ambitious for judges |
-| Llama 3.1 8B over 70B | Fits A10G, fast inference, $250 credits last longer |
-| OpenAI for generation | Best chat quality, separates concerns from Modal inference |
-| Supermemory over custom memory | Sponsor track + better than building our own |
-| Cloudflare Pages over Vercel | Sponsor track + equally easy deployment |
-| Chicago focus | Local to HackIllinois, tangible demo, rich public data APIs |
-| Live data over pre-curated | More ambitious, better demo, real-time relevance |
+| All-Modal over separate backend | Single platform = simpler deployment, more Modal features for judges |
+| Qwen3 8B over Llama 3.1 8B | Better instruction following, fits H100 well |
+| H100 over A10G | Higher throughput for streaming, impressive for judges |
+| Self-hosted LLM over OpenAI | No external dependency for chat, more ambitious for Modal track |
+| `asyncio.gather()` over sequential | Parallel GPU calls — 100 docs in ~10s instead of ~250s |
+| 5 cron + 5 on-demand | Modal free tier limits to 5 cron jobs |
+| `MODAL_IS_REMOTE` guard | Prevents cross-image import failures in containers |
+| `add_local_python_source(copy=True)` | Ensures source is baked into image, not mounted |
+| `scaledown_window` over `container_idle_timeout` | API renamed in Modal SDK |
