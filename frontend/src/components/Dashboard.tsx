@@ -290,7 +290,7 @@ export default function Dashboard({ profile, onReset }: Props) {
 
       {error && (
         <div className="mx-6 mt-4 p-4 bg-red-900/30 border border-red-800 rounded-lg text-red-300 text-sm">
-          {error} — Make sure the backend is running on port 8000
+          {error} — Check that VITE_MODAL_URL is set or the Modal backend is deployed
         </div>
       )}
 
