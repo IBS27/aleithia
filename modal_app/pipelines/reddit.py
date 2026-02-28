@@ -150,6 +150,7 @@ async def _fetch_all_json() -> list[dict]:
     secrets=[modal.Secret.from_name("alethia-secrets")],
     schedule=modal.Period(hours=1),
     timeout=180,
+    retries=modal.Retries(max_retries=2, backoff_coefficient=2.0),
 )
 async def reddit_ingester():
     """Ingest relevant posts from Chicago subreddits with fallback chain."""
@@ -176,6 +177,14 @@ async def reddit_ingester():
         doc = Document(**{k: v for k, v in doc_data.items() if k != "timestamp"})
         fpath = out_dir / f"{doc.id}.json"
         fpath.write_text(doc.model_dump_json(indent=2))
+
+    # Push to classification queue
+    from modal_app.classify import doc_queue
+    for doc_data in all_docs:
+        try:
+            doc_queue.put(doc_data)
+        except Exception:
+            pass
 
     await volume.commit.aio()
     print(f"Reddit ingester complete: {len(all_docs)} documents saved to {out_dir}")

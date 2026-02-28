@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { UserProfile, NeighborhoodData, DataSources, ChatMessage, RiskScore } from '../types/index.ts'
-import { api } from '../api.ts'
+import { api, streamChat } from '../api.ts'
 import RiskCard from './RiskCard.tsx'
 import ChatPanel from './ChatPanel.tsx'
 import MapView from './MapView.tsx'
@@ -11,8 +11,16 @@ import PermitTable from './PermitTable.tsx'
 import LicenseTable from './LicenseTable.tsx'
 import NewsFeed from './NewsFeed.tsx'
 import DemographicsCard from './DemographicsCard.tsx'
+import PipelineMonitor from './PipelineMonitor.tsx'
+import AgentSwarm from './AgentSwarm.tsx'
 
 type Tab = 'overview' | 'inspections' | 'permits' | 'licenses' | 'news'
+
+interface AgentInfo {
+  agents_deployed: number
+  neighborhoods: string[]
+  data_points: number
+}
 
 function computeRiskScore(data: NeighborhoodData, profile: UserProfile): RiskScore {
   const factors = []
@@ -111,9 +119,15 @@ export default function Dashboard({ profile, onReset }: Props) {
   const [riskScore, setRiskScore] = useState<RiskScore | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [chatLoading, setChatLoading] = useState(false)
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [statusMessage, setStatusMessage] = useState('')
+  const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null)
+  const [agentActive, setAgentActive] = useState(false)
+  const [agentElapsedMs, setAgentElapsedMs] = useState<number | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
+  const userIdRef = useRef(`user_${Date.now()}`)
 
   useEffect(() => {
     let cancelled = false
@@ -146,56 +160,105 @@ export default function Dashboard({ profile, onReset }: Props) {
       }))
     : []
 
-  const handleChat = (message: string) => {
+  const handleChat = async (message: string) => {
     setMessages(prev => [...prev, { role: 'user', content: message, timestamp: new Date() }])
     setChatLoading(true)
+    setAgentActive(true)
+    setAgentInfo(null)
+    setStatusMessage('')
+    const startTime = Date.now()
 
-    setTimeout(() => {
-      let response = ''
-      const nb = profile.neighborhood
-      const biz = profile.business_type.toLowerCase()
+    // Add empty assistant message for streaming
+    const assistantIdx = messages.length + 1
+    setMessages(prev => [...prev, { role: 'assistant', content: '', timestamp: new Date() }])
+    setIsStreaming(true)
 
-      if (message.toLowerCase().includes('permit')) {
-        const permits = neighborhoodData?.permits || []
-        response = `Based on ${permits.length} recent permits in ${nb}:\n\n`
-        if (permits.length > 0) {
-          response += permits.slice(0, 3).map(p => {
-            const r = p.metadata?.raw_record || {} as Record<string, string>
-            return `- ${r.work_type || 'Permit'}: ${r.street_number || ''} ${r.street_direction || ''} ${r.street_name || ''} (${r.permit_status || 'Active'})`
-          }).join('\n')
-        }
-        response += `\n\nFor a ${biz}, you'll typically need a Limited Business License and applicable permits for your specific operation.`
-      } else if (message.toLowerCase().includes('inspection') || message.toLowerCase().includes('health')) {
-        const stats = neighborhoodData?.inspection_stats || { total: 0, failed: 0, passed: 0 }
-        response = `Food inspection data for ${nb}:\n\n`
-        response += `- Total inspections: ${stats.total}\n- Passed: ${stats.passed}\n- Failed: ${stats.failed}\n`
-        if (stats.total > 0) {
-          response += `- Pass rate: ${Math.round((stats.passed / stats.total) * 100)}%\n`
-        }
-        response += `\nThis data helps gauge the regulatory environment you'll be operating in.`
-      } else if (message.toLowerCase().includes('competition') || message.toLowerCase().includes('business')) {
-        const licenses = neighborhoodData?.licenses || []
-        response = `There are ${licenses.length} active business licenses in ${nb}.\n\n`
-        if (licenses.length > 0) {
-          response += 'Nearby businesses include:\n'
-          response += licenses.slice(0, 5).map(l => {
-            const r = l.metadata?.raw_record || {} as Record<string, string>
-            return `- ${r.doing_business_as_name || r.legal_name || 'Unknown'} (${r.license_description || 'Business'})`
-          }).join('\n')
-        }
-      } else {
-        const total = (neighborhoodData?.inspection_stats.total || 0) + (neighborhoodData?.permit_count || 0) + (neighborhoodData?.license_count || 0)
-        response = `Here's what I found about ${nb} for a ${biz}:\n\n`
-        response += `We analyzed ${total} data points across food inspections, building permits, and business licenses.\n\n`
-        if (riskScore) {
-          response += `Risk score: ${riskScore.overall_score}/10 (${riskScore.overall_score <= 4 ? 'low' : riskScore.overall_score <= 7 ? 'moderate' : 'high'} risk)\n\n`
-        }
-        response += 'Ask me about specific topics: permits, inspections, competition, or zoning.'
-      }
+    try {
+      await streamChat(message, profile, {
+        onStatus: (content) => {
+          setStatusMessage(content)
+        },
+        onAgents: (data) => {
+          setAgentInfo(data)
+          setAgentActive(false)
+          setAgentElapsedMs(Date.now() - startTime)
+          setStatusMessage('')
+        },
+        onToken: (token) => {
+          setMessages(prev => {
+            const updated = [...prev]
+            const last = updated[updated.length - 1]
+            if (last && last.role === 'assistant') {
+              updated[updated.length - 1] = { ...last, content: last.content + token }
+            }
+            return updated
+          })
+        },
+        onDone: () => {
+          setIsStreaming(false)
+          setChatLoading(false)
+        },
+        onError: (errorMsg) => {
+          // Fallback to local response
+          setIsStreaming(false)
+          setAgentActive(false)
+          setStatusMessage('')
 
-      setMessages(prev => [...prev, { role: 'assistant', content: response, timestamp: new Date() }])
+          const nb = profile.neighborhood
+          const biz = profile.business_type.toLowerCase()
+          let response = ''
+
+          if (message.toLowerCase().includes('permit')) {
+            const permits = neighborhoodData?.permits || []
+            response = `Based on ${permits.length} recent permits in ${nb}:\n\n`
+            if (permits.length > 0) {
+              response += permits.slice(0, 3).map(p => {
+                const r = p.metadata?.raw_record || {} as Record<string, string>
+                return `- ${r.work_type || 'Permit'}: ${r.street_number || ''} ${r.street_direction || ''} ${r.street_name || ''} (${r.permit_status || 'Active'})`
+              }).join('\n')
+            }
+            response += `\n\nFor a ${biz}, you'll typically need a Limited Business License and applicable permits for your specific operation.`
+          } else if (message.toLowerCase().includes('inspection') || message.toLowerCase().includes('health')) {
+            const stats = neighborhoodData?.inspection_stats || { total: 0, failed: 0, passed: 0 }
+            response = `Food inspection data for ${nb}:\n\n`
+            response += `- **Total inspections:** ${stats.total}\n- **Passed:** ${stats.passed}\n- **Failed:** ${stats.failed}\n`
+            if (stats.total > 0) {
+              response += `- **Pass rate:** ${Math.round((stats.passed / stats.total) * 100)}%\n`
+            }
+            response += `\nThis data helps gauge the regulatory environment you'll be operating in.`
+          } else if (message.toLowerCase().includes('competition') || message.toLowerCase().includes('business')) {
+            const licenses = neighborhoodData?.licenses || []
+            response = `There are **${licenses.length}** active business licenses in ${nb}.\n\n`
+            if (licenses.length > 0) {
+              response += 'Nearby businesses include:\n'
+              response += licenses.slice(0, 5).map(l => {
+                const r = l.metadata?.raw_record || {} as Record<string, string>
+                return `- ${r.doing_business_as_name || r.legal_name || 'Unknown'} (${r.license_description || 'Business'})`
+              }).join('\n')
+            }
+          } else {
+            const total = (neighborhoodData?.inspection_stats.total || 0) + (neighborhoodData?.permit_count || 0) + (neighborhoodData?.license_count || 0)
+            response = `Here's what I found about **${nb}** for a ${biz}:\n\n`
+            response += `We analyzed **${total}** data points across food inspections, building permits, and business licenses.\n\n`
+            if (riskScore) {
+              response += `**Risk score:** ${riskScore.overall_score}/10 (${riskScore.overall_score <= 4 ? 'low' : riskScore.overall_score <= 7 ? 'moderate' : 'high'} risk)\n\n`
+            }
+            response += 'Ask me about specific topics: permits, inspections, competition, or zoning.'
+          }
+
+          setMessages(prev => {
+            const updated = [...prev]
+            updated[updated.length - 1] = { role: 'assistant', content: response, timestamp: new Date() }
+            return updated
+          })
+          setChatLoading(false)
+        },
+      }, userIdRef.current)
+    } catch {
+      setIsStreaming(false)
       setChatLoading(false)
-    }, 800)
+      setAgentActive(false)
+    }
   }
 
   const tabs: { key: Tab; label: string; count?: number }[] = [
@@ -235,6 +298,9 @@ export default function Dashboard({ profile, onReset }: Props) {
       <div className="flex-1 flex min-h-0">
         {/* Left: Data */}
         <div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto">
+          {/* Pipeline Monitor */}
+          <PipelineMonitor />
+
           {/* Data sources */}
           <DataSourceBadge sources={sourceList} />
 
@@ -276,6 +342,15 @@ export default function Dashboard({ profile, onReset }: Props) {
                   <div className="h-[300px]">
                     <MapView activeNeighborhood={profile.neighborhood} />
                   </div>
+
+                  {/* Agent Swarm Visualization */}
+                  {(agentActive || agentInfo) && (
+                    <AgentSwarm
+                      agentInfo={agentInfo}
+                      isActive={agentActive}
+                      elapsedMs={agentElapsedMs}
+                    />
+                  )}
 
                   {/* Risk + Demographics side by side */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -355,7 +430,14 @@ export default function Dashboard({ profile, onReset }: Props) {
 
         {/* Right: Chat */}
         <div className="w-96 border-l border-gray-800 p-4">
-          <ChatPanel messages={messages} onSend={handleChat} loading={chatLoading} />
+          <ChatPanel
+            messages={messages}
+            onSend={handleChat}
+            loading={chatLoading}
+            isStreaming={isStreaming}
+            agentInfo={agentInfo}
+            statusMessage={statusMessage}
+          />
         </div>
       </div>
     </div>

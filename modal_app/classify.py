@@ -1,0 +1,125 @@
+"""GPU classification pipeline — DocClassifier + SentimentAnalyzer on T4.
+
+Uses modal.Queue for event bus between pipelines and classifiers.
+Modal features: @modal.batched, modal.Queue, @modal.cls, @modal.enter, gpu=T4
+"""
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+import modal
+
+from modal_app.volume import app, volume, classify_image, VOLUME_MOUNT, PROCESSED_DATA_PATH
+
+# Event bus: pipelines push raw docs, classifier drains and enriches
+doc_queue = modal.Queue.from_name("new-docs", create_if_missing=True)
+
+
+@app.cls(gpu="T4", image=classify_image, container_idle_timeout=120)
+class DocClassifier:
+    """Zero-shot document classifier using facebook/bart-large-mnli (406M params)."""
+
+    @modal.enter()
+    def load_model(self):
+        from transformers import pipeline
+        self.classifier = pipeline(
+            "zero-shot-classification",
+            model="facebook/bart-large-mnli",
+            device=0,
+        )
+
+    @modal.batched(max_batch_size=32, wait_ms=2000)
+    async def classify(self, texts: list[str]) -> list[dict]:
+        """Classify documents into city intelligence categories."""
+        labels = ["regulatory", "economic", "safety", "infrastructure", "community", "business"]
+        results = self.classifier(texts, candidate_labels=labels, multi_label=True)
+        if not isinstance(results, list):
+            results = [results]
+        return [
+            {"labels": r["labels"][:3], "scores": [round(s, 4) for s in r["scores"][:3]]}
+            for r in results
+        ]
+
+
+@app.cls(gpu="T4", image=classify_image, container_idle_timeout=120)
+class SentimentAnalyzer:
+    """Sentiment analysis using cardiffnlp/twitter-roberta-base-sentiment-latest."""
+
+    @modal.enter()
+    def load_model(self):
+        from transformers import pipeline
+        self.sentiment = pipeline(
+            "sentiment-analysis",
+            model="cardiffnlp/twitter-roberta-base-sentiment-latest",
+            device=0,
+        )
+
+    @modal.batched(max_batch_size=32, wait_ms=2000)
+    async def analyze(self, texts: list[str]) -> list[dict]:
+        """Analyze sentiment of documents."""
+        results = self.sentiment(texts, truncation=True, max_length=512)
+        return [
+            {"label": r["label"], "score": round(r["score"], 4)}
+            for r in results
+        ]
+
+
+@app.function(
+    image=classify_image,
+    volumes={"/data": volume},
+    schedule=modal.Period(minutes=2),
+    timeout=300,
+)
+async def process_queue_batch():
+    """Drain doc_queue and classify/analyze documents in batch.
+
+    Pattern A: Queue + manual batch — pipelines push to Queue,
+    this scheduled function drains and enriches via GPU classifiers.
+    """
+    docs = []
+    while len(docs) < 100:
+        try:
+            doc = doc_queue.get(timeout=5)
+            docs.append(doc)
+        except Exception:
+            break
+
+    if not docs:
+        print("Queue empty, nothing to classify")
+        return 0
+
+    print(f"Draining queue: {len(docs)} documents to classify")
+
+    classifier = DocClassifier()
+    analyzer = SentimentAnalyzer()
+
+    texts = [d.get("content", d.get("title", ""))[:512] for d in docs]
+
+    # Run classification and sentiment in parallel
+    classifications = []
+    sentiments = []
+    for text in texts:
+        classifications.append(classifier.classify.remote(text))
+        sentiments.append(analyzer.analyze.remote(text))
+
+    # Enrich documents with classifications
+    enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
+    enriched_dir.mkdir(parents=True, exist_ok=True)
+
+    for i, doc in enumerate(docs):
+        try:
+            cls_result = await classifications[i]
+            sent_result = await sentiments[i]
+            doc["classification"] = cls_result
+            doc["sentiment"] = sent_result
+        except Exception as e:
+            print(f"Classification error for doc {doc.get('id', i)}: {e}")
+            doc["classification"] = {"labels": [], "scores": []}
+            doc["sentiment"] = {"label": "neutral", "score": 0.5}
+
+        out_path = enriched_dir / f"{doc.get('id', f'doc-{i}')}.json"
+        out_path.write_text(json.dumps(doc, indent=2, default=str))
+
+    volume.commit()
+    print(f"Classified {len(docs)} documents: saved to {enriched_dir}")
+    return len(docs)

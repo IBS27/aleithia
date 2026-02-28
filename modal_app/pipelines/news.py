@@ -166,6 +166,7 @@ async def _fetch_newsapi(api_key: str) -> list[dict]:
     secrets=[modal.Secret.from_name("alethia-secrets")],
     schedule=modal.Period(minutes=30),
     timeout=120,
+    retries=modal.Retries(max_retries=2, backoff_coefficient=2.0),
 )
 async def news_ingester():
     """Ingest Chicago news from RSS feeds and NewsAPI with fallback chains."""
@@ -199,6 +200,14 @@ async def news_ingester():
         doc = Document(**{k: v for k, v in doc_data.items() if k != "timestamp"})
         fpath = out_dir / f"{doc.id}.json"
         fpath.write_text(doc.model_dump_json(indent=2))
+
+    # Push to classification queue
+    from modal_app.classify import doc_queue
+    for doc_data in all_docs:
+        try:
+            doc_queue.put(doc_data)
+        except Exception:
+            pass
 
     await volume.commit.aio()
     print(f"News ingester complete: {len(all_docs)} documents saved to {out_dir}")
