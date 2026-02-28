@@ -60,7 +60,7 @@ function App() {
   }
 
   if (view === 'onboarding' || !profile) {
-    return <OnboardingForm onSubmit={handleProfileSubmit} initialProfile={savedProfile} />
+    return <OnboardingForm onSubmit={handleProfileSubmit} onCancel={() => setView('landing')} initialProfile={savedProfile} />
   }
 
   return <Dashboard profile={profile} onReset={() => { setProfile(null); setView('landing') }} />
