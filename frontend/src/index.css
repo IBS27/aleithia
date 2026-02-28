@@ -1,8 +1,29 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+}
+
 @layer base {
-  body {
-    @apply bg-gray-950 text-gray-100 m-0;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
+
+  body {
+    @apply bg-[#06080d] text-gray-100 m-0;
+    font-family: var(--font-sans);
+    letter-spacing: -0.01em;
+  }
+
+  ::selection {
+    @apply bg-white/15 text-white;
+  }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
 }

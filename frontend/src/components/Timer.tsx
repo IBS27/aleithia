@@ -30,8 +30,8 @@ export default function Timer({ running, onComplete }: Props) {
   const seconds = (elapsed / 1000).toFixed(1)
 
   return (
-    <div className={`font-mono text-2xl font-bold transition-colors ${
-      running ? 'text-indigo-400 animate-pulse' : elapsed > 0 ? 'text-green-400' : 'text-gray-600'
+    <div className={`font-mono text-lg font-bold transition-colors ${
+      running ? 'text-white/60 animate-pulse' : elapsed > 0 ? 'text-green-400/80' : 'text-white/10'
     }`}>
       {seconds}s
     </div>

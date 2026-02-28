@@ -32,60 +32,65 @@ export default function OnboardingForm({ onSubmit }: Props) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="max-w-lg w-full">
-        <div className="text-center mb-10">
-          <h1 className="text-5xl font-bold tracking-tight mb-3">
-            <span className="text-indigo-400">Alethia</span>
+    <div className="min-h-screen flex items-center justify-center p-6 bg-[#06080d]">
+      <div className="max-w-md w-full">
+        <div className="mb-12">
+          <p className="text-xs font-mono font-medium uppercase tracking-[0.3em] text-white/30 mb-4">
+            Alethia
+          </p>
+          <h1 className="text-3xl font-bold tracking-tight text-white mb-2">
+            Configure analysis.
           </h1>
-          <p className="text-gray-400 text-lg">
-            Chicago business intelligence in seconds, not weeks.
+          <p className="text-sm text-white/40 leading-relaxed">
+            Select your business type and target neighborhood to begin.
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6 bg-gray-900 rounded-2xl p-8 border border-gray-800">
+        <form onSubmit={handleSubmit} className="space-y-6">
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              What type of business?
+            <label className="block text-xs font-mono uppercase tracking-wider text-white/30 mb-2">
+              Business Type
             </label>
             <select
               value={businessType}
               onChange={(e) => setBusinessType(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="w-full bg-white/[0.03] border border-white/[0.08] px-4 py-3 text-sm text-white focus:outline-none focus:border-white/30 transition-colors appearance-none cursor-pointer"
             >
-              <option value="">Select business type...</option>
+              <option value="" className="bg-[#0a0c12]">Select type...</option>
               {BUSINESS_TYPES.map((type) => (
-                <option key={type} value={type}>{type}</option>
+                <option key={type} value={type} className="bg-[#0a0c12]">{type}</option>
               ))}
             </select>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Which neighborhood?
+            <label className="block text-xs font-mono uppercase tracking-wider text-white/30 mb-2">
+              Neighborhood
             </label>
             <select
               value={neighborhood}
               onChange={(e) => setNeighborhood(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="w-full bg-white/[0.03] border border-white/[0.08] px-4 py-3 text-sm text-white focus:outline-none focus:border-white/30 transition-colors appearance-none cursor-pointer"
             >
-              <option value="">Select neighborhood...</option>
+              <option value="" className="bg-[#0a0c12]">Select neighborhood...</option>
               {NEIGHBORHOODS.map((n) => (
-                <option key={n} value={n}>{n}</option>
+                <option key={n} value={n} className="bg-[#0a0c12]">{n}</option>
               ))}
             </select>
           </div>
 
-          <button
-            type="submit"
-            disabled={!businessType || !neighborhood}
-            className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-semibold py-3 rounded-lg transition-colors"
-          >
-            Analyze
-          </button>
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={!businessType || !neighborhood}
+              className="w-full bg-white text-[#06080d] disabled:bg-white/[0.06] disabled:text-white/20 font-semibold py-3.5 text-sm tracking-wide transition-colors hover:bg-gray-200 cursor-pointer"
+            >
+              Run Analysis
+            </button>
+          </div>
 
-          <p className="text-center text-xs text-gray-500">
-            Powered by 9 live data sources across Chicago
+          <p className="text-center text-[10px] font-mono text-white/15 uppercase tracking-widest pt-2">
+            9 live data sources across Chicago
           </p>
         </form>
       </div>

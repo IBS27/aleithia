@@ -8,15 +8,15 @@ export default function DataSourceBadge({ sources }: Props) {
       {sources.map((s) => (
         <div
           key={s.name}
-          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border ${
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider border ${
             s.active
-              ? 'bg-green-500/10 text-green-400 border-green-500/20'
-              : 'bg-gray-800 text-gray-500 border-gray-700'
+              ? 'text-green-400/60 border-green-500/15'
+              : 'text-white/15 border-white/[0.06]'
           }`}
         >
-          <span className={`w-1.5 h-1.5 rounded-full ${s.active ? 'bg-green-400' : 'bg-gray-600'}`} />
+          <span className={`w-1 h-1 rounded-full ${s.active ? 'bg-green-400/60' : 'bg-white/10'}`} />
           {s.name}
-          {s.count > 0 && <span className="text-gray-500">({s.count})</span>}
+          {s.count > 0 && <span className="text-white/15">{s.count}</span>}
         </div>
       ))}
     </div>

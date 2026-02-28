@@ -10,35 +10,34 @@ export default function NewsFeed({ news, politics }: Props) {
 
   if (!hasContent) {
     return (
-      <div className="bg-gray-900 rounded-xl border border-gray-800 p-8 text-center text-gray-500">
-        No news or political data available for this neighborhood.
+      <div className="border border-white/[0.06] p-8 text-center text-xs font-mono text-white/20 uppercase tracking-wider">
+        No intelligence data available
       </div>
     )
   }
 
   return (
     <div className="space-y-4">
-      {/* News Articles */}
       {news.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-300">Local News</h3>
-            <span className="text-xs text-gray-500">{news.length} articles</span>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between px-1">
+            <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">Local News</h3>
+            <span className="text-[10px] font-mono text-white/15">{news.length} articles</span>
           </div>
           {news.map((article) => (
-            <div key={article.id} className="bg-gray-900 rounded-xl border border-gray-800 p-4">
+            <div key={article.id} className="border border-white/[0.06] bg-white/[0.01] p-4">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
-                  <h4 className="font-semibold text-gray-100 mb-1">{article.title}</h4>
+                  <h4 className="text-sm font-semibold text-white mb-1">{article.title}</h4>
                   {article.content && (
-                    <p className="text-xs text-gray-400 leading-relaxed mb-2">
+                    <p className="text-xs text-white/30 leading-relaxed mb-2">
                       {article.content.substring(0, 200)}
                       {article.content.length > 200 && '...'}
                     </p>
                   )}
-                  <div className="flex items-center gap-3 text-xs text-gray-500">
+                  <div className="flex items-center gap-3 text-[10px] font-mono text-white/15">
                     <span>{new Date(article.timestamp).toLocaleDateString()}</span>
-                    <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                    <span className="uppercase px-2 py-0.5 border border-blue-500/20 text-blue-400/60">
                       News
                     </span>
                   </div>
@@ -48,7 +47,7 @@ export default function NewsFeed({ news, politics }: Props) {
                     href={article.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-xs text-indigo-400 hover:text-indigo-300 ml-4 shrink-0"
+                    className="text-[10px] font-mono uppercase tracking-wider text-white/25 hover:text-white/50 ml-4 shrink-0 transition-colors"
                   >
                     Read
                   </a>
@@ -59,24 +58,23 @@ export default function NewsFeed({ news, politics }: Props) {
         </div>
       )}
 
-      {/* Political Activity */}
       {politics.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-300">City Council Activity</h3>
-            <span className="text-xs text-gray-500">{politics.length} items</span>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between px-1">
+            <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">City Council</h3>
+            <span className="text-[10px] font-mono text-white/15">{politics.length} items</span>
           </div>
           {politics.map((item) => {
             const matterType = (item.metadata?.matter_type as string) || 'Item'
             const status = (item.metadata?.status as string) || ''
 
             return (
-              <div key={item.id} className="bg-gray-900 rounded-xl border border-gray-800 p-4">
+              <div key={item.id} className="border border-white/[0.06] bg-white/[0.01] p-4">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
-                    <h4 className="font-semibold text-gray-100 mb-1 text-sm">{item.title}</h4>
-                    <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
-                      <span className="px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                    <h4 className="text-sm font-semibold text-white mb-1">{item.title}</h4>
+                    <div className="flex items-center gap-2 text-[10px] font-mono text-white/15 mt-1">
+                      <span className="uppercase px-2 py-0.5 border border-purple-500/20 text-purple-400/60">
                         {matterType}
                       </span>
                       {status && <span>{status}</span>}
@@ -88,7 +86,7 @@ export default function NewsFeed({ news, politics }: Props) {
                       href={item.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-xs text-indigo-400 hover:text-indigo-300 ml-4 shrink-0"
+                      className="text-[10px] font-mono uppercase tracking-wider text-white/25 hover:text-white/50 ml-4 shrink-0 transition-colors"
                     >
                       View
                     </a>

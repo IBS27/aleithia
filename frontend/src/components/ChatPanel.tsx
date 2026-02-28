@@ -24,17 +24,17 @@ export default function ChatPanel({ messages, onSend, loading }: Props) {
   }
 
   return (
-    <div className="flex flex-col h-full bg-gray-900 rounded-xl border border-gray-800">
-      <div className="px-4 py-3 border-b border-gray-800">
-        <h3 className="font-semibold text-sm">Ask Alethia</h3>
-        <p className="text-xs text-gray-500">Powered by live Chicago data</p>
+    <div className="flex flex-col h-full border border-white/[0.06] bg-white/[0.01]">
+      <div className="px-4 py-3 border-b border-white/[0.06]">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-white/60">Query Engine</h3>
+        <p className="text-[10px] font-mono text-white/20 mt-0.5">Powered by live Chicago data</p>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
         {messages.length === 0 && (
-          <div className="text-center py-8">
-            <p className="text-gray-500 text-sm">Ask anything about your business location</p>
-            <div className="mt-4 space-y-2">
+          <div className="py-8">
+            <p className="text-xs text-white/25 mb-4">Suggested queries</p>
+            <div className="space-y-1.5">
               {[
                 'What permits do I need?',
                 'How is foot traffic in this area?',
@@ -43,7 +43,7 @@ export default function ChatPanel({ messages, onSend, loading }: Props) {
                 <button
                   key={q}
                   onClick={() => onSend(q)}
-                  className="block w-full text-left text-sm text-gray-400 hover:text-indigo-400 bg-gray-800 hover:bg-gray-800/80 rounded-lg px-4 py-2.5 transition-colors"
+                  className="block w-full text-left text-xs text-white/35 hover:text-white/70 bg-white/[0.02] hover:bg-white/[0.04] border border-white/[0.04] px-4 py-2.5 transition-colors cursor-pointer"
                 >
                   {q}
                 </button>
@@ -55,25 +55,21 @@ export default function ChatPanel({ messages, onSend, loading }: Props) {
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div
-              className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm ${
+              className={`max-w-[85%] px-4 py-2.5 text-xs leading-relaxed ${
                 msg.role === 'user'
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-gray-800 text-gray-200'
+                  ? 'bg-white text-[#06080d]'
+                  : 'bg-white/[0.04] border border-white/[0.06] text-white/70'
               }`}
             >
-              {msg.content}
+              <pre className="whitespace-pre-wrap font-sans">{msg.content}</pre>
             </div>
           </div>
         ))}
 
         {loading && (
           <div className="flex justify-start">
-            <div className="bg-gray-800 rounded-2xl px-4 py-2.5 text-sm text-gray-400">
-              <span className="inline-flex gap-1">
-                <span className="animate-bounce" style={{ animationDelay: '0ms' }}>.</span>
-                <span className="animate-bounce" style={{ animationDelay: '150ms' }}>.</span>
-                <span className="animate-bounce" style={{ animationDelay: '300ms' }}>.</span>
-              </span>
+            <div className="bg-white/[0.04] border border-white/[0.06] px-4 py-2.5 text-xs text-white/30 font-mono">
+              processing...
             </div>
           </div>
         )}
@@ -81,19 +77,19 @@ export default function ChatPanel({ messages, onSend, loading }: Props) {
         <div ref={messagesEndRef} />
       </div>
 
-      <form onSubmit={handleSubmit} className="p-3 border-t border-gray-800">
+      <form onSubmit={handleSubmit} className="p-3 border-t border-white/[0.06]">
         <div className="flex gap-2">
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask about permits, zoning, competition..."
-            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            placeholder="Query permits, zoning, competition..."
+            className="flex-1 bg-white/[0.03] border border-white/[0.06] px-4 py-2.5 text-xs text-white placeholder-white/20 focus:outline-none focus:border-white/20 transition-colors"
           />
           <button
             type="submit"
             disabled={!input.trim() || loading}
-            className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+            className="bg-white text-[#06080d] disabled:bg-white/[0.06] disabled:text-white/20 px-4 py-2.5 text-xs font-medium transition-colors cursor-pointer"
           >
             Send
           </button>

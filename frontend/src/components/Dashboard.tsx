@@ -80,13 +80,11 @@ function computeRiskScore(data: NeighborhoodData, profile: UserProfile): RiskSco
     })
   }
 
-  // Compute overall score (0-10, higher = more risk)
   const failRate = stats.total > 0 ? stats.failed / stats.total : 0
   const overallScore = Math.min(10, Math.max(1,
     3 + failRate * 4 + (data.license_count > 10 ? 1 : 0) + (data.politics.length > 3 ? 1 : 0)
   ))
 
-  // Normalize factor percentages to 100
   const totalPct = factors.reduce((s, f) => s + f.pct, 0) || 1
   factors.forEach(f => { f.pct = Math.round((f.pct / totalPct) * 100) })
 
@@ -203,30 +201,30 @@ export default function Dashboard({ profile, onReset }: Props) {
     { key: 'inspections', label: 'Inspections', count: neighborhoodData?.inspection_stats.total },
     { key: 'permits', label: 'Permits', count: neighborhoodData?.permit_count },
     { key: 'licenses', label: 'Licenses', count: neighborhoodData?.license_count },
-    { key: 'news', label: 'News & Politics', count: (neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0) },
+    { key: 'news', label: 'Intel', count: (neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0) },
   ]
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="h-screen flex flex-col bg-[#06080d]">
       {/* Top bar */}
-      <header className="flex items-center justify-between px-6 py-3 border-b border-gray-800 bg-gray-900/80 backdrop-blur-sm">
-        <div className="flex items-center gap-4">
-          <h1 className="text-lg font-bold text-indigo-400">Alethia</h1>
-          <div className="h-4 w-px bg-gray-700" />
-          <span className="text-sm text-gray-400">
-            {profile.business_type} in <strong className="text-gray-200">{profile.neighborhood}</strong>
+      <header className="flex items-center justify-between px-6 py-3 bg-white/[0.02] backdrop-blur-md border-b border-white/[0.06]">
+        <div className="flex items-center gap-5">
+          <h1 className="text-sm font-semibold text-white uppercase tracking-wide">Alethia</h1>
+          <div className="h-3.5 w-px bg-white/10" />
+          <span className="text-xs font-mono text-white/30">
+            {profile.business_type} <span className="text-white/10 mx-1">/</span> <span className="text-white/50">{profile.neighborhood}</span>
           </span>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-5">
           <Timer running={loading} />
-          <button onClick={onReset} className="text-xs text-gray-500 hover:text-gray-300 transition-colors">
+          <button onClick={onReset} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
             New Search
           </button>
         </div>
       </header>
 
       {error && (
-        <div className="mx-6 mt-4 p-4 bg-red-900/30 border border-red-800 rounded-lg text-red-300 text-sm">
+        <div className="mx-6 mt-4 p-4 bg-red-500/[0.06] border border-red-500/20 text-red-400/80 text-xs font-mono">
           {error} — Make sure the backend is running on port 8000
         </div>
       )}
@@ -235,26 +233,23 @@ export default function Dashboard({ profile, onReset }: Props) {
       <div className="flex-1 flex min-h-0">
         {/* Left: Data */}
         <div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto">
-          {/* Data sources */}
           <DataSourceBadge sources={sourceList} />
 
           {/* Tabs */}
-          <div className="flex gap-1 bg-gray-900 rounded-lg p-1 border border-gray-800">
+          <div className="flex gap-0 border-b border-white/[0.06]">
             {tabs.map(tab => (
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                className={`flex items-center gap-2 px-5 py-2.5 text-xs font-medium transition-colors border-b-2 -mb-px cursor-pointer ${
                   activeTab === tab.key
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                    ? 'border-white text-white'
+                    : 'border-transparent text-white/30 hover:text-white/60'
                 }`}
               >
                 {tab.label}
                 {tab.count !== undefined && tab.count > 0 && (
-                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                    activeTab === tab.key ? 'bg-indigo-500' : 'bg-gray-700'
-                  }`}>
+                  <span className="font-mono text-[10px] text-white/20">
                     {tab.count}
                   </span>
                 )}
@@ -263,21 +258,21 @@ export default function Dashboard({ profile, onReset }: Props) {
           </div>
 
           {loading ? (
-            <div className="bg-gray-900 rounded-xl border border-gray-800 p-12 text-center">
-              <div className="animate-spin w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full mx-auto mb-4" />
-              <p className="text-gray-400">Analyzing {profile.neighborhood} across all data sources...</p>
-              <p className="text-xs text-gray-600 mt-2">Loading real Chicago city data</p>
+            <div className="border border-white/[0.06] p-16 text-center">
+              <div className="w-6 h-6 border border-white/20 border-t-white/60 rounded-full animate-spin mx-auto mb-5" />
+              <p className="text-xs text-white/30 font-mono uppercase tracking-wider">
+                Analyzing {profile.neighborhood}
+              </p>
+              <p className="text-[10px] text-white/15 font-mono mt-2">Loading real Chicago city data</p>
             </div>
           ) : (
             <>
               {activeTab === 'overview' && (
                 <div className="space-y-4">
-                  {/* Map */}
                   <div className="h-[300px]">
                     <MapView activeNeighborhood={profile.neighborhood} />
                   </div>
 
-                  {/* Risk + Demographics side by side */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     {riskScore && <RiskCard score={riskScore} />}
                     {neighborhoodData?.metrics && (
@@ -285,49 +280,47 @@ export default function Dashboard({ profile, onReset }: Props) {
                     )}
                   </div>
 
-                  {/* Quick stats */}
                   {neighborhoodData && (
                     <div className="grid grid-cols-4 gap-3">
                       <StatCard
                         label="Food Inspections"
                         value={neighborhoodData.inspection_stats.total}
                         sub={`${neighborhoodData.inspection_stats.failed} failed`}
-                        color={neighborhoodData.inspection_stats.failed > 5 ? 'red' : 'green'}
+                        severity={neighborhoodData.inspection_stats.failed > 5 ? 'high' : 'nominal'}
                       />
                       <StatCard
                         label="Building Permits"
                         value={neighborhoodData.permit_count}
                         sub="active"
-                        color="blue"
+                        severity="nominal"
                       />
                       <StatCard
                         label="Business Licenses"
                         value={neighborhoodData.license_count}
                         sub="in area"
-                        color="purple"
+                        severity="nominal"
                       />
                       <StatCard
-                        label="News & Politics"
+                        label="Intel Items"
                         value={neighborhoodData.news.length + neighborhoodData.politics.length}
-                        sub="recent items"
-                        color="amber"
+                        sub="recent"
+                        severity="nominal"
                       />
                     </div>
                   )}
 
-                  {/* Cost comparison */}
-                  <div className="bg-gray-900/50 rounded-xl border border-gray-800 p-4 text-center">
-                    <div className="flex items-center justify-center gap-8">
-                      <div>
-                        <div className="text-xs text-gray-500">Traditional research</div>
-                        <div className="text-lg font-bold text-red-400 line-through">$5,000 - $15,000</div>
-                        <div className="text-xs text-gray-600">2-3 weeks</div>
+                  <div className="border border-white/[0.06] p-5">
+                    <div className="flex items-center justify-center gap-12">
+                      <div className="text-center">
+                        <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mb-1">Traditional</div>
+                        <div className="text-lg font-bold text-white/30 line-through font-mono">$5K–$15K</div>
+                        <div className="text-[10px] font-mono text-white/15">2–3 weeks</div>
                       </div>
-                      <div className="text-2xl text-gray-600">vs</div>
-                      <div>
-                        <div className="text-xs text-gray-500">Alethia</div>
-                        <div className="text-lg font-bold text-green-400">Free</div>
-                        <div className="text-xs text-gray-600">seconds</div>
+                      <div className="text-xs font-mono text-white/10">vs</div>
+                      <div className="text-center">
+                        <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mb-1">Alethia</div>
+                        <div className="text-lg font-bold text-white font-mono">$0</div>
+                        <div className="text-[10px] font-mono text-white/30">seconds</div>
                       </div>
                     </div>
                   </div>
@@ -354,7 +347,7 @@ export default function Dashboard({ profile, onReset }: Props) {
         </div>
 
         {/* Right: Chat */}
-        <div className="w-96 border-l border-gray-800 p-4">
+        <div className="w-96 border-l border-white/[0.06] p-4">
           <ChatPanel messages={messages} onSend={handleChat} loading={chatLoading} />
         </div>
       </div>
@@ -362,19 +355,14 @@ export default function Dashboard({ profile, onReset }: Props) {
   )
 }
 
-function StatCard({ label, value, sub, color }: { label: string; value: number; sub: string; color: string }) {
-  const colors: Record<string, string> = {
-    red: 'text-red-400 bg-red-500/10 border-red-500/20',
-    green: 'text-green-400 bg-green-500/10 border-green-500/20',
-    blue: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
-    purple: 'text-purple-400 bg-purple-500/10 border-purple-500/20',
-    amber: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
-  }
+function StatCard({ label, value, sub, severity }: { label: string; value: number; sub: string; severity: 'high' | 'nominal' }) {
   return (
-    <div className={`rounded-xl border p-4 ${colors[color] || colors.blue}`}>
-      <div className="text-2xl font-bold">{value}</div>
-      <div className="text-xs opacity-80 mt-1">{label}</div>
-      <div className="text-xs opacity-60">{sub}</div>
+    <div className={`border p-4 ${severity === 'high' ? 'border-red-500/20 bg-red-500/[0.03]' : 'border-white/[0.06] bg-white/[0.02]'}`}>
+      <div className={`text-2xl font-bold font-mono ${severity === 'high' ? 'text-red-400' : 'text-white'}`}>
+        {value}
+      </div>
+      <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">{label}</div>
+      <div className="text-[10px] font-mono text-white/15">{sub}</div>
     </div>
   )
 }
