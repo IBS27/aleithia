@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { SignedIn, SignedOut, SignInButton, SignUpButton, useClerk, useUser } from '@clerk/clerk-react'
 import type { UserProfile, NeighborhoodData, DataSources, ChatMessage, RiskScore } from '../types/index.ts'
 import { api, streamChat } from '../api.ts'
@@ -356,16 +356,37 @@ export default function Dashboard({ profile, onReset }: Props) {
     }
   }
 
-  const tabs: { key: Tab; label: string; count?: number }[] = [
+  const allTabs: { key: Tab; label: string; count?: number; isEmpty?: () => boolean }[] = [
     { key: 'overview', label: 'Overview' },
-    { key: 'inspections', label: 'Inspections', count: neighborhoodData?.inspection_stats.total },
-    { key: 'permits', label: 'Permits', count: neighborhoodData?.permit_count },
-    { key: 'licenses', label: 'Licenses', count: neighborhoodData?.license_count },
-    { key: 'news', label: 'Intel', count: (neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0) },
-    { key: 'community', label: 'Community', count: (neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0) },
-    { key: 'market', label: 'Market', count: (neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0) },
+    { key: 'inspections', label: 'Inspections', count: neighborhoodData?.inspection_stats.total, isEmpty: () => !(neighborhoodData?.inspection_stats.total ?? 0) },
+    { key: 'permits', label: 'Permits', count: neighborhoodData?.permit_count, isEmpty: () => !(neighborhoodData?.permit_count ?? 0) },
+    { key: 'licenses', label: 'Licenses', count: neighborhoodData?.license_count, isEmpty: () => !(neighborhoodData?.license_count ?? 0) },
+    { key: 'news', label: 'Intel', count: (neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0), isEmpty: () => !((neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0)) },
+    { key: 'community', label: 'Community', count: (neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0), isEmpty: () => !((neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0)) },
+    { key: 'market', label: 'Market', count: (neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0), isEmpty: () => !((neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0)) },
     { key: 'models', label: 'Models' },
   ]
+  const tabs = useMemo(
+    () => allTabs.filter(t => !t.isEmpty || !(t.isEmpty?.() ?? false)),
+    [
+      neighborhoodData?.inspection_stats.total,
+      neighborhoodData?.permit_count,
+      neighborhoodData?.license_count,
+      neighborhoodData?.news.length,
+      neighborhoodData?.politics.length,
+      neighborhoodData?.reddit?.length,
+      neighborhoodData?.tiktok?.length,
+      neighborhoodData?.reviews?.length,
+      neighborhoodData?.realestate?.length,
+    ]
+  )
+  const visibleTabKeys = useMemo(() => tabs.map(t => t.key), [tabs])
+
+  useEffect(() => {
+    if (!visibleTabKeys.includes(activeTab)) {
+      setActiveTab(visibleTabKeys.includes('overview') ? 'overview' : (visibleTabKeys[0] ?? 'overview'))
+    }
+  }, [visibleTabKeys, activeTab])
 
   return (
     <div className="h-screen flex flex-col bg-[#06080d]">
