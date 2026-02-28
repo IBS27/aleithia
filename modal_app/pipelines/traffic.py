@@ -4,6 +4,8 @@ Cadence: Every 1 hour
 Sources: TomTom Traffic Flow API
 Pattern: async + FallbackChain + gather_with_limit + congestion classification
 """
+from __future__ import annotations
+
 import json
 import os
 from datetime import datetime, timezone

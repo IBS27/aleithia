@@ -5,6 +5,8 @@ Sources: data.cityofchicago.org — business licenses, food inspections,
          building permits, crimes, CTA ridership
 Pattern: async + FallbackChain (with token → without token → cache) + gather_with_limit
 """
+from __future__ import annotations
+
 import json
 import os
 from datetime import datetime, timezone, timedelta

@@ -2,6 +2,8 @@
 
 Provides persistent memory layer for the Alethia intelligence engine.
 """
+from __future__ import annotations
+
 import json
 import os
 from datetime import datetime, timezone
