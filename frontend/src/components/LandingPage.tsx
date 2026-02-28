@@ -176,26 +176,10 @@ export default function LandingPage({ onGetStarted }: Props) {
         </div>
       </section>
 
-      {/* ── Live Stats ── */}
-      <section id="next" className="border-t border-white/[0.04] py-16 scroll-mt-0">
-        <div className="max-w-5xl mx-auto px-10 grid grid-cols-2 sm:grid-cols-4 gap-8">
-          {STATS.map((s) => (
-            <div key={s.label} className="text-center">
-              <p className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-1">
-                {s.value}
-              </p>
-              <p className="text-xs font-mono text-white/30 uppercase tracking-wider">
-                {s.label}
-              </p>
-            </div>
-          ))}
-        </div>
-      </section>
-
       {/* ── Sponsors Ticker ── */}
-      <section className="relative border-t border-white/[0.04] py-10">
+      <section id="next" className="relative border-t border-white/[0.04] py-10 scroll-mt-0">
         <p className="text-center text-[10px] font-mono uppercase tracking-[0.3em] text-white/20 mb-6">
-          Made possible by
+          Made possible with
         </p>
         <LogoLoop
           logos={SPONSOR_LOGOS.map((s) => {
@@ -271,6 +255,22 @@ export default function LandingPage({ onGetStarted }: Props) {
               <div className="border-t border-white/[0.06]" />
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* ── Live Stats ── */}
+      <section className="border-t border-white/[0.04] py-16">
+        <div className="max-w-5xl mx-auto px-10 grid grid-cols-2 sm:grid-cols-4 gap-8">
+          {STATS.map((s) => (
+            <div key={s.label} className="text-center">
+              <p className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-1">
+                {s.value}
+              </p>
+              <p className="text-xs font-mono text-white/30 uppercase tracking-wider">
+                {s.label}
+              </p>
+            </div>
+          ))}
         </div>
       </section>
 
