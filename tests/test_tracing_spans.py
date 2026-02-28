@@ -428,6 +428,42 @@ class TestSpanBehavior:
 
         assert child.parent.span_id == parent.context.span_id
 
+    def test_cross_process_context_propagation(self, span_capture):
+        """Verify inject/extract creates parent-child across processes."""
+        provider, exporter = span_capture
+
+        from opentelemetry.trace import set_tracer_provider
+        from opentelemetry.propagate import inject, extract
+
+        set_tracer_provider(provider)
+        tracer = provider.get_tracer("test.propagation")
+
+        with tracer.start_as_current_span("chat-request") as parent_span:
+            parent_span.set_attribute("openinference.span.kind", "CHAIN")
+
+            # Inject — this is what web.py does before calling .remote()
+            carrier: dict[str, str] = {}
+            inject(carrier)
+
+            assert "traceparent" in carrier  # W3C header must be present
+
+        # Simulate: agents.py receives carrier, extracts, creates child span
+        extracted_ctx = extract(carrier=carrier)
+
+        with tracer.start_as_current_span("orchestrate-query", context=extracted_ctx) as child_span:
+            child_span.set_attribute("openinference.span.kind", "CHAIN")
+
+        spans = exporter.get_finished_spans()
+        assert len(spans) == 2
+
+        parent = [s for s in spans if s.name == "chat-request"][0]
+        child = [s for s in spans if s.name == "orchestrate-query"][0]
+
+        # Same trace ID = same trace in Arize
+        assert child.context.trace_id == parent.context.trace_id
+        # Child's parent is the parent span
+        assert child.parent.span_id == parent.context.span_id
+
     def test_all_span_kinds_are_valid(self, span_capture):
         """Ensure we only use valid OpenInference span kinds."""
         provider, exporter = span_capture

@@ -104,3 +104,59 @@ class TestGetTracer:
                 # If opentelemetry is already cached, it may still work
             except ImportError:
                 pass  # Expected if otel truly unavailable
+
+
+class TestContextPropagation:
+    def test_inject_returns_traceparent_inside_span(self):
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.trace import set_tracer_provider
+        from tests.conftest import InMemorySpanExporter
+
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(InMemorySpanExporter()))
+        set_tracer_provider(provider)
+        tracer = provider.get_tracer("test")
+
+        # Must be inside a span for inject to capture context
+        with tracer.start_as_current_span("parent"):
+            carrier = inst.inject_context()
+
+        assert "traceparent" in carrier
+        assert carrier["traceparent"].startswith("00-")
+
+    def test_inject_returns_empty_dict_outside_span(self):
+        carrier = inst.inject_context()
+        # Outside any span, traceparent may be absent or have invalid span
+        # Either empty or present is fine — should not raise
+        assert isinstance(carrier, dict)
+
+    def test_extract_returns_none_for_empty_input(self):
+        assert inst.extract_context(None) is None
+        assert inst.extract_context({}) is None
+
+    def test_roundtrip_preserves_trace_id(self):
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.trace import set_tracer_provider
+        from tests.conftest import InMemorySpanExporter
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        set_tracer_provider(provider)
+        tracer = provider.get_tracer("test")
+
+        with tracer.start_as_current_span("parent") as parent_span:
+            carrier = inst.inject_context()
+
+        ctx = inst.extract_context(carrier)
+        with tracer.start_as_current_span("child", context=ctx):
+            pass
+
+        spans = exporter.get_finished_spans()
+        parent = [s for s in spans if s.name == "parent"][0]
+        child = [s for s in spans if s.name == "child"][0]
+
+        assert child.context.trace_id == parent.context.trace_id
+        assert child.parent.span_id == parent.context.span_id

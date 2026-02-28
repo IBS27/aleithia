@@ -56,14 +56,15 @@ Format your response with clear sections:
     secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=120,
 )
-async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_areas: list[str] | None = None) -> dict:
+async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_areas: list[str] | None = None, trace_context: dict | None = None) -> dict:
     """Query-time intelligence agent for a single neighborhood.
 
     Gathers data from local volume + Supermemory to build a neighborhood brief.
     """
-    from modal_app.instrumentation import init_tracing, get_tracer
+    from modal_app.instrumentation import init_tracing, get_tracer, extract_context
     init_tracing()
     tracer = get_tracer("alethia.agents")
+    parent_ctx = extract_context(trace_context)
 
     if focus_areas is None:
         focus_areas = ["permits", "sentiment", "competition", "safety", "demographics"]
@@ -76,7 +77,7 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
         "data_points": 0,
     }
 
-    span_ctx = tracer.start_as_current_span("neighborhood-intel-agent") if tracer else None
+    span_ctx = tracer.start_as_current_span("neighborhood-intel-agent", context=parent_ctx) if tracer else None
     span = span_ctx.__enter__() if span_ctx else None
     try:
         if span:
@@ -182,11 +183,12 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
     secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=120,
 )
-async def regulatory_agent(business_type: str) -> dict:
+async def regulatory_agent(business_type: str, trace_context: dict | None = None) -> dict:
     """Scans local + federal regulations relevant to business type."""
-    from modal_app.instrumentation import init_tracing, get_tracer
+    from modal_app.instrumentation import init_tracing, get_tracer, extract_context
     init_tracing()
     tracer = get_tracer("alethia.agents")
+    parent_ctx = extract_context(trace_context)
 
     BUSINESS_KEYWORDS = {
         "restaurant": ["food", "health", "safety", "labor", "kitchen", "sanitation"],
@@ -207,7 +209,7 @@ async def regulatory_agent(business_type: str) -> dict:
         "data_points": 0,
     }
 
-    span_ctx = tracer.start_as_current_span("regulatory-agent") if tracer else None
+    span_ctx = tracer.start_as_current_span("regulatory-agent", context=parent_ctx) if tracer else None
     span = span_ctx.__enter__() if span_ctx else None
     try:
         if span:
@@ -270,7 +272,7 @@ async def regulatory_agent(business_type: str) -> dict:
     secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=300,
 )
-async def orchestrate_query(user_id: str, question: str, business_type: str, target_neighborhood: str) -> dict:
+async def orchestrate_query(user_id: str, question: str, business_type: str, target_neighborhood: str, trace_context: dict | None = None) -> dict:
     """Orchestrate parallel agents for query-time intelligence.
 
     1. Get user profile from Supermemory
@@ -279,11 +281,12 @@ async def orchestrate_query(user_id: str, question: str, business_type: str, tar
     4. Gather results
     5. Build synthesis prompt for LLM
     """
-    from modal_app.instrumentation import init_tracing, get_tracer
+    from modal_app.instrumentation import init_tracing, get_tracer, extract_context, inject_context
     init_tracing()
     tracer = get_tracer("alethia.agents")
+    parent_ctx = extract_context(trace_context)
 
-    span_ctx = tracer.start_as_current_span("orchestrate-query") if tracer else None
+    span_ctx = tracer.start_as_current_span("orchestrate-query", context=parent_ctx) if tracer else None
     span = span_ctx.__enter__() if span_ctx else None
     try:
         if span:
@@ -299,6 +302,9 @@ async def orchestrate_query(user_id: str, question: str, business_type: str, tar
             comparisons = ["Loop", "Lincoln Park"]
         comparisons = comparisons[:2]
 
+        # Capture current trace context to propagate to child agents
+        child_ctx = inject_context()
+
         # Fan-out via .spawn() — parallel agent execution
         agent_handles = []
 
@@ -307,6 +313,7 @@ async def orchestrate_query(user_id: str, question: str, business_type: str, tar
             neighborhood=target_neighborhood,
             business_type=business_type,
             focus_areas=["permits", "sentiment", "competition", "safety", "demographics"],
+            trace_context=child_ctx,
         )
         agent_handles.append(("primary", target_neighborhood, primary_handle))
 
@@ -316,11 +323,12 @@ async def orchestrate_query(user_id: str, question: str, business_type: str, tar
                 neighborhood=comp_neighborhood,
                 business_type=business_type,
                 focus_areas=["permits", "competition", "demographics"],
+                trace_context=child_ctx,
             )
             agent_handles.append(("comparison", comp_neighborhood, handle))
 
         # Regulatory agent
-        reg_handle = regulatory_agent.spawn(business_type=business_type)
+        reg_handle = regulatory_agent.spawn(business_type=business_type, trace_context=child_ctx)
         agent_handles.append(("regulatory", "all", reg_handle))
 
         # Gather results

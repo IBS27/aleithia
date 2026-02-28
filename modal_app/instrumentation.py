@@ -66,3 +66,37 @@ def get_tracer(name: str):
         return _get_tracer(name)
     except ImportError:
         return None
+
+
+def inject_context() -> dict:
+    """Serialize current trace context into a dict for cross-process propagation.
+
+    Call this inside an active span to capture traceparent/tracestate,
+    then pass the returned dict to a remote Modal function.
+    """
+    try:
+        from opentelemetry.propagate import inject
+
+        carrier: dict[str, str] = {}
+        inject(carrier)
+        return carrier
+    except Exception:
+        return {}
+
+
+def extract_context(carrier: dict | None):
+    """Deserialize a trace context dict into an OTel Context object.
+
+    Use the returned context when starting a span to make it a child
+    of the remote parent:
+        ctx = extract_context(trace_context)
+        with tracer.start_as_current_span("name", context=ctx): ...
+    """
+    if not carrier:
+        return None
+    try:
+        from opentelemetry.propagate import extract
+
+        return extract(carrier)
+    except Exception:
+        return None

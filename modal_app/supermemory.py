@@ -100,7 +100,7 @@ class SupermemoryClient:
     image=base_image,
     volumes={"/data": volume},
     secrets=[modal.Secret.from_name("alethia-secrets")],
-    timeout=600,
+    timeout=1800,
 )
 async def push_pipeline_data_to_supermemory():
     """Batch-sync processed data from Modal volume to Supermemory."""
@@ -111,11 +111,14 @@ async def push_pipeline_data_to_supermemory():
 
     client = SupermemoryClient(api_key)
     synced = 0
+    errors = 0
 
     # Sync enriched documents (classified + sentiment-analyzed)
     enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
     if enriched_dir.exists():
-        for json_file in list(enriched_dir.rglob("*.json"))[:200]:
+        enriched_files = list(enriched_dir.rglob("*.json"))[:100]
+        print(f"Syncing {len(enriched_files)} enriched docs...")
+        for i, json_file in enumerate(enriched_files):
             try:
                 doc = json.loads(json_file.read_text())
                 content = f"{doc.get('title', '')}\n\n{doc.get('content', '')}"
@@ -127,11 +130,16 @@ async def push_pipeline_data_to_supermemory():
                 }
                 await client.add_memory(content, metadata, container_tag="chicago_data")
                 synced += 1
-                await asyncio.sleep(0.5)  # Rate limit: 2 req/s
+                if synced % 10 == 0:
+                    print(f"  synced {synced} docs so far...")
+                await asyncio.sleep(0.3)
             except Exception as e:
-                print(f"Supermemory sync error for {json_file.name}: {e}")
+                errors += 1
+                if errors <= 3:
+                    print(f"Supermemory sync error for {json_file.name}: {e}")
                 if "429" in str(e):
-                    await asyncio.sleep(5)
+                    print("Rate limited, backing off 10s...")
+                    await asyncio.sleep(10)
 
     # Sync raw data from each pipeline source
     for source in ["news", "politics", "public_data", "demographics", "reddit", "reviews", "realestate", "federal_register", "traffic"]:
@@ -139,7 +147,8 @@ async def push_pipeline_data_to_supermemory():
         if not raw_dir.exists():
             continue
 
-        json_files = sorted(raw_dir.rglob("*.json"), reverse=True)[:50]
+        json_files = sorted(raw_dir.rglob("*.json"), reverse=True)[:25]
+        print(f"Syncing {len(json_files)} raw docs from {source}...")
         for json_file in json_files:
             try:
                 doc = json.loads(json_file.read_text())
@@ -152,11 +161,16 @@ async def push_pipeline_data_to_supermemory():
                 }
                 await client.add_memory(content, metadata, container_tag=f"chicago_{source}")
                 synced += 1
-                await asyncio.sleep(0.5)  # Rate limit: 2 req/s
+                if synced % 10 == 0:
+                    print(f"  synced {synced} docs so far...")
+                await asyncio.sleep(0.3)
             except Exception as e:
-                print(f"Supermemory raw sync error for {json_file.name}: {e}")
+                errors += 1
+                if errors <= 5:
+                    print(f"Supermemory raw sync error for {json_file.name}: {e}")
                 if "429" in str(e):
-                    await asyncio.sleep(5)
+                    print("Rate limited, backing off 10s...")
+                    await asyncio.sleep(10)
 
-    print(f"Supermemory sync complete: {synced} documents pushed")
+    print(f"Supermemory sync complete: {synced} documents pushed, {errors} errors")
     return synced

@@ -162,12 +162,14 @@ async def chat(request: Request):
                 span.set_attribute("chat.business_type", business_type)
                 span.set_attribute("chat.neighborhood", neighborhood)
             # Phase 1: Agent gathering (returns synthesis_messages, NOT response text)
+            from modal_app.instrumentation import inject_context
             orchestrate_query = modal.Function.from_name("alethia", "orchestrate_query")
             result = await orchestrate_query.remote.aio(
                 user_id=user_id,
                 question=question,
                 business_type=business_type,
                 target_neighborhood=neighborhood,
+                trace_context=inject_context(),
             )
 
             # Build per-agent summaries for frontend
@@ -251,10 +253,12 @@ async def brief(neighborhood: str, business_type: str = "Restaurant"):
             span.set_attribute("brief.neighborhood", neighborhood)
             span.set_attribute("brief.business_type", business_type)
 
+        from modal_app.instrumentation import inject_context
         neighborhood_intel_agent = modal.Function.from_name("alethia", "neighborhood_intel_agent")
         result = await neighborhood_intel_agent.remote.aio(
             neighborhood=neighborhood,
             business_type=business_type,
+            trace_context=inject_context(),
         )
 
         if span:
