@@ -160,8 +160,11 @@ export default function LandingPage({ onGetStarted }: Props) {
 
       {/* ── Interactive 3D Section ── */}
       <section className="relative h-screen overflow-hidden border-t border-white/[0.04]">
-        <div className="absolute inset-0 scale-[2] origin-center">
-          <Spline scene="https://prod.spline.design/2pfbb0RwX88uLSBZ/scene.splinecode" />
+        <div className="absolute inset-0 scale-[2] origin-center pointer-events-none">
+          <Spline
+            scene="https://prod.spline.design/2pfbb0RwX88uLSBZ/scene.splinecode"
+            onLoad={(app) => makeStatic(app)}
+          />
         </div>
       </section>
 
