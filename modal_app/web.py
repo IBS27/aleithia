@@ -99,18 +99,17 @@ def _aggregate_demographics(neighborhood: str) -> dict:
         if not meta_demos:
             continue
         geo = d.get("geo", {})
-        # Match by community area or content
-        if nb_community_area and geo.get("community_area") == nb_community_area:
+        # Match by geo.neighborhood (set by detect_neighborhood in demographics pipeline)
+        if geo.get("neighborhood", "").lower() == nb_lower:
             tract_data.append(meta_demos)
-        elif nb_lower in d.get("content", "").lower()[:200]:
+            continue
+        # Match by community area number
+        if nb_community_area and str(geo.get("community_area", "")) == nb_community_area:
             tract_data.append(meta_demos)
-
-    if not tract_data:
-        # Fall back to city-wide averages from all tracts
-        for d in demos[:200]:
-            meta_demos = d.get("metadata", {}).get("demographics", {})
-            if meta_demos and meta_demos.get("total_population", 0) > 0:
-                tract_data.append(meta_demos)
+            continue
+        # Match by content text
+        if nb_lower in d.get("content", "").lower()[:200]:
+            tract_data.append(meta_demos)
 
     if not tract_data:
         return {}
