@@ -474,3 +474,28 @@ async def gather_with_limit(
                 return None
 
     return await asyncio.gather(*[_limited(c) for c in coros])
+
+
+async def safe_queue_push(queue, docs: list[dict], source: str) -> int:
+    """Push docs to classification queue with logging. Returns failure count."""
+    failures = 0
+    for doc in docs:
+        try:
+            await queue.put.aio(doc)
+        except Exception as e:
+            failures += 1
+            if failures == 1:
+                print(f"safe_queue_push [{source}]: first failure: {e}")
+    if failures:
+        print(f"safe_queue_push [{source}]: {failures}/{len(docs)} failed")
+    return failures
+
+
+async def safe_volume_commit(vol, source: str) -> bool:
+    """Commit volume with error logging. Returns True on success."""
+    try:
+        await vol.commit.aio()
+        return True
+    except Exception as e:
+        print(f"safe_volume_commit [{source}]: failed: {e}")
+        return False

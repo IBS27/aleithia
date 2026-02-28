@@ -14,7 +14,7 @@ from pathlib import Path
 import modal
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from modal_app.volume import app, volume, web_image, VOLUME_MOUNT, RAW_DATA_PATH, PROCESSED_DATA_PATH
 from modal_app.common import CHICAGO_NEIGHBORHOODS, COMMUNITY_AREA_MAP, detect_neighborhood, neighborhood_to_ca
@@ -39,7 +39,8 @@ def _load_docs(source: str, limit: int = 200) -> list[dict]:
     for json_file in sorted(source_dir.rglob("*.json"), reverse=True)[:limit]:
         try:
             docs.append(json.loads(json_file.read_text()))
-        except Exception:
+        except Exception as e:
+            print(f"_load_docs [{source}]: corrupted JSON {json_file.name}: {e}")
             continue
     return docs
 
@@ -138,6 +139,12 @@ async def chat(request: Request):
 
     body = await request.json()
     question = body.get("message", "")
+
+    if not question or not question.strip():
+        return JSONResponse({"error": "message is required"}, status_code=400)
+    if len(question) > 5000:
+        return JSONResponse({"error": "message exceeds 5000 character limit"}, status_code=400)
+
     user_id = body.get("user_id", str(uuid.uuid4()))
     business_type = body.get("business_type", "Restaurant")
     neighborhood = body.get("neighborhood", "Loop")
@@ -365,6 +372,11 @@ async def sources():
 @web_app.get("/neighborhood/{name}")
 async def neighborhood(name: str):
     """Full neighborhood data profile."""
+    # Also check COMMUNITY_AREA_MAP values for broader coverage
+    valid_names = set(n.lower() for n in CHICAGO_NEIGHBORHOODS) | set(n.lower() for n in COMMUNITY_AREA_MAP.values())
+    if name.lower() not in valid_names:
+        return JSONResponse({"error": f"Unknown neighborhood: {name}"}, status_code=404)
+
     inspections = []
     permits = []
     licenses = []

@@ -14,7 +14,7 @@ import feedparser
 import httpx
 import modal
 
-from modal_app.common import Document, SourceType, detect_neighborhood, gather_with_limit
+from modal_app.common import Document, SourceType, detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
 from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
@@ -175,7 +175,7 @@ async def news_ingester():
     all_docs: list[dict] = []
 
     # RSS with fallback: direct RSS → Google News RSS → cache
-    chain = FallbackChain("news", "rss_feeds")
+    chain = FallbackChain("news", "rss_feeds", cache_ttl_hours=24)
     rss_docs = await chain.execute([
         _fetch_all_rss,
         _fetch_google_news_rss,
@@ -200,7 +200,7 @@ async def news_ingester():
 
     if not new_docs:
         seen.save()
-        await volume.commit.aio()
+        await safe_volume_commit(volume, "news")
         print("News ingester: no new documents")
         return 0
 
@@ -218,13 +218,9 @@ async def news_ingester():
 
     # Push to classification queue
     from modal_app.classify import doc_queue
-    for doc_data in new_docs:
-        try:
-            await doc_queue.put.aio(doc_data)
-        except Exception:
-            pass
+    await safe_queue_push(doc_queue, new_docs, "news")
 
     seen.save()
-    await volume.commit.aio()
+    await safe_volume_commit(volume, "news")
     print(f"News ingester complete: {len(new_docs)} documents saved to {out_dir}")
     return len(new_docs)

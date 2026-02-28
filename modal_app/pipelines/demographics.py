@@ -12,10 +12,10 @@ from pathlib import Path
 import httpx
 import modal
 
-from modal_app.common import Document, SourceType, COMMUNITY_AREA_MAP, detect_neighborhood, tract_to_neighborhood
+from modal_app.common import Document, SourceType, detect_neighborhood, safe_volume_commit, tract_to_neighborhood
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
-from modal_app.volume import app, volume, data_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
+from modal_app.volume import app, volume, data_image, RAW_DATA_PATH
 
 # Chicago FIPS: State=17 (IL), County=031 (Cook)
 CHICAGO_STATE_FIPS = "17"
@@ -136,7 +136,7 @@ async def demographics_ingester():
     census_api_key = os.environ.get("CENSUS_API_KEY", "")
 
     # FallbackChain: with key → without key → cache
-    chain = FallbackChain("demographics", "census_acs")
+    chain = FallbackChain("demographics", "census_acs", cache_ttl_hours=720)
     all_docs = await chain.execute([
         lambda: _fetch_census(census_api_key),
         _fetch_census_no_key,
@@ -153,7 +153,7 @@ async def demographics_ingester():
 
     if not new_docs:
         seen.save()
-        await volume.commit.aio()
+        await safe_volume_commit(volume, "demographics")
         print("Demographics ingester: no new documents")
         return 0
 
@@ -170,79 +170,6 @@ async def demographics_ingester():
         seen.add(doc_data["id"])
 
     seen.save()
-
-    # Pre-aggregate demographics per community area for fast web queries
-    _pre_aggregate(all_docs)
-
-    await volume.commit.aio()
+    await safe_volume_commit(volume, "demographics")
     print(f"Demographics ingester complete: {len(new_docs)} documents saved to {out_dir}")
     return len(new_docs)
-
-
-def _pre_aggregate(all_docs: list[dict]) -> None:
-    """Pre-aggregate tract demographics by community area and save a single summary file.
-
-    This avoids the web endpoint having to read 1300+ individual JSON files per request.
-    """
-    # Group tracts by community area
-    by_ca: dict[str, list[dict]] = {}
-    for d in all_docs:
-        ca = d.get("geo", {}).get("community_area", "")
-        demos = d.get("metadata", {}).get("demographics", {})
-        if not ca or not demos or demos.get("total_population", 0) <= 0:
-            continue
-        by_ca.setdefault(ca, []).append(demos)
-
-    def _wavg(tracts: list[dict], field: str, total_pop: float) -> float:
-        return sum(t.get(field, 0) * t.get("total_population", 0) for t in tracts) / total_pop
-
-    # Aggregate each community area
-    summaries: dict[str, dict] = {}
-    city_tracts: list[dict] = []
-    for ca, tracts in by_ca.items():
-        total_pop = sum(t.get("total_population", 0) for t in tracts)
-        if total_pop == 0:
-            continue
-        city_tracts.extend(tracts)
-        neighborhood = COMMUNITY_AREA_MAP.get(int(ca), f"CA_{ca}")
-        summaries[ca] = {
-            "community_area": ca,
-            "neighborhood": neighborhood,
-            "total_population": int(total_pop),
-            "median_household_income": round(_wavg(tracts, "median_household_income", total_pop)),
-            "median_home_value": round(_wavg(tracts, "median_home_value", total_pop)),
-            "median_gross_rent": round(_wavg(tracts, "median_gross_rent", total_pop)),
-            "unemployment_rate": round(_wavg(tracts, "unemployment_rate", total_pop), 1),
-            "median_age": round(_wavg(tracts, "median_age", total_pop), 1),
-            "total_housing_units": int(sum(t.get("total_housing_units", 0) for t in tracts)),
-            "renter_pct": round(_wavg(tracts, "renter_pct", total_pop), 1),
-            "bachelors_degree": int(sum(t.get("bachelors_degree", 0) for t in tracts)),
-            "masters_degree": int(sum(t.get("masters_degree", 0) for t in tracts)),
-            "tracts_counted": len(tracts),
-        }
-
-    # City-wide aggregate
-    city_pop = sum(t.get("total_population", 0) for t in city_tracts)
-    city_wide = {}
-    if city_pop > 0:
-        city_wide = {
-            "total_population": int(city_pop),
-            "median_household_income": round(_wavg(city_tracts, "median_household_income", city_pop)),
-            "median_home_value": round(_wavg(city_tracts, "median_home_value", city_pop)),
-            "median_gross_rent": round(_wavg(city_tracts, "median_gross_rent", city_pop)),
-            "unemployment_rate": round(_wavg(city_tracts, "unemployment_rate", city_pop), 1),
-            "median_age": round(_wavg(city_tracts, "median_age", city_pop), 1),
-            "total_housing_units": int(sum(t.get("total_housing_units", 0) for t in city_tracts)),
-            "renter_pct": round(_wavg(city_tracts, "renter_pct", city_pop), 1),
-            "bachelors_degree": int(sum(t.get("bachelors_degree", 0) for t in city_tracts)),
-            "masters_degree": int(sum(t.get("masters_degree", 0) for t in city_tracts)),
-            "tracts_counted": len(city_tracts),
-        }
-
-    out_path = Path(PROCESSED_DATA_PATH) / "demographics_summary.json"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps({
-        "by_community_area": summaries,
-        "city_wide": city_wide,
-    }, indent=2))
-    print(f"Pre-aggregated demographics: {len(summaries)} community areas → {out_path}")

@@ -20,6 +20,7 @@ from modal_app.common import (
     CHICAGO_NEIGHBORHOODS,
     NEIGHBORHOOD_CENTROIDS,
     gather_with_limit,
+    safe_volume_commit,
 )
 from modal_app.fallback import FallbackChain
 from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
@@ -220,7 +221,7 @@ async def traffic_ingester():
     tomtom_key = os.environ.get("TOMTOM_API_KEY", "")
     
     # Fetch traffic with fallback chain
-    traffic_chain = FallbackChain("traffic", "tomtom")
+    traffic_chain = FallbackChain("traffic", "tomtom", cache_ttl_hours=6)
     traffic_data = await traffic_chain.execute([
         lambda: _fetch_all_traffic(tomtom_key),
     ])
@@ -273,7 +274,7 @@ async def traffic_ingester():
         anomaly_path.write_text(json.dumps(anomalies, indent=2))
         print(f"Traffic anomalies detected: {len(anomalies)}")
     
-    await volume.commit.aio()
+    await safe_volume_commit(volume, "traffic")
     print(f"Traffic ingester complete: {len(documents)} documents saved to {processed_dir}")
     
     return len(documents)

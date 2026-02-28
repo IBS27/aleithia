@@ -13,7 +13,7 @@ from pathlib import Path
 import httpx
 import modal
 
-from modal_app.common import Document, SourceType, CHICAGO_NEIGHBORHOODS, detect_neighborhood, gather_with_limit
+from modal_app.common import Document, SourceType, CHICAGO_NEIGHBORHOODS, detect_neighborhood, gather_with_limit, safe_volume_commit
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
 from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
@@ -181,7 +181,7 @@ async def _create_placeholder_listings() -> list[dict]:
 async def realestate_ingester():
     """Ingest commercial real estate data for Chicago neighborhoods."""
     # FallbackChain: LoopNet → placeholders → cache
-    chain = FallbackChain("realestate", "listings")
+    chain = FallbackChain("realestate", "listings", cache_ttl_hours=336)
     all_docs = await chain.execute([
         _fetch_loopnet_listings,
         _create_placeholder_listings,
@@ -198,7 +198,7 @@ async def realestate_ingester():
 
     if not new_docs:
         seen.save()
-        await volume.commit.aio()
+        await safe_volume_commit(volume, "realestate")
         print("Real estate ingester: no new documents")
         return 0
 
@@ -215,6 +215,6 @@ async def realestate_ingester():
         seen.add(doc_data["id"])
 
     seen.save()
-    await volume.commit.aio()
+    await safe_volume_commit(volume, "realestate")
     print(f"Real estate ingester complete: {len(new_docs)} documents saved to {out_dir}")
     return len(new_docs)

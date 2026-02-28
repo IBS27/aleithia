@@ -45,21 +45,29 @@ def extract_frames(youtube_url: str, sample_rate: int = 5) -> str:
     frames_dir = f"{RAW_DATA_PATH}/vision/frames"
 
     # Download with yt-dlp
-    subprocess.run(
-        ["yt-dlp", "-f", "best[height<=720]", "-o", video_path, youtube_url],
-        check=True,
-    )
+    try:
+        subprocess.run(
+            ["yt-dlp", "-f", "best[height<=720]", "-o", video_path, youtube_url],
+            check=True, capture_output=True, text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"yt-dlp failed (exit {e.returncode}): {e.stderr[:500]}")
+        raise RuntimeError(f"Video download failed for {youtube_url}") from e
 
     # Extract frames with FFmpeg
     Path(frames_dir).mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            "ffmpeg", "-i", video_path,
-            "-vf", f"fps=1/{sample_rate}",
-            f"{frames_dir}/frame_%04d.jpg",
-        ],
-        check=True,
-    )
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-i", video_path,
+                "-vf", f"fps=1/{sample_rate}",
+                f"{frames_dir}/frame_%04d.jpg",
+            ],
+            check=True, capture_output=True, text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"ffmpeg failed (exit {e.returncode}): {e.stderr[:500]}")
+        raise RuntimeError(f"Frame extraction failed for {video_path}") from e
 
     volume.commit()
     frame_count = len(list(Path(frames_dir).glob("*.jpg")))

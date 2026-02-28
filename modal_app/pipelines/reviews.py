@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 import modal
 
-from modal_app.common import Document, SourceType, CHICAGO_NEIGHBORHOODS, detect_neighborhood, gather_with_limit
+from modal_app.common import Document, SourceType, CHICAGO_NEIGHBORHOODS, detect_neighborhood, gather_with_limit, safe_volume_commit
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
 from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
@@ -49,6 +49,9 @@ async def _fetch_yelp_location(api_key: str, location: str, category: str) -> li
             },
             headers={"Authorization": f"Bearer {api_key}"},
         )
+        if resp.status_code == 429:
+            print(f"Yelp rate limited [{location}/{category}]: HTTP 429, skipping")
+            return []
         if resp.status_code != 200:
             print(f"Yelp error [{location}/{category}]: {resp.status_code}")
             return []
@@ -115,6 +118,9 @@ async def _fetch_google_location(api_key: str, location: str) -> list[dict]:
                 "key": api_key,
             },
         )
+        if resp.status_code == 429:
+            print(f"Google Places rate limited [{location}]: HTTP 429, skipping")
+            return []
         if resp.status_code != 200:
             print(f"Google Places error [{location}]: {resp.status_code}")
             return []
@@ -198,7 +204,7 @@ async def review_ingester():
     gplaces_key = os.environ.get("GOOGLE_PLACES_API_KEY", "")
 
     # Yelp with fallback chain
-    yelp_chain = FallbackChain("reviews", "yelp")
+    yelp_chain = FallbackChain("reviews", "yelp", cache_ttl_hours=168)
     yelp_docs = await yelp_chain.execute([
         lambda: _fetch_yelp(yelp_key),
     ])
@@ -207,7 +213,7 @@ async def review_ingester():
         print(f"Yelp: {len(yelp_docs)} businesses")
 
     # Google Places with fallback chain
-    gplaces_chain = FallbackChain("reviews", "google_places")
+    gplaces_chain = FallbackChain("reviews", "google_places", cache_ttl_hours=168)
     gplaces_docs = await gplaces_chain.execute([
         lambda: _fetch_google_places(gplaces_key),
     ])
@@ -225,7 +231,7 @@ async def review_ingester():
 
     if not new_docs:
         seen.save()
-        await volume.commit.aio()
+        await safe_volume_commit(volume, "reviews")
         print("Review ingester: no new documents")
         return 0
 
@@ -242,6 +248,6 @@ async def review_ingester():
         seen.add(doc_data["id"])
 
     seen.save()
-    await volume.commit.aio()
+    await safe_volume_commit(volume, "reviews")
     print(f"Review ingester complete: {len(new_docs)} documents saved to {out_dir}")
     return len(new_docs)
