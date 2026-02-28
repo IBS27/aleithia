@@ -10,3 +10,8 @@ openai==1.50.0
 ultralytics==8.2.0
 opencv-python-headless==4.9.0.80
 pillow==10.4.0
+arize-otel
+openinference-instrumentation
+openinference-instrumentation-openai
+opentelemetry-api
+opentelemetry-sdk

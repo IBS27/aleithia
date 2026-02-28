@@ -42,15 +42,15 @@ class SupermemoryClient:
 
     async def search(self, query: str, container_tags: list[str] | None = None, limit: int = 10) -> list[dict]:
         """Search Chicago data with optional container tag filters."""
-        params: dict = {"q": query, "limit": limit}
+        payload: dict = {"q": query, "limit": limit}
         if container_tags:
-            params["containerTags"] = ",".join(container_tags)
+            payload["containerTags"] = container_tags
 
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(
+            resp = await client.post(
                 f"{SUPERMEMORY_BASE}/memories/search",
                 headers=self.headers,
-                params=params,
+                json=payload,
             )
             resp.raise_for_status()
             return resp.json().get("results", [])

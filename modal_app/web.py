@@ -171,6 +171,9 @@ def _compute_metrics(name: str, inspections: list, permits: list, licenses: list
 @web_app.post("/chat")
 async def chat(request: Request):
     """Streaming chat endpoint — orchestrates agent swarm + streams LLM tokens via SSE."""
+    from modal_app.instrumentation import get_tracer
+    tracer = get_tracer("alethia.web")
+
     body = await request.json()
     question = body.get("message", "")
     user_id = body.get("user_id", str(uuid.uuid4()))
@@ -181,9 +184,16 @@ async def chat(request: Request):
         # Send agent deployment status
         yield f"data: {json.dumps({'type': 'status', 'content': 'Deploying intelligence agents...'})}\n\n"
 
+        span_ctx = tracer.start_as_current_span("chat-request") if tracer else None
+        span = span_ctx.__enter__() if span_ctx else None
         try:
+            if span:
+                span.set_attribute("openinference.span.kind", "CHAIN")
+                span.set_attribute("input.value", question)
+                span.set_attribute("chat.business_type", business_type)
+                span.set_attribute("chat.neighborhood", neighborhood)
             # Phase 1: Agent gathering (returns synthesis_messages, NOT response text)
-            from modal_app.agents import orchestrate_query
+            orchestrate_query = modal.Function.from_name("alethia", "orchestrate_query")
             result = await orchestrate_query.remote.aio(
                 user_id=user_id,
                 question=question,
@@ -215,8 +225,8 @@ async def chat(request: Request):
             yield f"data: {json.dumps({'type': 'status', 'content': 'Synthesizing intelligence report...'})}\n\n"
 
             # Phase 2: Real LLM streaming
-            from modal_app.llm import AlethiaLLM
-            llm = AlethiaLLM()
+            llm_cls = modal.Cls.from_name("alethia", "AlethiaLLM")
+            llm = llm_cls()
             messages = result["synthesis_messages"]
 
             full_response = ""
@@ -225,6 +235,11 @@ async def chat(request: Request):
             ):
                 full_response += token
                 yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+
+            if span:
+                span.set_attribute("output.value", full_response[:2000])
+                span.set_attribute("chat.agents_deployed", result.get("agents_deployed", 0))
+                span.set_attribute("chat.data_points", result.get("total_data_points", 0))
 
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
@@ -242,7 +257,12 @@ async def chat(request: Request):
                     pass
 
         except Exception as e:
+            if span:
+                span.set_attribute("error", str(e))
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+        finally:
+            if span_ctx:
+                span_ctx.__exit__(None, None, None)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -251,7 +271,7 @@ async def chat(request: Request):
 async def brief(neighborhood: str, business_type: str = "Restaurant"):
     """Get intelligence brief for a neighborhood."""
     try:
-        from modal_app.agents import neighborhood_intel_agent
+        neighborhood_intel_agent = modal.Function.from_name("alethia", "neighborhood_intel_agent")
         result = await neighborhood_intel_agent.remote.aio(
             neighborhood=neighborhood,
             business_type=business_type,
@@ -527,12 +547,31 @@ async def health():
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
+@web_app.post("/demo/scale")
+async def demo_scale(request: Request):
+    """Trigger scaling demo — fans out parallel agents + classification to generate traces."""
+    body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    num_agents = body.get("num_agents", 15)
+    num_queries = body.get("num_queries", 5)
+    run_classify = body.get("run_classify", True)
+
+    demo_fn = modal.Function.from_name("alethia", "scaling_demo")
+    result = await demo_fn.remote.aio(
+        num_agents=num_agents,
+        num_queries=num_queries,
+        run_classify=run_classify,
+    )
+    return result
+
+
 @app.function(
     image=web_image,
     volumes={"/data": volume},
-    secrets=[modal.Secret.from_name("alethia-secrets")],
+    secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
 )
 @modal.asgi_app()
 def serve():
     """Modal-hosted FastAPI application."""
+    from modal_app.instrumentation import init_tracing
+    init_tracing()
     return web_app
