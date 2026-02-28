@@ -1,6 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
+import { SignedIn, SignedOut, SignInButton, SignUpButton, useClerk, useUser } from '@clerk/clerk-react'
 import type { UserProfile, NeighborhoodData, DataSources, ChatMessage, RiskScore } from '../types/index.ts'
 import { api, streamChat } from '../api.ts'
+import type { ProcessStage } from './ProcessFlow.tsx'
 import RiskCard from './RiskCard.tsx'
 import ChatPanel from './ChatPanel.tsx'
 import MapView from './MapView.tsx'
@@ -12,7 +14,6 @@ import LicenseTable from './LicenseTable.tsx'
 import NewsFeed from './NewsFeed.tsx'
 import DemographicsCard from './DemographicsCard.tsx'
 import PipelineMonitor from './PipelineMonitor.tsx'
-import AgentSwarm from './AgentSwarm.tsx'
 import MLMonitor from './MLMonitor.tsx'
 
 type Tab = 'overview' | 'inspections' | 'permits' | 'licenses' | 'news' | 'models'
@@ -21,6 +22,13 @@ interface AgentInfo {
   agents_deployed: number
   neighborhoods: string[]
   data_points: number
+  agent_summaries?: Array<{
+    name: string
+    data_points: number
+    sources?: string[]
+    regulation_count?: number
+    error?: boolean
+  }>
 }
 
 function computeRiskScore(data: NeighborhoodData, profile: UserProfile): RiskScore {
@@ -113,6 +121,8 @@ interface Props {
 }
 
 export default function Dashboard({ profile, onReset }: Props) {
+  const { signOut } = useClerk()
+  const { user } = useUser()
   const [neighborhoodData, setNeighborhoodData] = useState<NeighborhoodData | null>(null)
   const [sources, setSources] = useState<DataSources | null>(null)
   const [riskScore, setRiskScore] = useState<RiskScore | null>(null)
@@ -123,10 +133,12 @@ export default function Dashboard({ profile, onReset }: Props) {
   const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null)
   const [agentActive, setAgentActive] = useState(false)
   const [agentElapsedMs, setAgentElapsedMs] = useState<number | undefined>(undefined)
+  const [processStage, setProcessStage] = useState<ProcessStage>('idle')
+  const [chatQuestion, setChatQuestion] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
-  const userIdRef = useRef(`user_${Date.now()}`)
+  const userId = user?.id ?? `anon_${Date.now()}`
 
   useEffect(() => {
     let cancelled = false
@@ -165,10 +177,11 @@ export default function Dashboard({ profile, onReset }: Props) {
     setAgentActive(true)
     setAgentInfo(null)
     setStatusMessage('')
+    setProcessStage('deploying')
+    setChatQuestion(message)
     const startTime = Date.now()
 
     // Add empty assistant message for streaming
-    const assistantIdx = messages.length + 1
     setMessages(prev => [...prev, { role: 'assistant', content: '', timestamp: new Date() }])
     setIsStreaming(true)
 
@@ -176,14 +189,19 @@ export default function Dashboard({ profile, onReset }: Props) {
       await streamChat(message, profile, {
         onStatus: (content) => {
           setStatusMessage(content)
+          if (content.toLowerCase().includes('synth')) {
+            setProcessStage('synthesizing')
+          }
         },
         onAgents: (data) => {
           setAgentInfo(data)
           setAgentActive(false)
           setAgentElapsedMs(Date.now() - startTime)
-          setStatusMessage('')
+          setProcessStage('agents_complete')
         },
         onToken: (token) => {
+          setStatusMessage('')
+          setProcessStage('streaming')
           setMessages(prev => {
             const updated = [...prev]
             const last = updated[updated.length - 1]
@@ -196,12 +214,24 @@ export default function Dashboard({ profile, onReset }: Props) {
         onDone: () => {
           setIsStreaming(false)
           setChatLoading(false)
+          setProcessStage('complete')
+
+          if (user) {
+            api.saveUserSettings(user.id, profile.business_type, profile.neighborhood).catch(() => {})
+          }
+
+          setMessages(prev => {
+            const updated = [...prev]
+            updated[updated.length - 1] = { ...updated[updated.length - 1], timestamp: new Date() }
+            return updated
+          })
         },
-        onError: (errorMsg) => {
+        onError: (_errorMsg) => {
           // Fallback to local response
           setIsStreaming(false)
           setAgentActive(false)
           setStatusMessage('')
+          setProcessStage('complete')
 
           const nb = profile.neighborhood
           const biz = profile.business_type.toLowerCase()
@@ -252,11 +282,12 @@ export default function Dashboard({ profile, onReset }: Props) {
           })
           setChatLoading(false)
         },
-      }, userIdRef.current)
+      }, userId)
     } catch {
       setIsStreaming(false)
       setChatLoading(false)
       setAgentActive(false)
+      setProcessStage('complete')
     }
   }
 
@@ -280,8 +311,29 @@ export default function Dashboard({ profile, onReset }: Props) {
             {profile.business_type} <span className="text-white/10 mx-1">/</span> <span className="text-white/50">{profile.neighborhood}</span>
           </span>
         </div>
-        <div className="flex items-center gap-5">
+        <div className="flex items-center gap-3">
           <Timer running={loading} />
+
+          <SignedOut>
+            <SignInButton mode="modal">
+              <button className="text-[10px] font-mono uppercase tracking-wider text-white/30 hover:text-white/60 transition-colors cursor-pointer">
+                Log in
+              </button>
+            </SignInButton>
+            <SignUpButton mode="modal">
+              <button className="text-[10px] font-mono uppercase tracking-wider text-white/30 hover:text-white/60 transition-colors cursor-pointer">
+                Sign up
+              </button>
+            </SignUpButton>
+          </SignedOut>
+
+          <SignedIn>
+            {user && <span className="text-[10px] font-mono text-white/25">{user.primaryEmailAddress?.emailAddress}</span>}
+            <button onClick={() => signOut()} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
+              Sign out
+            </button>
+          </SignedIn>
+
           <button onClick={onReset} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
             New Search
           </button>
@@ -342,20 +394,11 @@ export default function Dashboard({ profile, onReset }: Props) {
                     <MapView activeNeighborhood={profile.neighborhood} />
                   </div>
 
-                  {/* Agent Swarm Visualization */}
-                  {(agentActive || agentInfo) && (
-                    <AgentSwarm
-                      agentInfo={agentInfo}
-                      isActive={agentActive}
-                      elapsedMs={agentElapsedMs}
-                    />
-                  )}
-
                   {/* Risk + Demographics side by side */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     {riskScore && <RiskCard score={riskScore} />}
                     {neighborhoodData?.metrics && (
-                      <DemographicsCard metrics={neighborhoodData.metrics} />
+                      <DemographicsCard metrics={neighborhoodData.metrics} demographics={neighborhoodData.demographics} />
                     )}
                   </div>
 
@@ -437,7 +480,11 @@ export default function Dashboard({ profile, onReset }: Props) {
             loading={chatLoading}
             isStreaming={isStreaming}
             agentInfo={agentInfo}
+            agentActive={agentActive}
+            agentElapsedMs={agentElapsedMs}
             statusMessage={statusMessage}
+            processStage={processStage}
+            chatQuestion={chatQuestion}
           />
         </div>
       </div>

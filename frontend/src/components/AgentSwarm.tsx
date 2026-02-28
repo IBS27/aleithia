@@ -1,7 +1,16 @@
+interface AgentSummary {
+  name: string
+  data_points: number
+  sources?: string[]
+  regulation_count?: number
+  error?: boolean
+}
+
 interface AgentInfo {
   agents_deployed: number
   neighborhoods: string[]
   data_points: number
+  agent_summaries?: AgentSummary[]
 }
 
 interface Props {
@@ -10,13 +19,23 @@ interface Props {
   elapsedMs?: number
 }
 
+function formatAgentName(name: string): string {
+  const [type, ...rest] = name.split('_')
+  const area = rest.join(' ')
+  if (type === 'primary') return `Primary: ${area}`
+  if (type === 'comparison') return `Compare: ${area}`
+  if (type === 'regulatory') return 'Regulatory Agent'
+  return name
+}
+
 export default function AgentSwarm({ agentInfo, isActive, elapsedMs }: Props) {
   if (!isActive && !agentInfo) return null
 
-  const agentNames = agentInfo?.neighborhoods.map((n, i) =>
+  // Fallback: build agent names from neighborhoods if no summaries
+  const fallbackNames = agentInfo?.neighborhoods.map((n, i) =>
     i === 0 ? `Primary: ${n}` : `Comparison: ${n}`
   ) || []
-  agentNames.push('Regulatory Agent')
+  fallbackNames.push('Regulatory Agent')
 
   return (
     <div className="border border-white/[0.06] bg-white/[0.01] p-4 space-y-3">
@@ -35,20 +54,51 @@ export default function AgentSwarm({ agentInfo, isActive, elapsedMs }: Props) {
       </div>
 
       <div className="space-y-1.5">
-        {agentNames.map((name, i) => (
-          <div key={i} className="flex items-center gap-2 text-xs">
-            {isActive ? (
-              <div className="w-3 h-3 border border-white/30 border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <div className="w-3 h-3 rounded-full bg-emerald-400 flex items-center justify-center">
-                <svg className="w-2 h-2 text-[#06080d]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-            )}
-            <span className="text-white/35 font-mono text-[10px]">{name}</span>
-          </div>
-        ))}
+        {agentInfo?.agent_summaries ? (
+          agentInfo.agent_summaries.map((agent, i) => (
+            <div key={i} className="flex items-center gap-2 text-xs">
+              {isActive ? (
+                <div className="w-3 h-3 border border-white/30 border-t-transparent rounded-full animate-spin" />
+              ) : agent.error ? (
+                <div className="w-3 h-3 rounded-full bg-red-400/60 flex items-center justify-center">
+                  <span className="text-[8px] text-[#06080d] font-bold">!</span>
+                </div>
+              ) : (
+                <div className="w-3 h-3 rounded-full bg-emerald-400 flex items-center justify-center">
+                  <svg className="w-2 h-2 text-[#06080d]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+              )}
+              <span className="text-white/35 font-mono text-[10px]">
+                {formatAgentName(agent.name)}
+              </span>
+              {!isActive && !agent.error && (
+                <span className="text-white/15 font-mono text-[10px]">
+                  {agent.data_points} pts
+                  {agent.sources && ` · ${agent.sources.join(', ')}`}
+                  {agent.regulation_count ? ` · ${agent.regulation_count} regs` : ''}
+                </span>
+              )}
+              {agent.error && <span className="text-red-400/50 text-[10px]">failed</span>}
+            </div>
+          ))
+        ) : (
+          fallbackNames.map((name, i) => (
+            <div key={i} className="flex items-center gap-2 text-xs">
+              {isActive ? (
+                <div className="w-3 h-3 border border-white/30 border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <div className="w-3 h-3 rounded-full bg-emerald-400 flex items-center justify-center">
+                  <svg className="w-2 h-2 text-[#06080d]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+              )}
+              <span className="text-white/35 font-mono text-[10px]">{name}</span>
+            </div>
+          ))
+        )}
       </div>
 
       {agentInfo && (

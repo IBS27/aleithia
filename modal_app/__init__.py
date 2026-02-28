@@ -11,7 +11,9 @@ from modal_app.volume import app  # noqa: F401  — always safe, only depends on
 # Only import all modules for function discovery during `modal deploy` (local machine).
 # Inside containers, Modal imports the specific function module directly.
 if not _os.environ.get("MODAL_IS_REMOTE"):
+    from modal_app import agents  # noqa: F401
     from modal_app import compress  # noqa: F401
+    from modal_app import scaling_demo  # noqa: F401
     from modal_app import classify  # noqa: F401
     from modal_app import llm  # noqa: F401
     from modal_app import web  # noqa: F401
@@ -25,3 +27,5 @@ if not _os.environ.get("MODAL_IS_REMOTE"):
     from modal_app.pipelines import reviews  # noqa: F401
     from modal_app.pipelines import realestate  # noqa: F401
     from modal_app.pipelines import federal_register  # noqa: F401
+    from modal_app.pipelines import tiktok  # noqa: F401
+    from modal_app.pipelines import traffic  # noqa: F401

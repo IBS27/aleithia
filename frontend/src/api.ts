@@ -3,15 +3,32 @@ import type { DataSources, GeoJSON, NeighborhoodData, Document } from './types'
 // Modal deployed endpoint — set via VITE_MODAL_URL, fallback to local proxy
 const API_BASE = import.meta.env.VITE_MODAL_URL || '/api/data'
 
-async function fetchJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`)
+async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, init)
   if (!res.ok) throw new Error(`API error: ${res.status}`)
   return res.json()
 }
 
+export interface SavedSettings {
+  user_id: string
+  location_type: string
+  neighborhood: string
+}
+
 export interface StreamChatCallbacks {
   onStatus?: (content: string) => void
-  onAgents?: (data: { agents_deployed: number; neighborhoods: string[]; data_points: number }) => void
+  onAgents?: (data: {
+    agents_deployed: number
+    neighborhoods: string[]
+    data_points: number
+    agent_summaries?: Array<{
+      name: string
+      data_points: number
+      sources?: string[]
+      regulation_count?: number
+      error?: boolean
+    }>
+  }) => void
   onToken?: (token: string) => void
   onDone?: () => void
   onError?: (error: string) => void
@@ -124,4 +141,20 @@ export const api = {
   },
   news: () => fetchJSON<Document[]>('/news'),
   politics: () => fetchJSON<Document[]>('/politics'),
+  getUserSettings: (userId: string) => fetchJSON<SavedSettings>('/user/settings', {
+    headers: {
+      'x-user-id': userId,
+    },
+  }),
+  saveUserSettings: (userId: string, locationType: string, neighborhood: string) => fetchJSON<SavedSettings>('/user/settings', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-user-id': userId,
+    },
+    body: JSON.stringify({
+      location_type: locationType,
+      neighborhood,
+    }),
+  }),
 }

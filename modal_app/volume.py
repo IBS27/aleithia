@@ -12,6 +12,14 @@ RAW_DATA_PATH = f"{VOLUME_MOUNT}/raw"
 PROCESSED_DATA_PATH = f"{VOLUME_MOUNT}/processed"
 CACHE_PATH = f"{VOLUME_MOUNT}/cache"
 
+# Arize AX tracing packages (shared across images)
+_arize_packages = [
+    "arize-otel",
+    "openinference-instrumentation",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+]
+
 # Internal base (no local source — derived images add pip_install then local source last)
 _base = (
     modal.Image.debian_slim(python_version="3.11")
@@ -19,6 +27,7 @@ _base = (
         "httpx==0.27.0",
         "pydantic==2.9.0",
         "feedparser==6.0.11",
+        *_arize_packages,
     )
 )
 
@@ -42,6 +51,7 @@ vllm_image = (
         "vllm>=0.8.0",
         "transformers>=4.45.0",
         "torch>=2.4.0",
+        *_arize_packages,
     )
     .add_local_python_source("modal_app", copy=True)
 )
@@ -54,6 +64,7 @@ classify_image = (
         "torch>=2.4.0",
         "httpx==0.27.0",
         "pydantic==2.9.0",
+        *_arize_packages,
     )
     .add_local_python_source("modal_app", copy=True)
 )
@@ -77,7 +88,13 @@ video_image = (
 
 label_image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install("openai==1.50.0", "httpx==0.27.0", "pillow==10.4.0")
+    .pip_install(
+        "openai==1.50.0",
+        "httpx==0.27.0",
+        "pillow==10.4.0",
+        *_arize_packages,
+        "openinference-instrumentation-openai",
+    )
     .add_local_python_source("modal_app", copy=True)
 )
 

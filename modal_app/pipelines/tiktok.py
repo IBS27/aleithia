@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 import modal
 
 from modal_app.common import Document, SourceType, detect_neighborhood
+from modal_app.dedup import SeenSet
 from modal_app.volume import (
     VOLUME_MOUNT,
     RAW_DATA_PATH,
@@ -337,14 +338,20 @@ def ingest_tiktok(
             if v["transcription"]:
                 transcribed_count += 1
 
-    # --- Step 3: Convert to Documents and save ---
+    # --- Step 3: Dedup, convert to Documents, save, push to queue ---
+    seen = SeenSet("tiktok")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     save_dir = f"{RAW_DATA_PATH}/tiktok/{today}"
     os.makedirs(save_dir, exist_ok=True)
 
-    docs_saved = 0
+    new_docs: list[dict] = []
+    skipped = 0
     for v in all_videos:
         doc_id = _make_doc_id(v["video_url"])
+
+        if seen.contains(doc_id):
+            skipped += 1
+            continue
 
         content_parts = []
         if v.get("description"):
@@ -357,14 +364,14 @@ def ingest_tiktok(
         content = "\n".join(content_parts) if content_parts else v.get("description", "")
         neighborhood = detect_neighborhood(content)
 
-        doc = Document(
-            id=doc_id,
-            source=SourceType.TIKTOK,
-            title=v.get("description", "TikTok video")[:200],
-            content=content,
-            url=v.get("video_url", ""),
-            timestamp=datetime.now(timezone.utc),
-            metadata={
+        doc_data = {
+            "id": doc_id,
+            "source": SourceType.TIKTOK.value,
+            "title": v.get("description", "TikTok video")[:200],
+            "content": content,
+            "url": v.get("video_url", ""),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "metadata": {
                 "creator": v.get("creator", ""),
                 "views": v.get("views", ""),
                 "hashtags": v.get("hashtags", []),
@@ -372,21 +379,40 @@ def ingest_tiktok(
                 "duration": v.get("duration", 0),
                 "search_query": v.get("search_query", ""),
             },
-            geo={"neighborhood": neighborhood} if neighborhood else {},
-        )
+            "geo": {"neighborhood": neighborhood} if neighborhood else {},
+            "status": "raw",
+        }
 
+        doc = Document(**{k: v for k, v in doc_data.items() if k not in ("timestamp", "status")})
         filepath = f"{save_dir}/{doc_id}.json"
         with open(filepath, "w") as f:
             f.write(doc.model_dump_json(indent=2))
-        docs_saved += 1
 
+        seen.add(doc_id)
+        new_docs.append(doc_data)
+
+    logger.info(
+        "TikTok: %d scraped, %d new, %d deduped",
+        len(all_videos), len(new_docs), skipped,
+    )
+
+    # Push new docs to classification queue
+    from modal_app.classify import doc_queue
+    for doc_data in new_docs:
+        try:
+            doc_queue.put(doc_data)
+        except Exception:
+            pass
+
+    seen.save()
     volume.commit()
-    logger.info("Saved %d TikTok documents to volume", docs_saved)
+    logger.info("Saved %d TikTok documents to volume", len(new_docs))
 
     return {
         "scraped": len(all_videos),
         "transcribed": transcribed_count,
-        "saved": docs_saved,
+        "saved": len(new_docs),
+        "deduped": skipped,
     }
 
 
@@ -395,16 +421,16 @@ def ingest_tiktok(
 # ---------------------------------------------------------------------------
 
 @app.function(
-    schedule=modal.Cron("0 8 * * *"),  # daily at 8am UTC
     image=tiktok_image,
     timeout=900,
     volumes={VOLUME_MOUNT: volume},
     secrets=[modal.Secret.from_name("tiktok-scraper-secrets")],
 )
-def tiktok_daily():
-    """Daily TikTok trend ingestion cron job."""
-    result = ingest_tiktok.remote()
-    logger.info("TikTok daily cron complete: %s", result)
+def tiktok_on_demand(queries: list[str] | None = None):
+    """On-demand TikTok ingestion — pass user-specific queries or use defaults."""
+    result = ingest_tiktok.remote(queries=queries)
+    logger.info("TikTok on-demand complete: %s", result)
+    return result
 
 
 # ---------------------------------------------------------------------------

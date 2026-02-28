@@ -4,6 +4,8 @@ Cadence: Every 1 hour
 Sources: TomTom Traffic Flow API
 Pattern: async + FallbackChain + gather_with_limit + congestion classification
 """
+from __future__ import annotations
+
 import json
 import os
 from datetime import datetime, timezone
@@ -18,6 +20,7 @@ from modal_app.common import (
     CHICAGO_NEIGHBORHOODS,
     NEIGHBORHOOD_CENTROIDS,
     gather_with_limit,
+    safe_volume_commit,
 )
 from modal_app.fallback import FallbackChain
 from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
@@ -50,6 +53,15 @@ def _classify_congestion(current_speed: float, free_flow_speed: float) -> str:
 async def _fetch_traffic_point(api_key: str, neighborhood: str, lat: float, lng: float) -> dict | None:
     """Fetch traffic flow data for a single point (neighborhood centroid).
     
+    Uses zoom level 14, which provides fine-grained street detail suitable for Chicago neighborhoods.
+    
+    TomTom zoom levels and tile sizes:
+    - Zoom 12: 38.22 m/tile
+    - Zoom 13: 19.109 m/tile (4891.97 m world - too large for Chicago neighborhoods)
+    - Zoom 14: 9.555 m/tile (OPTIMAL for Chicago neighborhood-scale traffic analysis)
+    - Zoom 15: 4.777 m/tile (very detailed street level)
+    - Zoom 16+: <3 m/tile (address/building level)
+    
     Returns a dict with traffic metrics or None if request fails.
     """
     if not api_key:
@@ -57,14 +69,14 @@ async def _fetch_traffic_point(api_key: str, neighborhood: str, lat: float, lng:
     
     async with httpx.AsyncClient(timeout=15) as client:
         try:
+            # TomTom Flow Segment Data API requires zoom level in path (0-22)
+            # Zoom 14 provides fine-grained street-level traffic visibility
             resp = await client.get(
-                "https://api.tomtom.com/traffic/services/4/flowSegmentData/relative/json",
+                f"https://api.tomtom.com/traffic/services/4/flowSegmentData/relative/14/json",
                 params={
                     "key": api_key,
                     "point": f"{lat},{lng}",
-                    "unit": "MPH",
-                    "thickness": 500,  # 500m radius
-                    "openFlowLevelOfDetail": 2,  # Balance detail vs API cost
+                    "unit": "mph",
                 },
             )
             
@@ -199,7 +211,6 @@ def _convert_to_documents(traffic_data: list[dict]) -> list[Document]:
     image=base_image,
     volumes={"/data": volume},
     secrets=[modal.Secret.from_name("alethia-secrets")],
-    schedule=modal.Period(hours=1),
     timeout=120,
 )
 async def traffic_ingester():
@@ -209,7 +220,7 @@ async def traffic_ingester():
     tomtom_key = os.environ.get("TOMTOM_API_KEY", "")
     
     # Fetch traffic with fallback chain
-    traffic_chain = FallbackChain("traffic", "tomtom")
+    traffic_chain = FallbackChain("traffic", "tomtom", cache_ttl_hours=6)
     traffic_data = await traffic_chain.execute([
         lambda: _fetch_all_traffic(tomtom_key),
     ])
@@ -262,7 +273,7 @@ async def traffic_ingester():
         anomaly_path.write_text(json.dumps(anomalies, indent=2))
         print(f"Traffic anomalies detected: {len(anomalies)}")
     
-    await volume.commit.aio()
+    await safe_volume_commit(volume, "traffic")
     print(f"Traffic ingester complete: {len(documents)} documents saved to {processed_dir}")
     
     return len(documents)

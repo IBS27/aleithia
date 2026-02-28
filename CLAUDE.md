@@ -86,7 +86,7 @@ modal serve modal_app/volume.py    # Dev mode: hot-reload, no cron activation
 
 ## Deployment
 
-- **Live API:** `https://gt12889--alethia-serve.modal.run`
+- **Live API:** `https://ibsrinivas27--alethia-serve.modal.run`
 - **Deploy command:** `modal deploy -m modal_app`
 - **18 Modal functions** deployed, **17 Modal features** used
 - **5 cron jobs** (news 30min, reddit 1hr, public_data daily, classifier 2min, reconciler 5min)

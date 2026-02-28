@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 import modal
 
-from modal_app.common import Document, SourceType, detect_neighborhood
+from modal_app.common import Document, SourceType, detect_neighborhood, safe_volume_commit, tract_to_neighborhood
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
 from modal_app.volume import app, volume, data_image, RAW_DATA_PATH
@@ -91,7 +91,9 @@ async def _fetch_census(api_key: str = "") -> list[dict]:
                 demographics["renter_pct"] = round(renter / total_housing * 100, 1)
 
             content_lines = [f"{k}: {v}" for k, v in demographics.items()]
-            neighborhood = detect_neighborhood(tract_name)
+            community_area, neighborhood = tract_to_neighborhood(tract_id)
+            if not neighborhood:
+                neighborhood = detect_neighborhood(tract_name)  # fallback
 
             docs.append({
                 "id": f"demographics-tract-{CHICAGO_STATE_FIPS}{CHICAGO_COUNTY_FIPS}{tract_id}",
@@ -109,6 +111,7 @@ async def _fetch_census(api_key: str = "") -> list[dict]:
                     "tract": tract_id,
                     "county": "Cook",
                     "state": "IL",
+                    "community_area": community_area,
                     "neighborhood": neighborhood,
                 },
             })
@@ -133,7 +136,7 @@ async def demographics_ingester():
     census_api_key = os.environ.get("CENSUS_API_KEY", "")
 
     # FallbackChain: with key → without key → cache
-    chain = FallbackChain("demographics", "census_acs")
+    chain = FallbackChain("demographics", "census_acs", cache_ttl_hours=720)
     all_docs = await chain.execute([
         lambda: _fetch_census(census_api_key),
         _fetch_census_no_key,
@@ -150,7 +153,7 @@ async def demographics_ingester():
 
     if not new_docs:
         seen.save()
-        await volume.commit.aio()
+        await safe_volume_commit(volume, "demographics")
         print("Demographics ingester: no new documents")
         return 0
 
@@ -167,6 +170,6 @@ async def demographics_ingester():
         seen.add(doc_data["id"])
 
     seen.save()
-    await volume.commit.aio()
+    await safe_volume_commit(volume, "demographics")
     print(f"Demographics ingester complete: {len(new_docs)} documents saved to {out_dir}")
     return len(new_docs)

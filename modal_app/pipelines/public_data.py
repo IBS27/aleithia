@@ -5,6 +5,8 @@ Sources: data.cityofchicago.org — business licenses, food inspections,
          building permits, crimes, CTA ridership
 Pattern: async + FallbackChain (with token → without token → cache) + gather_with_limit
 """
+from __future__ import annotations
+
 import json
 import os
 from datetime import datetime, timezone, timedelta
@@ -15,7 +17,7 @@ import modal
 
 from modal_app.common import (
     Document, SourceType, SOCRATA_DATASETS, COMMUNITY_AREA_MAP,
-    detect_neighborhood, gather_with_limit,
+    detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit,
 )
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
@@ -140,7 +142,7 @@ async def public_data_ingester():
     app_token = os.environ.get("SOCRATA_APP_TOKEN", "")
 
     # FallbackChain: with token → without token → cache
-    chain = FallbackChain("public_data", "all_datasets")
+    chain = FallbackChain("public_data", "all_datasets", cache_ttl_hours=72)
     all_docs = await chain.execute([
         lambda: _fetch_all_with_token(app_token),
         _fetch_all_without_token,
@@ -165,7 +167,7 @@ async def public_data_ingester():
 
     if not new_docs:
         seen.save()
-        await volume.commit.aio()
+        await safe_volume_commit(volume, "public_data")
         print("Public data ingester: no new documents")
         return 0
 
@@ -183,13 +185,9 @@ async def public_data_ingester():
 
     # Push to classification queue
     from modal_app.classify import doc_queue
-    for doc_data in new_docs:
-        try:
-            await doc_queue.put.aio(doc_data)
-        except Exception:
-            pass
+    await safe_queue_push(doc_queue, new_docs, "public_data")
 
     seen.save()
-    await volume.commit.aio()
+    await safe_volume_commit(volume, "public_data")
     print(f"Public data ingester complete: {len(new_docs)} documents saved to {out_dir}")
     return len(new_docs)

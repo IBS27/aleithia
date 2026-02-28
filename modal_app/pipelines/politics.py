@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 import modal
 
-from modal_app.common import Document, SourceType, detect_neighborhood, gather_with_limit
+from modal_app.common import Document, SourceType, detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
 from modal_app.volume import app, volume, politics_image, RAW_DATA_PATH
@@ -69,9 +69,49 @@ async def _fetch_legislation_rest(since_days: int = 90) -> list[dict]:
 
 
 async def _fetch_legislation_odata(since_days: int = 90) -> list[dict]:
-    """Fallback: fetch legislation via OData-style params."""
-    # Same endpoint but with different query approach
-    return await _fetch_legislation_rest(since_days)
+    """Fallback: fetch legislation via OData $filter query (genuinely different API path)."""
+    docs = []
+    since_date = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%dT00:00:00")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{LEGISTAR_ODATA}/matters",
+            params={
+                "$filter": f"MatterIntroDate ge datetime'{since_date}'",
+                "$top": 50,
+            },
+        )
+        if resp.status_code != 200:
+            print(f"Legistar OData matters error: {resp.status_code}")
+            return docs
+
+        for matter in resp.json():
+            title = matter.get("MatterTitle", "") or matter.get("MatterName", "")
+            content = (matter.get("MatterBodyName", "") + "\n\n"
+                       + (matter.get("MatterText", "") or ""))
+            neighborhood = detect_neighborhood(f"{title} {content}")
+
+            docs.append({
+                "id": f"politics-leg-{matter.get('MatterId', '')}",
+                "source": SourceType.POLITICS.value,
+                "title": title,
+                "content": content,
+                "url": f"https://chicago.legistar.com/LegislationDetail.aspx?ID={matter.get('MatterId', '')}",
+                "timestamp": (
+                    datetime.fromisoformat(matter["MatterIntroDate"]).isoformat()
+                    if matter.get("MatterIntroDate")
+                    else datetime.now(timezone.utc).isoformat()
+                ),
+                "metadata": {
+                    "matter_type": matter.get("MatterTypeName", ""),
+                    "status": matter.get("MatterStatusName", ""),
+                    "body": matter.get("MatterBodyName", ""),
+                    "sponsor": matter.get("MatterSponsorName", ""),
+                    "enactment_number": matter.get("MatterEnactmentNumber", ""),
+                },
+                "geo": {"neighborhood": neighborhood} if neighborhood else {},
+            })
+    return docs
 
 
 async def _fetch_events(since_days: int = 90) -> list[dict]:
@@ -133,6 +173,11 @@ async def _extract_pdf_text(pdf_url: str) -> str:
 
         pdf_bytes = resp.content
 
+        # Reject corrupted/empty PDFs
+        if len(pdf_bytes) < 100:
+            print(f"PDF too small ({len(pdf_bytes)} bytes), likely corrupt: {pdf_url}")
+            return ""
+
         # Try pymupdf first (faster)
         try:
             import fitz  # pymupdf
@@ -172,7 +217,7 @@ async def politics_ingester():
     all_docs: list[dict] = []
 
     # Legislation with fallback: REST → OData → cache
-    leg_chain = FallbackChain("politics", "legislation")
+    leg_chain = FallbackChain("politics", "legislation", cache_ttl_hours=168)
     leg_docs = await leg_chain.execute([
         _fetch_legislation_rest,
         _fetch_legislation_odata,
@@ -216,7 +261,7 @@ async def politics_ingester():
 
     if not new_docs:
         seen.save()
-        await volume.commit.aio()
+        await safe_volume_commit(volume, "politics")
         print("Politics ingester: no new documents")
         return 0
 
@@ -234,13 +279,9 @@ async def politics_ingester():
 
     # Push to classification queue
     from modal_app.classify import doc_queue
-    for doc_data in new_docs:
-        try:
-            await doc_queue.put.aio(doc_data)
-        except Exception:
-            pass
+    await safe_queue_push(doc_queue, new_docs, "politics")
 
     seen.save()
-    await volume.commit.aio()
+    await safe_volume_commit(volume, "politics")
     print(f"Politics ingester complete: {len(new_docs)} documents saved to {out_dir}")
     return len(new_docs)
