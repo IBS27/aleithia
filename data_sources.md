@@ -2,7 +2,7 @@
 
 Chicago-focused data source collectors, each running as Modal functions. All output is normalized into the common `Document` schema before writing to Modal Volume. Pipelines push documents to `modal.Queue` for GPU classification.
 
-**Live stats:** 1,889+ documents | 47 neighborhoods | 5 active cron sources | 3 on-demand sources
+**Live stats:** 1,889+ documents | 47 neighborhoods | 5 cron sources | 10 on-demand sources | 13 pipelines total
 
 ---
 
@@ -87,9 +87,22 @@ Chicago-focused data source collectors, each running as Modal functions. All out
 
 **Neighborhoods searched:** Lincoln Park, Wicker Park, Logan Square, West Loop, Pilsen, Hyde Park, Andersonville, Chinatown
 
-### 3c. TikTok / Instagram (Deferred)
+### 3c. TikTok — `tiktok_ingester`
 
-**Status:** Deferred — no reliable public API.
+**File:** `modal_app/pipelines/tiktok.py`
+**Schedule:** On-demand
+**Pattern:** Kernel cloud browser + Playwright automation + Whisper transcription
+
+**Sources:**
+- TikTok search for Chicago-related trending content via Kernel cloud browsers
+- Audio transcription via OpenAI Whisper (A10G GPU)
+
+**What we collect:**
+- Video metadata (title, creator, views, likes)
+- Audio transcription text
+- Trend analysis and aggregation across neighborhoods
+
+**Functions:** `fetch_tiktok_videos`, `transcribe_tiktok_audio`, `analyze_tiktok_trends`, `aggregate_trending_data`
 
 ---
 
@@ -152,6 +165,81 @@ Chicago-focused data source collectors, each running as Modal functions. All out
 
 ---
 
+## 6. Traffic Flow — `traffic_ingester`
+
+**File:** `modal_app/pipelines/traffic.py`
+**Schedule:** On-demand
+**Pattern:** async + FallbackChain (TomTom API → cache)
+
+**Sources:**
+- TomTom Traffic Flow API (free tier available)
+
+**What we collect:**
+- Real-time traffic flow speed, free-flow speed, confidence
+- Congestion classification (free_flow / light / moderate / heavy / standstill)
+- Coverage across key Chicago corridors
+
+**Note:** Requires `TOMTOM_API_KEY`. Classifies congestion into density tiers for business location scoring.
+
+---
+
+## 7. CCTV / Foot Traffic — `cctv_ingester`
+
+**File:** `modal_app/pipelines/cctv.py`
+**Schedule:** On-demand (was 5min cron, removed to stay under cron limit)
+**Pattern:** IDOT ArcGIS API → snapshot download → YOLOv8n GPU detection
+
+**Sources:**
+- Illinois Department of Transportation (IDOT) ArcGIS REST API (public, no auth)
+- Highway camera snapshots around Chicago metro area
+
+**What we collect:**
+- Camera locations (lat/lng, description)
+- JPEG snapshots from live feeds
+- YOLOv8n detection: pedestrian count, vehicle count per frame
+- Foot traffic density classification (high / medium / low)
+
+**GPU:** T4 via `CCTVDetector` class (YOLOv8n inference)
+**Functions:** `cctv_ingester`, `analyze_cctv_batch`, `CCTVDetector`
+
+---
+
+## 8. Neighborhood Vision — `vision` pipeline
+
+**File:** `modal_app/pipelines/vision.py`
+**Schedule:** On-demand
+**Pattern:** YouTube download → frame extraction → GPT-4V labeling → YOLO training → inference
+
+**Sources:**
+- YouTube walking tour videos of Chicago neighborhoods
+
+**What we collect:**
+- Video frames extracted at configurable intervals
+- GPT-4V labels (8 classes: pedestrian, vehicle, storefront, restaurant, construction, for_lease, graffiti, security_camera)
+- Custom-trained YOLOv8n detector for neighborhood analysis
+
+**GPU:** T4 (training + inference), GPT-4V via OpenAI API (labeling)
+**Functions:** `extract_frames`, `label_frames_with_gpt`, `build_yolo_dataset`, `train_custom_detector`, `analyze_neighborhood`
+
+---
+
+## 9. Population Demographics — `worldpop_ingester`
+
+**File:** `modal_app/pipelines/worldpop.py`
+**Schedule:** On-demand
+**Pattern:** Google Earth Engine API
+
+**Sources:**
+- WorldPop dataset via Google Earth Engine (age/sex-stratified population estimates)
+
+**What we collect:**
+- Population density per neighborhood
+- Age and sex demographic breakdowns
+
+**Note:** Requires Google Earth Engine authentication via `ee_image`.
+
+---
+
 ## GPU Classification Pipeline
 
 ### DocClassifier + SentimentAnalyzer — `process_queue_batch`
@@ -182,3 +270,8 @@ Chicago-focused data source collectors, each running as Modal functions. All out
 | `review_ingester` | On-demand | — | Needs API keys |
 | `realestate_ingester` | On-demand | 8 docs | Active (placeholders) |
 | `federal_register_ingester` | On-demand | — | Active |
+| `tiktok` (4 functions) | On-demand | — | Active (needs Kernel) |
+| `traffic_ingester` | On-demand | — | Active (needs TOMTOM_API_KEY) |
+| `cctv_ingester` + `CCTVDetector` | On-demand | — | Active (public IDOT API) |
+| `vision` (5 functions) | On-demand | — | Active (needs OPENAI_API_KEY) |
+| `worldpop_ingester` | On-demand | — | Active (needs Earth Engine auth) |

@@ -4,10 +4,11 @@
 **Project:** Alethia — Regulatory Intelligence for Small Businesses
 **Event:** HackIllinois 2026
 **Status:** DEPLOYED — `https://gt12889--alethia-serve.modal.run`
+**Scale:** 28+ Modal functions | 13 pipelines | 13 custom images | 18 Modal features | 17 API endpoints
 
 ## Goal
 
-Build an AI-powered regulatory intelligence platform that aggregates live Chicago-area data (news, politics, social, public records), analyzes it on Modal GPUs, and delivers actionable insights to small business owners through a polished chat + dashboard interface.
+Build an AI-powered regulatory intelligence platform that aggregates live Chicago-area data (news, politics, social, public records, reviews, real estate, federal regulations, traffic, CCTV, vision), analyzes it on Modal GPUs (Qwen3 8B on H100, bart-large-mnli + roberta + YOLOv8n on T4), and delivers actionable insights to small business owners through a streaming chat + dashboard interface with OpenTelemetry tracing.
 
 ## Prize Strategy
 
@@ -31,7 +32,7 @@ Build an AI-powered regulatory intelligence platform that aggregates live Chicag
 ```
 ┌─────────────────────── MODAL COMPUTE LAYER ──────────────────────────────┐
 │                                                                          │
-│  ┌───────────────── DATA PIPELINES (8 functions) ─────────────────────┐ │
+│  ┌───────────────── DATA PIPELINES (13 pipelines) ────────────────────┐ │
 │  │                                                                     │ │
 │  │  news_ingester     reddit_ingester    public_data_ingester          │ │
 │  │  (30min cron)      (1hr cron)         (daily cron)                  │ │
@@ -46,6 +47,15 @@ Build an AI-powered regulatory intelligence platform that aggregates live Chicag
 │  │  realestate_ingester    federal_register_ingester                   │ │
 │  │  (on-demand)            (on-demand)                                 │ │
 │  │  - LoopNet              - SBA, FDA, OSHA, EPA                      │ │
+│  │                                                                     │ │
+│  │  traffic_ingester   cctv_ingester     tiktok (4 functions)         │ │
+│  │  (on-demand)        (on-demand)       (on-demand)                   │ │
+│  │  - TomTom API       - IDOT ArcGIS     - Kernel + Playwright        │ │
+│  │                     - YOLOv8n (T4)    - Whisper transcription       │ │
+│  │                                                                     │ │
+│  │  vision (5 funcs)   worldpop_ingester                              │ │
+│  │  (on-demand)        (on-demand)                                     │ │
+│  │  - YouTube → YOLO   - Google Earth Engine                           │ │
 │  └──────────────┬──────────────────────────────────────────────────────┘ │
 │                 │ await doc_queue.put.aio()                              │
 │                 ▼                                                        │
@@ -53,16 +63,16 @@ Build an AI-powered regulatory intelligence platform that aggregates live Chicag
 │  └──────────────┬───────────────────┘                                   │
 │                 │ process_queue_batch (2min cron)                        │
 │                 ▼                                                        │
-│  ┌───────────────── GPU INFERENCE (3 models) ────────────────────────┐  │
+│  ┌───────────────── GPU INFERENCE (4 model classes) ─────────────────┐  │
 │  │                                                                    │  │
 │  │  DocClassifier (T4)          SentimentAnalyzer (T4)               │  │
 │  │  bart-large-mnli (406M)      roberta-sentiment                    │  │
 │  │  @modal.batched(32)          @modal.batched(32)                   │  │
 │  │  asyncio.gather() parallel   asyncio.gather() parallel            │  │
 │  │                                                                    │  │
-│  │  AlethiaLLM (H100)                                                │  │
-│  │  Qwen3 8B via vLLM                                                │  │
-│  │  @modal.concurrent(20)                                            │  │
+│  │  AlethiaLLM (H100)           CCTVDetector (T4)                    │  │
+│  │  Qwen3 8B via vLLM           YOLOv8n pedestrian/vehicle          │  │
+│  │  @modal.concurrent(20)       detection on IDOT camera frames      │  │
 │  │  Streaming token generation                                       │  │
 │  └────────────────────────────────────────────────────────────────────┘  │
 │                                                                          │
@@ -77,6 +87,8 @@ Build an AI-powered regulatory intelligence platform that aggregates live Chicag
 │  │  modal.Dict ("alethia-costs") — compute cost tracking             │  │
 │  │  compress_raw_data — volume optimization                          │  │
 │  │  Supermemory sync — RAG context + user profiles                   │  │
+│  │  instrumentation.py — Arize AX tracing (OTel connected spans)     │  │
+│  │  scaling_demo.py — Modal auto-scaling demonstration               │  │
 │  └────────────────────────────────────────────────────────────────────┘  │
 │                                                                          │
 │  ┌───────────────── STORAGE ─────────────────────────────────────────┐  │
@@ -94,6 +106,9 @@ Build an AI-powered regulatory intelligence platform that aggregates live Chicag
 │  │  GET  /sources     — per-source freshness                         │  │
 │  │  GET  /neighborhood/{n} — neighborhood detail                     │  │
 │  │  GET  /health      — healthcheck                                  │  │
+│  │  GET  /cctv/latest — latest CCTV detection results                │  │
+│  │  GET  /cctv/frame/{id} — camera frame image                      │  │
+│  │  + 9 more endpoints (scaling, geo, summaries, etc.)               │  │
 │  └────────────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────────┘
          │                              │
@@ -136,8 +151,13 @@ Build an AI-powered regulatory intelligence platform that aggregates live Chicag
 | Census/ACS | Census API | On-demand | `demographics_ingester` | 1,332 |
 | Real Estate | LoopNet + placeholders | On-demand | `realestate_ingester` | 8 |
 | Federal Register | Federal Register API | On-demand | `federal_register_ingester` | — |
+| TikTok | Kernel cloud browser + Whisper | On-demand | `tiktok` (4 functions) | — |
+| Traffic | TomTom Traffic Flow API | On-demand | `traffic_ingester` | — |
+| CCTV | IDOT ArcGIS + YOLOv8n | On-demand | `cctv_ingester` + `CCTVDetector` | — |
+| Vision | YouTube → GPT-4V → YOLO | On-demand | `vision` (5 functions) | — |
+| WorldPop | Google Earth Engine | On-demand | `worldpop_ingester` | — |
 
-**Total live:** 1,889+ documents across 47 neighborhoods
+**Total live:** 1,889+ documents across 47 neighborhoods (13 pipelines)
 
 ## Processing Pipeline (Deployed)
 
@@ -157,6 +177,7 @@ Three GPU models running on Modal:
 - **DocClassifier** (`facebook/bart-large-mnli`, 406M params, T4): Zero-shot classification into regulatory/economic/safety/infrastructure/community/business. Batch size 32 via `@modal.batched`.
 - **SentimentAnalyzer** (`cardiffnlp/twitter-roberta-base-sentiment-latest`, T4): Sentiment scoring. Batch size 32 via `@modal.batched`.
 - **AlethiaLLM** (Qwen3 8B via vLLM, H100): Streaming chat responses, intelligence briefs, agent synthesis. 20 concurrent inputs via `@modal.concurrent`.
+- **CCTVDetector** (YOLOv8n, T4): Pedestrian and vehicle detection on IDOT highway camera snapshots. Foot traffic density classification (high/medium/low).
 
 ## Supermemory Integration
 
@@ -169,18 +190,18 @@ Three GPU models running on Modal:
 
 **Flow:** User onboards → profile in Supermemory → every query enriched with profile + memory → agent swarm retrieves from Supermemory + volume → LLM synthesizes → recommendations personalize over time.
 
-## Modal Features Used (17)
+## Modal Features Used (18)
 
 | # | Feature | Where Used |
 |---|---------|------------|
 | 1 | `modal.App` | `volume.py` — single app for all functions |
 | 2 | `modal.Volume` | `volume.py` — `alethia-data` + `alethia-weights` |
 | 3 | `modal.Secret` | All pipeline + web functions |
-| 4 | `modal.Image` | `volume.py` — 10 custom images (base, reddit, politics, data, vllm, classify, web, video, label, yolo) |
+| 4 | `modal.Image` | `volume.py` — 13 custom images (base, reddit, politics, data, vllm, classify, web, video, label, yolo, cctv, traffic, tiktok) |
 | 5 | `modal.Period` | 5 cron schedules (news, reddit, public_data, classifier, reconciler) |
 | 6 | `.map()` | Batch fan-out in pipelines |
-| 7 | `gpu="T4"` | `classify.py` — DocClassifier + SentimentAnalyzer |
-| 8 | `@modal.cls` + `@modal.enter` | `llm.py`, `classify.py` — model loading |
+| 7 | `gpu="T4"` | `classify.py` (DocClassifier + SentimentAnalyzer), `cctv.py` (CCTVDetector) |
+| 8 | `@modal.cls` + `@modal.enter` | `llm.py`, `classify.py`, `cctv.py` — model loading |
 | 9 | `@modal.concurrent` | `llm.py` — 20 concurrent LLM inputs |
 | 10 | `gpu="H100"` | `llm.py` — Qwen3 8B via vLLM |
 | 11 | `Image.pip_install()` | All custom images |
@@ -190,17 +211,20 @@ Three GPU models running on Modal:
 | 15 | `.spawn()` | `agents.py` — query-time fan-out of 4 agents |
 | 16 | `@modal.asgi_app` | `web.py` — FastAPI hosted on Modal |
 | 17 | `modal.Dict` | `reconciler.py` — shared cost tracking state |
+| 18 | `Function.from_name` / `Cls.from_name` | `web.py` — cross-module function lookups |
 
 ## Deployment (Actual)
 
 | Component | Platform | Status |
 |-----------|----------|--------|
-| All compute | Modal (18 functions) | **DEPLOYED** |
-| Web API | Modal `@modal.asgi_app` | **LIVE** at `https://gt12889--alethia-serve.modal.run` |
+| All compute | Modal (28+ functions) | **DEPLOYED** |
+| Web API | Modal `@modal.asgi_app` | **LIVE** at `https://gt12889--alethia-serve.modal.run` (17 endpoints) |
 | LLM | Modal H100 (Qwen3 8B) | **DEPLOYED** |
 | Classification | Modal T4 (2 models) | **DEPLOYED** |
+| CCTV Detection | Modal T4 (YOLOv8n) | **DEPLOYED** |
+| Tracing | Arize AX (OTel) | **DEPLOYED** |
 | User Memory | Supermemory | **DEPLOYED** |
-| Frontend | Local dev (Vite) | **RUNNING** |
+| Frontend | Local dev (Vite) | **RUNNING** (18 React components) |
 | Domain | TBD | Not yet configured |
 
 ## Key Technical Decisions (Updated)
@@ -318,7 +342,58 @@ Sequential blocking caused 300s timeout on 100 docs. Parallel async completes in
 + await doc_queue.put.aio(doc_data)
 ```
 
-### 10. Reconciler spawn + cost dict: blocking → async
+### 10. Data sources expanded from 8 to 13 pipelines
+```diff
+  # Original 8 pipelines:
+  news, reddit, public_data, politics, demographics, reviews, realestate, federal_register
+
++ # Added 5 pipelines:
++ traffic_ingester    — TomTom Traffic Flow API congestion data
++ cctv_ingester       — IDOT ArcGIS camera snapshots + YOLOv8n detection (T4)
++ tiktok (4 functions) — Kernel cloud browser + Playwright + Whisper transcription
++ vision (5 functions) — YouTube → GPT-4V labeling → YOLOv8n training → inference
++ worldpop_ingester   — Google Earth Engine population demographics
+```
+
+### 11. GPU models expanded from 3 to 4
+```diff
+  DocClassifier (T4)      — bart-large-mnli zero-shot classification
+  SentimentAnalyzer (T4)  — roberta sentiment analysis
+  AlethiaLLM (H100)       — Qwen3 8B via vLLM streaming
++ CCTVDetector (T4)       — YOLOv8n pedestrian/vehicle detection on IDOT frames
+```
+
+### 12. Modal images expanded from 10 to 13
+```diff
+  Existing: base, reddit, politics, data, vllm, classify, web, video, label, yolo
++ Added:    cctv_image, traffic_image, tiktok_image
+```
+
+### 13. Arize AX tracing added (not in original plan)
+```diff
++ instrumentation.py — init_tracing(), get_tracer(), inject_context(), extract_context()
++ W3C trace context propagation across Modal containers
++ arize-secrets Modal secret group (ARIZE_SPACE_ID, ARIZE_API_KEY)
++ Connected spans: web.py → agents.py → llm.py
++ 35 automated tests in tests/test_tracing_spans.py + tests/test_instrumentation.py
+```
+
+### 14. API endpoints expanded from 8 to 17
+```diff
+  Original 8: /health, /metrics, /sources, /status, /chat, /brief/{n}, /alerts, /neighborhood/{n}
++ Added: /cctv/latest, /cctv/frame/{id}, /scaling, /geo/{layer},
++        /neighborhood/{n}/summary, /docs, /openapi.json, /compare, /trends
+```
+
+### 15. Frontend built (not detailed in original architecture)
+```diff
++ 18 React components with Tailwind CSS v4
++ ProcessFlow.tsx — collapsible trace visualization with copy-logs
++ Streaming SSE chat via api.ts event parser
++ PipelineMonitor.tsx + MLMonitor.tsx for ops dashboard
+```
+
+### 16. Reconciler spawn + cost dict: blocking → async (from original diff #10)
 ```diff
 - news_ingester.spawn()
 + await news_ingester.spawn.aio()

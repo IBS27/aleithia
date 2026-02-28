@@ -1,8 +1,10 @@
 # Agent Configuration Documents Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **SUPERSEDED** — This implementation plan was never executed. The project pivoted from "Not Palantir" to "Alethia" and adopted a single `CLAUDE.md` file instead of the 8-file `docs/agent/` approach described here. Preserved for historical reference.
 
-**Goal:** Create 8 Claude Code configuration markdown documents that shape agent behavior for the "Not Palantir" data analysis platform.
+> ~~**For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.~~
+
+**Goal:** ~~Create 8 Claude Code configuration markdown documents that shape agent behavior for the "Not Palantir" data analysis platform.~~ (Superseded by CLAUDE.md)
 
 **Architecture:** Flat `docs/agent/` directory with self-contained markdown files. `boot.md` is the entry point that references all others. Documents split into static context (identity, soul, tools, user) and dynamic state (heartbeat, active-tasks, learnings).
 
@@ -507,3 +509,24 @@ git log --oneline -10
 ```
 
 Expected: 8 new commits, one per document.
+
+---
+
+## Diff: Plan vs Reality
+
+This plan was never executed. The project pivoted before implementation.
+
+```diff
+- 9 tasks to create docs/agent/ directory with 8 markdown files
++ 0 tasks executed — entire plan superseded
+
+- Project identity: "Not Palantir" data analysis platform
++ Project identity: "Alethia" Chicago Business Intelligence Platform
+
+- Agent config approach: 8 separate files (boot, identity, soul, heartbeat, tools, user, active-tasks, learnings)
++ Agent config approach: single CLAUDE.md file in project root
++ Additional context: auto-memory files in ~/.claude/projects/*/memory/
+
+- Tech stack documented: FastAPI + React + pandas/polars + SQLite
++ Tech stack actual: Modal serverless + Qwen3 8B + vLLM + YOLOv8n + React 19 + Tailwind v4
+```

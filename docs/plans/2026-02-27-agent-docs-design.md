@@ -1,8 +1,10 @@
 # Agent Configuration Documents Design
 
+> **SUPERSEDED** — This design was written for the original "Not Palantir" concept before the project pivoted to "Alethia" (Chicago Business Intelligence Platform). The `docs/agent/` directory was never created. Agent configuration is now handled by `CLAUDE.md` in the project root (single-file approach). This document is preserved for historical reference.
+
 **Date:** 2026-02-27
-**Project:** Not Palantir (HackIllinois 2026)
-**Purpose:** Claude Code project-specific configuration documents
+**Project:** Not Palantir (HackIllinois 2026) → Pivoted to Alethia
+**Purpose:** Claude Code project-specific configuration documents (superseded by CLAUDE.md)
 
 ## Context
 
@@ -78,3 +80,25 @@ docs/agent/
 - **Flat directory** over nested: simplicity wins for a hackathon
 - **Separate files** over monolith: easier to update individual sections
 - **boot.md as entry point**: establishes load order and context
+
+---
+
+## Diff: Plan vs Reality
+
+```diff
+- Project: "Not Palantir" — generic data analysis platform
++ Project: "Alethia" — Chicago Business Intelligence Platform on Modal
+
+- 8 separate markdown files in docs/agent/
++ Single CLAUDE.md file in project root (simpler, Claude Code native)
+
+- Tech stack: FastAPI + React + pandas/polars
++ Tech stack: Modal (28+ serverless functions) + React 19 + vLLM + GPU inference
+
+- Configuration: boot.md load order, heartbeat.md status, active-tasks.md tracking
++ Configuration: CLAUDE.md covers architecture, commands, patterns, deployment in one file
++ Additional: auto-memory in ~/.claude/projects/*/memory/MEMORY.md
+
+- docs/agent/ directory with 8 files
++ docs/agent/ never created — CLAUDE.md approach proved sufficient
+```

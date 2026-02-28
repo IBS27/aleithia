@@ -28,9 +28,14 @@ modal secret create alethia-secrets \
   SUPERMEMORY_API_KEY=your_key \
   OPENAI_API_KEY=your_key \
   TOMTOM_API_KEY=your_key
+
+# Arize tracing (separate secret group)
+modal secret create arize-secrets \
+  ARIZE_SPACE_ID=your_space_id \
+  ARIZE_API_KEY=your_api_key
 ```
 
-**Note:** Most pipelines work without API keys (using public endpoints or fallback data), but keys improve rate limits and data quality.
+**Note:** Most pipelines work without API keys (using public endpoints or fallback data), but keys improve rate limits and data quality. Arize secrets are optional — tracing is disabled gracefully without them.
 
 ## 3. API Key Sources
 
@@ -44,20 +49,25 @@ modal secret create alethia-secrets \
 | `CENSUS_API_KEY` | [census.gov/developers](https://api.census.gov/data/key_signup.html) | Optional — works without key |
 | `SUPERMEMORY_API_KEY` | [supermemory.ai](https://supermemory.ai) | Optional — for RAG + user profiles |
 | `TOMTOM_API_KEY` | [developer.tomtom.com](https://developer.tomtom.com) | Optional — traffic monitoring; free tier available |
+| `ARIZE_SPACE_ID` | [arize.com](https://app.arize.com) | Optional — OTel tracing dashboard |
+| `ARIZE_API_KEY` | [arize.com](https://app.arize.com) | Optional — OTel tracing dashboard |
 
 ## 4. Deploy Everything
 
 ```bash
-# Deploy all 18 functions at once (recommended)
+# Deploy all 28+ functions at once (recommended)
 modal deploy -m modal_app
 
 # This deploys:
 # - 5 cron jobs: news (30min), reddit (1hr), public_data (daily),
 #                process_queue_batch (2min), data_reconciler (5min)
-# - 5 on-demand pipelines: politics, demographics, reviews, realestate, federal_register
-# - GPU inference: AlethiaLLM (H100), DocClassifier (T4), SentimentAnalyzer (T4)
-# - Web API: https://gt12889--alethia-serve.modal.run
-# - Utilities: compress, supermemory sync, model download
+# - 10 on-demand pipelines: politics, demographics, reviews, realestate,
+#                            federal_register, tiktok, traffic, cctv, vision, worldpop
+# - GPU inference: AlethiaLLM (H100), DocClassifier (T4), SentimentAnalyzer (T4), CCTVDetector (T4)
+# - Agent swarm: neighborhood_intel_agent, regulatory_agent, orchestrate_query
+# - Web API: https://gt12889--alethia-serve.modal.run (17 endpoints)
+# - Utilities: compress, supermemory sync, model download, scaling_demo
+# - Tracing: Arize AX via OpenTelemetry (if arize-secrets configured)
 ```
 
 ## 5. Run Individual Pipelines
@@ -73,6 +83,9 @@ modal run -m modal_app.pipelines.demographics::demographics_ingester
 modal run -m modal_app.pipelines.realestate::realestate_ingester
 modal run -m modal_app.pipelines.federal_register::federal_register_ingester
 modal run -m modal_app.pipelines.traffic::traffic_ingester
+modal run -m modal_app.pipelines.cctv::cctv_ingester
+modal run -m modal_app.pipelines.vision::extract_frames
+modal run -m modal_app.pipelines.worldpop::ingest_worldpop
 
 # Run data compression
 modal run -m modal_app.compress::compress_raw_data
@@ -133,27 +146,32 @@ npm run dev
 ## Architecture Overview
 
 ```
-                    Modal Compute Layer
-┌──────────────────────────────────────────────────────┐
-│                                                      │
-│  DATA PIPELINES (8)          GPU INFERENCE            │
-│  ├─ news (30min cron)        ├─ Qwen3 8B (H100)      │
-│  ├─ reddit (1hr cron)        ├─ DocClassifier (T4)    │
-│  ├─ public_data (daily)      └─ SentimentAnalyzer(T4) │
-│  ├─ politics (on-demand)                              │
-│  ├─ demographics (on-demand)  AGENT SWARM              │
-│  ├─ reviews (on-demand)       ├─ neighborhood_intel    │
-│  ├─ realestate (on-demand)    ├─ regulatory_agent      │
-│  └─ federal_register (on-demand) └─ orchestrate_query  │
-│                                                      │
-│  INFRASTRUCTURE               WEB API                 │
-│  ├─ modal.Queue (event bus)   └─ FastAPI @asgi_app    │
-│  ├─ modal.Dict (cost track)      8 endpoints live     │
-│  ├─ reconciler (5min cron)                            │
-│  └─ Supermemory sync                                  │
-│                                                      │
-│  STORAGE                                              │
-│  ├─ alethia-data (Volume)                             │
-│  └─ alethia-weights (Volume, model weights)           │
-└──────────────────────────────────────────────────────┘
+                    Modal Compute Layer (28+ functions)
+┌──────────────────────────────────────────────────────────┐
+│                                                          │
+│  DATA PIPELINES (13)           GPU INFERENCE              │
+│  ├─ news (30min cron)          ├─ Qwen3 8B (H100)        │
+│  ├─ reddit (1hr cron)          ├─ DocClassifier (T4)      │
+│  ├─ public_data (daily)        ├─ SentimentAnalyzer (T4)  │
+│  ├─ politics (on-demand)       └─ CCTVDetector (T4)       │
+│  ├─ demographics (on-demand)                              │
+│  ├─ reviews (on-demand)        AGENT SWARM                │
+│  ├─ realestate (on-demand)     ├─ neighborhood_intel      │
+│  ├─ federal_register           ├─ regulatory_agent        │
+│  ├─ tiktok (on-demand)         └─ orchestrate_query       │
+│  ├─ traffic (on-demand)                                   │
+│  ├─ cctv (on-demand)           OBSERVABILITY              │
+│  ├─ vision (on-demand)         └─ Arize AX (OTel spans)   │
+│  └─ worldpop (on-demand)                                  │
+│                                                          │
+│  INFRASTRUCTURE                WEB API                    │
+│  ├─ modal.Queue (event bus)    └─ FastAPI @asgi_app       │
+│  ├─ modal.Dict (cost track)       17 endpoints live       │
+│  ├─ reconciler (5min cron)                                │
+│  └─ Supermemory sync                                      │
+│                                                          │
+│  STORAGE                                                  │
+│  ├─ alethia-data (Volume)                                 │
+│  └─ alethia-weights (Volume, model weights)               │
+└──────────────────────────────────────────────────────────┘
 ```
