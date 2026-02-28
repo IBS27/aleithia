@@ -288,7 +288,7 @@ export default function Dashboard({ profile, onReset }: Props) {
 
       {error && (
         <div className="mx-6 mt-4 p-4 bg-red-500/[0.06] border border-red-500/20 text-red-400/80 text-xs font-mono">
-          {error} — Make sure the backend is running on port 8000
+          {error} — Check that VITE_MODAL_URL is set or the Modal backend is deployed
         </div>
       )}
 
@@ -296,13 +296,10 @@ export default function Dashboard({ profile, onReset }: Props) {
       <div className="flex-1 flex min-h-0">
         {/* Left: Data */}
         <div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto">
-<<<<<<< HEAD
-=======
           {/* Pipeline Monitor */}
           <PipelineMonitor />
 
           {/* Data sources */}
->>>>>>> 36442a4e3834c1cf581874b40eda0efee69bed8d
           <DataSourceBadge sources={sourceList} />
 
           {/* Tabs */}
@@ -343,8 +340,6 @@ export default function Dashboard({ profile, onReset }: Props) {
                     <MapView activeNeighborhood={profile.neighborhood} />
                   </div>
 
-<<<<<<< HEAD
-=======
                   {/* Agent Swarm Visualization */}
                   {(agentActive || agentInfo) && (
                     <AgentSwarm
@@ -355,7 +350,6 @@ export default function Dashboard({ profile, onReset }: Props) {
                   )}
 
                   {/* Risk + Demographics side by side */}
->>>>>>> 36442a4e3834c1cf581874b40eda0efee69bed8d
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     {riskScore && <RiskCard score={riskScore} />}
                     {neighborhoodData?.metrics && (
@@ -430,11 +424,7 @@ export default function Dashboard({ profile, onReset }: Props) {
         </div>
 
         {/* Right: Chat */}
-<<<<<<< HEAD
         <div className="w-96 border-l border-white/[0.06] p-4">
-          <ChatPanel messages={messages} onSend={handleChat} loading={chatLoading} />
-=======
-        <div className="w-96 border-l border-gray-800 p-4">
           <ChatPanel
             messages={messages}
             onSend={handleChat}
@@ -443,7 +433,6 @@ export default function Dashboard({ profile, onReset }: Props) {
             agentInfo={agentInfo}
             statusMessage={statusMessage}
           />
->>>>>>> 36442a4e3834c1cf581874b40eda0efee69bed8d
         </div>
       </div>
     </div>

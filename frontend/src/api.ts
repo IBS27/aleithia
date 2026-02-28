@@ -1,19 +1,10 @@
 import type { DataSources, GeoJSON, NeighborhoodData, Document } from './types'
 
-const BASE = '/api/data'
-
-// Modal deployed endpoint — set via env or fallback to local proxy
-const MODAL_BASE = import.meta.env.VITE_MODAL_URL || ''
+// Modal deployed endpoint — set via VITE_MODAL_URL, fallback to local proxy
+const API_BASE = import.meta.env.VITE_MODAL_URL || '/api/data'
 
 async function fetchJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`)
-  if (!res.ok) throw new Error(`API error: ${res.status}`)
-  return res.json()
-}
-
-async function fetchModalJSON<T>(path: string): Promise<T> {
-  const base = MODAL_BASE || BASE
-  const res = await fetch(`${base}${path}`)
+  const res = await fetch(`${API_BASE}${path}`)
   if (!res.ok) throw new Error(`API error: ${res.status}`)
   return res.json()
 }
@@ -32,8 +23,7 @@ export async function streamChat(
   callbacks: StreamChatCallbacks,
   userId?: string,
 ): Promise<void> {
-  const base = MODAL_BASE || ''
-  const chatUrl = base ? `${base}/chat` : '/api/data/chat'
+  const chatUrl = `${API_BASE}/chat`
 
   const res = await fetch(chatUrl, {
     method: 'POST',
@@ -105,11 +95,11 @@ export interface PipelineStatus {
 }
 
 export async function fetchPipelineStatus(): Promise<PipelineStatus> {
-  return fetchModalJSON<PipelineStatus>('/status')
+  return fetchJSON<PipelineStatus>('/status')
 }
 
 export async function fetchMetrics(): Promise<Record<string, number>> {
-  return fetchModalJSON<Record<string, number>>('/metrics')
+  return fetchJSON<Record<string, number>>('/metrics')
 }
 
 export const api = {

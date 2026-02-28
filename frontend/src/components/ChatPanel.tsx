@@ -34,17 +34,10 @@ export default function ChatPanel({ messages, onSend, loading, isStreaming, agen
   }
 
   return (
-<<<<<<< HEAD
     <div className="flex flex-col h-full border border-white/[0.06] bg-white/[0.01]">
       <div className="px-4 py-3 border-b border-white/[0.06]">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-white/60">Query Engine</h3>
-        <p className="text-[10px] font-mono text-white/20 mt-0.5">Powered by live Chicago data</p>
-=======
-    <div className="flex flex-col h-full bg-gray-900 rounded-xl border border-gray-800">
-      <div className="px-4 py-3 border-b border-gray-800">
-        <h3 className="font-semibold text-sm">Ask Alethia</h3>
-        <p className="text-xs text-gray-500">Powered by Qwen3-8B + Agent Swarm</p>
->>>>>>> 36442a4e3834c1cf581874b40eda0efee69bed8d
+        <p className="text-[10px] font-mono text-white/20 mt-0.5">Qwen3-8B + Agent Swarm</p>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
@@ -79,9 +72,6 @@ export default function ChatPanel({ messages, onSend, loading, isStreaming, agen
                   : 'bg-white/[0.04] border border-white/[0.06] text-white/70'
               }`}
             >
-<<<<<<< HEAD
-              <pre className="whitespace-pre-wrap font-sans">{msg.content}</pre>
-=======
               {msg.role === 'assistant' ? (
                 <div className="prose prose-invert prose-sm max-w-none">
                   <Markdown>{msg.content}</Markdown>
@@ -90,9 +80,8 @@ export default function ChatPanel({ messages, onSend, loading, isStreaming, agen
                 msg.content
               )}
               {isStreaming && i === messages.length - 1 && msg.role === 'assistant' && (
-                <span className="inline-block w-1.5 h-4 bg-indigo-400 animate-pulse ml-0.5 align-middle" />
+                <span className="inline-block w-1.5 h-4 bg-white animate-pulse ml-0.5 align-middle" />
               )}
->>>>>>> 36442a4e3834c1cf581874b40eda0efee69bed8d
             </div>
           </div>
         ))}
