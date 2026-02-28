@@ -216,3 +216,115 @@ Three GPU models running on Modal:
 | `MODAL_IS_REMOTE` guard | Prevents cross-image import failures in containers |
 | `add_local_python_source(copy=True)` | Ensures source is baked into image, not mounted |
 | `scaledown_window` over `container_idle_timeout` | API renamed in Modal SDK |
+
+---
+
+## Plan vs Reality — Key Diffs
+
+Changes discovered during implementation that diverged from the original design.
+
+### 1. GPU specification syntax (deprecated object → string)
+```diff
+- gpu=modal.gpu.H100(),
++ gpu="H100",
+```
+
+### 2. Container idle timeout renamed
+```diff
+- container_idle_timeout=300,
++ scaledown_window=300,
+```
+
+### 3. flash-attn removed from vLLM image
+```diff
+  vllm_image = (
+      modal.Image.debian_slim(python_version="3.11")
+      .pip_install("vllm>=0.8.0", "transformers>=4.45.0", "torch>=2.4.0")
+-     .run_commands("pip install flash-attn --no-build-isolation")
++     # flash-attn removed: requires CUDA dev tools not in debian_slim
++     # vLLM includes its own optimized attention kernels
+  )
+```
+
+### 4. `add_local_python_source` requires `copy=True`
+```diff
+- .add_local_python_source("modal_app")
++ .add_local_python_source("modal_app", copy=True)
+```
+Without `copy=True`, containers couldn't find the `modal_app` package at runtime.
+
+### 5. `__init__.py` guarded with `MODAL_IS_REMOTE`
+```diff
++ if not _os.environ.get("MODAL_IS_REMOTE"):
++     from modal_app import compress  # noqa: F401
++     from modal_app import classify  # noqa: F401
++     ...
+```
+Without this guard, every container tried to import ALL modules (including fastapi, vllm, etc.), causing `ModuleNotFoundError` in images that don't have those packages.
+
+### 6. Cron schedules reduced from 10 to 5 (Modal free tier limit)
+```diff
+  # Kept (5 cron jobs):
+  news_ingester:          schedule=modal.Period(minutes=30)
+  reddit_ingester:        schedule=modal.Period(hours=1)
+  public_data_ingester:   schedule=modal.Period(days=1)
+  process_queue_batch:    schedule=modal.Period(minutes=2)
+  data_reconciler:        schedule=modal.Period(minutes=5)
+
+  # Removed schedules (run on-demand via reconciler):
+- politics_ingester:      schedule=modal.Period(days=1)
+- demographics_ingester:  schedule=modal.Period(days=30)
+- review_ingester:        schedule=modal.Period(days=1)
+- realestate_ingester:    schedule=modal.Period(days=7)
+- federal_register:       schedule=modal.Period(days=1)
+```
+
+### 7. `allow_concurrent_inputs` removed from ASGI app
+```diff
+  @app.function(image=web_image, volumes={"/data": volume},
+      secrets=[modal.Secret.from_name("alethia-secrets")],
+-     allow_concurrent_inputs=100,
+  )
+  @modal.asgi_app()
+  def serve():
+```
+Deprecated for ASGI apps — Modal handles concurrency automatically.
+
+### 8. Queue drain + classification: blocking → async parallel
+```diff
+  # Queue drain
+- doc = doc_queue.get(timeout=5)
++ doc = await doc_queue.get.aio(timeout=5)
+
+  # Classification: sequential blocking → parallel async
+- for text in texts:
+-     classifications.append(classifier.classify.remote(text))
+-     sentiments.append(analyzer.analyze.remote(text))
++ classifications = await asyncio.gather(
++     *[classifier.classify.remote.aio(text) for text in texts],
++     return_exceptions=True,
++ )
++ sentiments = await asyncio.gather(
++     *[analyzer.analyze.remote.aio(text) for text in texts],
++     return_exceptions=True,
++ )
+```
+Sequential blocking caused 300s timeout on 100 docs. Parallel async completes in ~10s.
+
+### 9. Pipeline queue push: blocking → async
+```diff
+  # In news.py, reddit.py, public_data.py, politics.py:
+- doc_queue.put(doc_data)
++ await doc_queue.put.aio(doc_data)
+```
+
+### 10. Reconciler spawn + cost dict: blocking → async
+```diff
+- news_ingester.spawn()
++ await news_ingester.spawn.aio()
+
+- for key in cost_dict.keys():
+-     entry = cost_dict[key]
++ async for key in cost_dict.keys.aio():
++     entry = await cost_dict.get.aio(key)
+```
