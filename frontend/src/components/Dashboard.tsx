@@ -12,7 +12,6 @@ import LicenseTable from './LicenseTable.tsx'
 import NewsFeed from './NewsFeed.tsx'
 import DemographicsCard from './DemographicsCard.tsx'
 import PipelineMonitor from './PipelineMonitor.tsx'
-import AgentSwarm from './AgentSwarm.tsx'
 import MLMonitor from './MLMonitor.tsx'
 
 type Tab = 'overview' | 'inspections' | 'permits' | 'licenses' | 'news' | 'models'
@@ -21,6 +20,13 @@ interface AgentInfo {
   agents_deployed: number
   neighborhoods: string[]
   data_points: number
+  agent_summaries?: Array<{
+    name: string
+    data_points: number
+    sources?: string[]
+    regulation_count?: number
+    error?: boolean
+  }>
 }
 
 function computeRiskScore(data: NeighborhoodData, profile: UserProfile): RiskScore {
@@ -168,7 +174,6 @@ export default function Dashboard({ profile, onReset }: Props) {
     const startTime = Date.now()
 
     // Add empty assistant message for streaming
-    const assistantIdx = messages.length + 1
     setMessages(prev => [...prev, { role: 'assistant', content: '', timestamp: new Date() }])
     setIsStreaming(true)
 
@@ -181,9 +186,9 @@ export default function Dashboard({ profile, onReset }: Props) {
           setAgentInfo(data)
           setAgentActive(false)
           setAgentElapsedMs(Date.now() - startTime)
-          setStatusMessage('')
         },
         onToken: (token) => {
+          setStatusMessage('')
           setMessages(prev => {
             const updated = [...prev]
             const last = updated[updated.length - 1]
@@ -197,7 +202,7 @@ export default function Dashboard({ profile, onReset }: Props) {
           setIsStreaming(false)
           setChatLoading(false)
         },
-        onError: (errorMsg) => {
+        onError: (_errorMsg) => {
           // Fallback to local response
           setIsStreaming(false)
           setAgentActive(false)
@@ -342,20 +347,11 @@ export default function Dashboard({ profile, onReset }: Props) {
                     <MapView activeNeighborhood={profile.neighborhood} />
                   </div>
 
-                  {/* Agent Swarm Visualization */}
-                  {(agentActive || agentInfo) && (
-                    <AgentSwarm
-                      agentInfo={agentInfo}
-                      isActive={agentActive}
-                      elapsedMs={agentElapsedMs}
-                    />
-                  )}
-
                   {/* Risk + Demographics side by side */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     {riskScore && <RiskCard score={riskScore} />}
                     {neighborhoodData?.metrics && (
-                      <DemographicsCard metrics={neighborhoodData.metrics} />
+                      <DemographicsCard metrics={neighborhoodData.metrics} demographics={neighborhoodData.demographics} />
                     )}
                   </div>
 
@@ -437,6 +433,8 @@ export default function Dashboard({ profile, onReset }: Props) {
             loading={chatLoading}
             isStreaming={isStreaming}
             agentInfo={agentInfo}
+            agentActive={agentActive}
+            agentElapsedMs={agentElapsedMs}
             statusMessage={statusMessage}
           />
         </div>

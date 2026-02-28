@@ -11,7 +11,18 @@ async function fetchJSON<T>(path: string): Promise<T> {
 
 export interface StreamChatCallbacks {
   onStatus?: (content: string) => void
-  onAgents?: (data: { agents_deployed: number; neighborhoods: string[]; data_points: number }) => void
+  onAgents?: (data: {
+    agents_deployed: number
+    neighborhoods: string[]
+    data_points: number
+    agent_summaries?: Array<{
+      name: string
+      data_points: number
+      sources?: string[]
+      regulation_count?: number
+      error?: boolean
+    }>
+  }) => void
   onToken?: (token: string) => void
   onDone?: () => void
   onError?: (error: string) => void

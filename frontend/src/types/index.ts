@@ -110,9 +110,24 @@ export interface LicenseRecord extends Document {
   }
 }
 
+export interface Demographics {
+  total_population?: number
+  median_household_income?: number
+  median_home_value?: number
+  median_gross_rent?: number
+  unemployment_rate?: number
+  median_age?: number
+  total_housing_units?: number
+  renter_pct?: number
+  bachelors_degree?: number
+  masters_degree?: number
+  tracts_counted?: number
+}
+
 export interface NeighborhoodData {
   neighborhood: string
   metrics: NeighborhoodMetrics
+  demographics?: Demographics
   inspections: InspectionRecord[]
   permits: PermitRecord[]
   licenses: LicenseRecord[]

@@ -1,11 +1,19 @@
 import { useState, useRef, useEffect } from 'react'
 import Markdown from 'react-markdown'
 import type { ChatMessage } from '../types/index.ts'
+import AgentSwarm from './AgentSwarm.tsx'
 
 interface AgentInfo {
   agents_deployed: number
   neighborhoods: string[]
   data_points: number
+  agent_summaries?: Array<{
+    name: string
+    data_points: number
+    sources?: string[]
+    regulation_count?: number
+    error?: boolean
+  }>
 }
 
 interface Props {
@@ -14,10 +22,12 @@ interface Props {
   loading: boolean
   isStreaming?: boolean
   agentInfo?: AgentInfo | null
+  agentActive?: boolean
+  agentElapsedMs?: number
   statusMessage?: string
 }
 
-export default function ChatPanel({ messages, onSend, loading, isStreaming, agentInfo, statusMessage }: Props) {
+export default function ChatPanel({ messages, onSend, loading, isStreaming, agentInfo, agentActive, agentElapsedMs, statusMessage }: Props) {
   const [input, setInput] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -86,37 +96,24 @@ export default function ChatPanel({ messages, onSend, loading, isStreaming, agen
           </div>
         ))}
 
-        {/* Agent swarm status */}
+        {/* Agent swarm — inline in chat */}
+        {(agentActive || agentInfo) && (
+          <AgentSwarm agentInfo={agentInfo ?? null} isActive={agentActive ?? false} elapsedMs={agentElapsedMs} />
+        )}
+
+        {/* Status message (e.g. "Synthesizing intelligence report...") */}
         {statusMessage && (
           <div className="flex justify-start">
-            <div className="bg-indigo-900/30 border border-indigo-800/50 rounded-2xl px-4 py-2.5 text-sm text-indigo-300">
+            <div className="bg-white/[0.03] border border-white/[0.06] px-4 py-2.5 text-xs text-white/40 font-mono">
               <div className="flex items-center gap-2">
-                <div className="animate-spin w-3 h-3 border border-indigo-400 border-t-transparent rounded-full" />
+                <div className="animate-spin w-3 h-3 border border-white/30 border-t-transparent rounded-full" />
                 {statusMessage}
               </div>
             </div>
           </div>
         )}
 
-        {/* Agent info card */}
-        {agentInfo && (
-          <div className="bg-gray-800/50 border border-gray-700 rounded-xl px-4 py-3 text-xs space-y-1">
-            <div className="flex items-center gap-2 text-indigo-400 font-medium">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-              {agentInfo.agents_deployed} agents deployed
-            </div>
-            <div className="text-gray-400">
-              Analyzed: {agentInfo.neighborhoods.join(', ')}
-            </div>
-            <div className="text-gray-500">
-              {agentInfo.data_points} data points processed
-            </div>
-          </div>
-        )}
-
-        {loading && !statusMessage && !isStreaming && (
+        {loading && !statusMessage && !isStreaming && !agentActive && (
           <div className="flex justify-start">
             <div className="bg-white/[0.04] border border-white/[0.06] px-4 py-2.5 text-xs text-white/30 font-mono">
               processing...
