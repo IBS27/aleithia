@@ -4,6 +4,8 @@ Cadence: Every 1 hour
 Sources: TomTom Traffic Flow API
 Pattern: async + FallbackChain + gather_with_limit + congestion classification
 """
+from __future__ import annotations
+
 import json
 import os
 from datetime import datetime, timezone
@@ -50,6 +52,15 @@ def _classify_congestion(current_speed: float, free_flow_speed: float) -> str:
 async def _fetch_traffic_point(api_key: str, neighborhood: str, lat: float, lng: float) -> dict | None:
     """Fetch traffic flow data for a single point (neighborhood centroid).
     
+    Uses zoom level 14, which provides fine-grained street detail suitable for Chicago neighborhoods.
+    
+    TomTom zoom levels and tile sizes:
+    - Zoom 12: 38.22 m/tile
+    - Zoom 13: 19.109 m/tile (4891.97 m world - too large for Chicago neighborhoods)
+    - Zoom 14: 9.555 m/tile (OPTIMAL for Chicago neighborhood-scale traffic analysis)
+    - Zoom 15: 4.777 m/tile (very detailed street level)
+    - Zoom 16+: <3 m/tile (address/building level)
+    
     Returns a dict with traffic metrics or None if request fails.
     """
     if not api_key:
@@ -57,14 +68,14 @@ async def _fetch_traffic_point(api_key: str, neighborhood: str, lat: float, lng:
     
     async with httpx.AsyncClient(timeout=15) as client:
         try:
+            # TomTom Flow Segment Data API requires zoom level in path (0-22)
+            # Zoom 14 provides fine-grained street-level traffic visibility
             resp = await client.get(
-                "https://api.tomtom.com/traffic/services/4/flowSegmentData/relative/json",
+                f"https://api.tomtom.com/traffic/services/4/flowSegmentData/relative/14/json",
                 params={
                     "key": api_key,
                     "point": f"{lat},{lng}",
-                    "unit": "MPH",
-                    "thickness": 500,  # 500m radius
-                    "openFlowLevelOfDetail": 2,  # Balance detail vs API cost
+                    "unit": "mph",
                 },
             )
             

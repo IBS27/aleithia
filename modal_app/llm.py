@@ -3,6 +3,7 @@
 Provides streaming and non-streaming text generation for the Alethia reasoning engine.
 Modal features: @modal.cls, @modal.enter, @modal.concurrent, gpu=H100, Image.run_commands()
 """
+from __future__ import annotations
 import uuid
 
 import modal
