@@ -25,7 +25,9 @@ modal secret create alethia-secrets \
   GOOGLE_PLACES_API_KEY=your_key \
   SOCRATA_APP_TOKEN=your_token \
   CENSUS_API_KEY=your_key \
-  SUPERMEMORY_API_KEY=your_key
+  SUPERMEMORY_API_KEY=your_key \
+  OPENAI_API_KEY=your_key \
+  TOMTOM_API_KEY=your_key
 ```
 
 **Note:** Most pipelines work without API keys (using public endpoints or fallback data), but keys improve rate limits and data quality.
@@ -41,6 +43,7 @@ modal secret create alethia-secrets \
 | `SOCRATA_APP_TOKEN` | [data.cityofchicago.org](https://data.cityofchicago.org/profile/edit/developer_settings) | Optional — public access works |
 | `CENSUS_API_KEY` | [census.gov/developers](https://api.census.gov/data/key_signup.html) | Optional — works without key |
 | `SUPERMEMORY_API_KEY` | [supermemory.ai](https://supermemory.ai) | Optional — for RAG + user profiles |
+| `TOMTOM_API_KEY` | [developer.tomtom.com](https://developer.tomtom.com) | Optional — traffic monitoring; free tier available |
 
 ## 4. Deploy Everything
 
@@ -69,6 +72,7 @@ modal run -m modal_app.pipelines.public_data::public_data_ingester
 modal run -m modal_app.pipelines.demographics::demographics_ingester
 modal run -m modal_app.pipelines.realestate::realestate_ingester
 modal run -m modal_app.pipelines.federal_register::federal_register_ingester
+modal run -m modal_app.pipelines.traffic::traffic_ingester
 
 # Run data compression
 modal run -m modal_app.compress::compress_raw_data

@@ -17,6 +17,7 @@ class SourceType(str, Enum):
     DEMOGRAPHICS = "demographics"
     REAL_ESTATE = "real_estate"
     VISION = "vision"
+    TRAFFIC = "traffic"
 
 
 class Document(BaseModel):
@@ -95,6 +96,23 @@ class NeighborhoodVisionAnalysis(BaseModel):
     person_count: int
     vehicle_count: int
     source_video: str = ""  # YouTube URL used for training
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class TrafficFlowDataPoint(BaseModel):
+    """Traffic flow reading at a specific location (neighborhood centroid)."""
+    neighborhood: str
+    lat: float
+    lng: float
+    current_speed: float  # mph
+    free_flow_speed: float
+    congestion_level: str  # "free", "moderate", "heavy", "blocked"
+    current_travel_time: int  # seconds
+    free_flow_travel_time: int
+    confidence: float  # 0-1 confidence in measurement
+    road_closure: bool = False
+    is_anomaly: bool = False
+    severity: str = "normal"  # "normal", "info", "warning", "critical"
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
