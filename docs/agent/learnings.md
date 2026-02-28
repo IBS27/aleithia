@@ -37,16 +37,37 @@
 ### Key Insight
 The social impact narrative is our strongest differentiator. Every demo moment should reinforce: "Big companies have teams of lawyers and analysts. We give that same power to a coffee shop owner." The technical sophistication (Modal, Supermemory) serves this story.
 
-### Demo Script Framework
-1. Meet our user: small business owner opening a restaurant in **Lincoln Park, Chicago**
-2. Onboard: enter business type + neighborhood → Supermemory stores profile
-3. Show the regulatory complexity: permits, zoning, health dept, employment law
-4. Live data: "Today's City Council discussed new restaurant zoning in your ward" (from Legistar pipeline)
-5. Local Pulse: Reddit sentiment about the neighborhood, Yelp review trends, CTA foot traffic data
-6. AI Analysis: Modal runs Llama 3.1 → risk score, action items, personalized recommendations
-7. Chat: "What permits do I need?" → OpenAI generates response from RAG context → streams to chat
-8. Come back later → Supermemory remembers everything → new recommendations based on latest data
-9. Contrast: "A large firm has a team of lawyers and analysts for this. Now you have Alethia."
+### Demo Script: "Weeks to Seconds"
+
+**Setup:** Visible timer on screen. Named persona throughout.
+
+1. **Meet Maria.** She's opening a Mexican restaurant in **Pilsen, Chicago**. She has $80K savings, a family recipe book, and zero idea how to navigate Chicago's regulatory maze.
+
+2. **The Problem (10 seconds).** "Right now, Maria has two choices: spend $5,000-$15,000 on lawyers and consultants who take 2-3 weeks... or guess and hope she doesn't get shut down."
+
+3. **Start the timer.** Maria types: "Mexican restaurant, Pilsen." *Timer starts visibly counting.*
+
+4. **Data floods in (show the pipeline).** "In the background, Alethia is pulling from 9 live data sources — City Council records, building permits, health inspections, Reddit discussions, Yelp trends, Census demographics, commercial real estate listings — all in parallel on Modal."
+
+5. **Timer stops: 4.2 seconds.** "What cost $5K-$15K in billable hours just happened in 4.2 seconds. Free."
+
+6. **Risk score card.** Maria's Pilsen restaurant scores 6.2/10 risk. *Click to expand.* Factor breakdown appears:
+   - "3 new zoning regulations" — 40% weight, HIGH severity (from politics pipeline)
+   - "Rising competition: 12 new restaurant permits in 90 days" — 25% weight (from Socrata)
+   - "Positive neighborhood sentiment" — 15% weight, trending up (from Reddit)
+   - "Foot traffic: HIGH based on CTA data" — 10% weight (from public data)
+   - "Average review rating: 4.1/5 for area restaurants" — 10% weight (from Yelp)
+
+7. **Heatmap toggle.** Switch between three layers on the Chicago map:
+   - Regulatory density (where permits are hardest to get)
+   - Business activity (where new businesses are opening)
+   - Sentiment (what people are saying online)
+
+8. **Vision pipeline demo.** "We didn't just use off-the-shelf models — we built a custom neighborhood detector. Paste a YouTube walking tour of Pilsen, and in 10 minutes our pipeline downloads the video, extracts frames, uses parallel AI agents to label every storefront and pedestrian, trains a custom YOLO model, and gives Maria a visual health score of her neighborhood."
+
+9. **Chat.** Maria asks: "What permits do I need?" → Streaming response with specific permit names, links, estimated costs, and timeline — all sourced from live data.
+
+10. **The closer.** "We're not replacing lawyers — we're giving every small business owner the intelligence that only big companies could afford. Maria's $80K goes into her restaurant, not into figuring out if she's allowed to open one."
 
 ## Domain Knowledge
 

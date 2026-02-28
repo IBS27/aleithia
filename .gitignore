@@ -69,3 +69,10 @@ htmlcov/
 
 # Modal
 .modal/
+
+# Markdown docs — only keep planning docs and CLAUDE.md
+*.md
+!CLAUDE.md
+!docs/plans/*.md
+!data_sources.md
+!docs/SETUP.md
