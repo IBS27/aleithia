@@ -21,6 +21,7 @@ class SourceType(str, Enum):
     VISION = "vision"
     TRAFFIC = "traffic"
     TIKTOK = "tiktok"
+    CCTV = "cctv"
 
 
 class Document(BaseModel):
@@ -100,6 +101,21 @@ class NeighborhoodVisionAnalysis(BaseModel):
     person_count: int
     vehicle_count: int
     source_video: str = ""  # YouTube URL used for training
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class CCTVAnalysis(BaseModel):
+    """Per-frame CCTV analysis from YOLOv8n on IDOT highway cameras."""
+    camera_id: str
+    location: str
+    lat: float
+    lng: float
+    direction: str = ""
+    pedestrians: int = 0
+    vehicles: int = 0
+    bicycles: int = 0
+    density_level: str = "low"  # low / medium / high
+    annotated_image_path: str = ""
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

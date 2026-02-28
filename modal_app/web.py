@@ -304,7 +304,7 @@ async def status():
     """Pipeline monitor — shows function states, doc counts, GPU status."""
     pipeline_status = {}
 
-    for source in ["news", "politics", "public_data", "demographics", "reddit", "reviews", "realestate", "traffic"]:
+    for source in ["news", "politics", "public_data", "demographics", "reddit", "reviews", "realestate", "traffic", "cctv"]:
         source_dir = Path(RAW_DATA_PATH) / source
         if source_dir.exists():
             json_files = list(source_dir.rglob("*.json"))
@@ -340,6 +340,7 @@ async def status():
             "h100_llm": "available",
             "t4_classifier": "available",
             "t4_sentiment": "available",
+            "t4_cctv": "available",
         },
         "costs": costs,
         "total_docs": sum(p.get("doc_count", 0) for p in pipeline_status.values()),
@@ -353,7 +354,7 @@ async def metrics():
     sources_active = 0
     neighborhoods_covered = set()
 
-    for source in ["news", "politics", "public_data", "demographics", "reddit", "reviews", "realestate", "traffic"]:
+    for source in ["news", "politics", "public_data", "demographics", "reddit", "reviews", "realestate", "traffic", "cctv"]:
         source_dir = Path(RAW_DATA_PATH) / source
         if source_dir.exists():
             json_files = list(source_dir.rglob("*.json"))
@@ -382,7 +383,7 @@ async def metrics():
 async def sources():
     """Available data sources with counts."""
     result = {}
-    for source in ["news", "politics", "public_data", "demographics", "reddit", "reviews", "realestate", "traffic"]:
+    for source in ["news", "politics", "public_data", "demographics", "reddit", "reviews", "realestate", "traffic", "cctv"]:
         source_dir = Path(RAW_DATA_PATH) / source
         if source_dir.exists():
             count = len(list(source_dir.rglob("*.json")))
@@ -390,6 +391,93 @@ async def sources():
         else:
             result[source] = {"count": 0, "active": False}
     return result
+
+
+def _load_cctv_for_neighborhood(name: str) -> dict:
+    """Load latest CCTV analysis for cameras near a neighborhood."""
+    from modal_app.common import NEIGHBORHOOD_CENTROIDS
+    import math
+
+    analysis_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "analysis"
+    if not analysis_dir.exists():
+        return {"cameras": [], "avg_pedestrians": 0, "avg_vehicles": 0, "density": "unknown"}
+
+    centroid = NEIGHBORHOOD_CENTROIDS.get(name)
+    if not centroid:
+        return {"cameras": [], "avg_pedestrians": 0, "avg_vehicles": 0, "density": "unknown"}
+
+    clat, clng = centroid
+    cameras = []
+
+    # Group by camera_id, keep latest per camera
+    latest_by_cam: dict[str, dict] = {}
+    for jf in sorted(analysis_dir.glob("*.json"), reverse=True)[:200]:
+        try:
+            data = json.loads(jf.read_text())
+            cam_id = data.get("camera_id", "")
+            if cam_id in latest_by_cam:
+                continue
+            latest_by_cam[cam_id] = data
+        except Exception:
+            continue
+
+    # Filter by distance (< 5km from neighborhood centroid)
+    for cam_id, data in latest_by_cam.items():
+        # Get lat/lng from raw metadata
+        meta_dir = Path(RAW_DATA_PATH) / "cctv"
+        lat, lng = 0.0, 0.0
+        for date_dir in sorted(meta_dir.iterdir(), reverse=True) if meta_dir.exists() else []:
+            if not date_dir.is_dir() or date_dir.name == "frames":
+                continue
+            for mf in date_dir.glob(f"{cam_id}_*.json"):
+                try:
+                    meta = json.loads(mf.read_text())
+                    lat = meta.get("lat", 0)
+                    lng = meta.get("lng", 0)
+                    break
+                except Exception:
+                    continue
+            if lat:
+                break
+
+        if not lat:
+            continue
+
+        # Haversine approximation
+        R = 6371
+        dlat = math.radians(lat - clat)
+        dlon = math.radians(lng - clng)
+        a = (math.sin(dlat / 2) ** 2
+             + math.cos(math.radians(clat)) * math.cos(math.radians(lat))
+             * math.sin(dlon / 2) ** 2)
+        dist = R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+        if dist < 5:
+            cameras.append({
+                "camera_id": cam_id,
+                "lat": lat,
+                "lng": lng,
+                "distance_km": round(dist, 2),
+                "pedestrians": data.get("pedestrians", 0),
+                "vehicles": data.get("vehicles", 0),
+                "bicycles": data.get("bicycles", 0),
+                "density_level": data.get("density_level", "unknown"),
+                "timestamp": data.get("timestamp", ""),
+            })
+
+    if not cameras:
+        return {"cameras": [], "avg_pedestrians": 0, "avg_vehicles": 0, "density": "unknown"}
+
+    avg_p = sum(c["pedestrians"] for c in cameras) / len(cameras)
+    avg_v = sum(c["vehicles"] for c in cameras) / len(cameras)
+    density = "high" if avg_p > 20 else "medium" if avg_p > 5 else "low"
+
+    return {
+        "cameras": cameras[:10],
+        "avg_pedestrians": round(avg_p, 1),
+        "avg_vehicles": round(avg_v, 1),
+        "density": density,
+    }
 
 
 @web_app.get("/neighborhood/{name}")
@@ -455,6 +543,9 @@ async def neighborhood(name: str):
         # Load demographics
         demographics = _aggregate_demographics(name)
 
+        # Load CCTV analysis
+        cctv_analysis = _load_cctv_for_neighborhood(name)
+
         if span:
             span.set_attribute("output.value", json.dumps({
                 "inspections": len(inspections), "permits": len(permits),
@@ -473,6 +564,7 @@ async def neighborhood(name: str):
             "licenses": licenses[:50],
             "news": news_docs[:20],
             "politics": politics_docs[:20],
+            "cctv": cctv_analysis,
             "inspection_stats": {
                 "total": len(inspections),
                 "failed": failed,
@@ -549,7 +641,7 @@ async def summary():
     """City-wide summary stats."""
     total_docs = 0
     source_counts = {}
-    for source in ["news", "politics", "public_data", "demographics", "realestate", "traffic"]:
+    for source in ["news", "politics", "public_data", "demographics", "realestate", "traffic", "cctv"]:
         source_dir = Path(RAW_DATA_PATH) / source
         if source_dir.exists():
             count = len(list(source_dir.rglob("*.json")))
@@ -563,6 +655,45 @@ async def summary():
         "source_counts": source_counts,
         "demographics": demographics,
     }
+
+
+@web_app.get("/cctv/latest")
+async def cctv_latest():
+    """Latest CCTV analysis per camera: counts, density, location."""
+    analysis_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "analysis"
+    if not analysis_dir.exists():
+        return {"cameras": [], "count": 0}
+
+    latest_by_cam: dict[str, dict] = {}
+    for jf in sorted(analysis_dir.glob("*.json"), reverse=True)[:500]:
+        try:
+            data = json.loads(jf.read_text())
+            cam_id = data.get("camera_id", "")
+            if cam_id not in latest_by_cam:
+                latest_by_cam[cam_id] = data
+        except Exception:
+            continue
+
+    cameras = list(latest_by_cam.values())
+    return {"cameras": cameras, "count": len(cameras)}
+
+
+@web_app.get("/cctv/frame/{camera_id}")
+async def cctv_frame(camera_id: str):
+    """Serve latest annotated JPEG for a camera."""
+    from fastapi.responses import Response
+
+    ann_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "annotated"
+    if not ann_dir.exists():
+        return JSONResponse({"error": "no annotated frames"}, status_code=404)
+
+    # Find latest annotated frame for this camera
+    frames = sorted(ann_dir.glob(f"{camera_id}_*.jpg"), reverse=True)
+    if not frames:
+        return JSONResponse({"error": f"no frames for camera {camera_id}"}, status_code=404)
+
+    frame_bytes = frames[0].read_bytes()
+    return Response(content=frame_bytes, media_type="image/jpeg")
 
 
 @web_app.get("/geo")

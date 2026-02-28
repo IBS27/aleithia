@@ -87,7 +87,7 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
             span.set_attribute("agent.business_type", business_type)
 
         # Read local volume data
-        for source in ["public_data", "news", "politics", "demographics"]:
+        for source in ["public_data", "news", "politics", "demographics", "cctv"]:
             source_dir = Path(RAW_DATA_PATH) / source
             if not source_dir.exists():
                 continue
@@ -145,6 +145,33 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
                     sorted(label_counts.items(), key=lambda x: x[1], reverse=True)[:5]
                 )
 
+        # Extract foot traffic metrics from CCTV data
+        if "cctv" in report["findings"]:
+            cctv_samples = report["findings"]["cctv"].get("samples", [])
+            total_peds = 0
+            total_vehs = 0
+            cam_count = 0
+            for sample in cctv_samples:
+                content = sample.get("content", "")
+                # Parse counts from content string: "N pedestrians, M vehicles"
+                import re
+                ped_match = re.search(r"(\d+) pedestrians", content)
+                veh_match = re.search(r"(\d+) vehicles", content)
+                if ped_match:
+                    total_peds += int(ped_match.group(1))
+                    cam_count += 1
+                if veh_match:
+                    total_vehs += int(veh_match.group(1))
+
+            if cam_count > 0:
+                avg_peds = total_peds / cam_count
+                report["findings"]["foot_traffic"] = {
+                    "avg_pedestrians": round(avg_peds, 1),
+                    "avg_vehicles": round(total_vehs / cam_count, 1),
+                    "density_level": "high" if avg_peds > 20 else "medium" if avg_peds > 5 else "low",
+                    "camera_count": cam_count,
+                }
+
         # Query Supermemory for additional context
         api_key = os.environ.get("SUPERMEMORY_API_KEY", "")
         if api_key:
@@ -153,7 +180,7 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
                 sm = SupermemoryClient(api_key)
                 results = await sm.search(
                     query=f"{business_type} in {neighborhood} Chicago permits zoning competition",
-                    container_tags=["chicago_data", "chicago_news", "chicago_public_data", "chicago_reddit", "chicago_reviews", "chicago_politics"],
+                    container_tags=["chicago_data", "chicago_news", "chicago_public_data", "chicago_reddit", "chicago_reviews", "chicago_politics", "chicago_cctv"],
                     limit=10,
                 )
                 report["findings"]["supermemory"] = {
