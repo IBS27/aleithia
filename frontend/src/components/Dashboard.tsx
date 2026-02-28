@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { SignedIn, SignedOut, SignInButton, SignUpButton, useClerk, useUser } from '@clerk/clerk-react'
 import type { UserProfile, NeighborhoodData, DataSources, ChatMessage, RiskScore } from '../types/index.ts'
 import { api, streamChat } from '../api.ts'
@@ -135,6 +135,7 @@ export default function Dashboard({ profile, onReset }: Props) {
   const [agentElapsedMs, setAgentElapsedMs] = useState<number | undefined>(undefined)
   const [processStage, setProcessStage] = useState<ProcessStage>('idle')
   const [chatQuestion, setChatQuestion] = useState('')
+  const processLogs = useRef<string[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
@@ -179,6 +180,7 @@ export default function Dashboard({ profile, onReset }: Props) {
     setStatusMessage('')
     setProcessStage('deploying')
     setChatQuestion(message)
+    processLogs.current = [`[${new Date().toISOString()}] query: ${message}`]
     const startTime = Date.now()
 
     // Add empty assistant message for streaming
@@ -189,6 +191,7 @@ export default function Dashboard({ profile, onReset }: Props) {
       await streamChat(message, profile, {
         onStatus: (content) => {
           setStatusMessage(content)
+          processLogs.current.push(`[+${Date.now() - startTime}ms] status: ${content}`)
           if (content.toLowerCase().includes('synth')) {
             setProcessStage('synthesizing')
           }
@@ -198,6 +201,12 @@ export default function Dashboard({ profile, onReset }: Props) {
           setAgentActive(false)
           setAgentElapsedMs(Date.now() - startTime)
           setProcessStage('agents_complete')
+          processLogs.current.push(`[+${Date.now() - startTime}ms] agents: ${data.agents_deployed} deployed, ${data.data_points} pts, neighborhoods=[${data.neighborhoods.join(', ')}]`)
+          if (data.agent_summaries) {
+            for (const a of data.agent_summaries) {
+              processLogs.current.push(`  agent ${a.name}: ${a.data_points} pts${a.sources ? ` sources=[${a.sources.join(',')}]` : ''}${a.regulation_count ? ` regs=${a.regulation_count}` : ''}${a.error ? ' ERROR' : ''}`)
+            }
+          }
         },
         onToken: (token) => {
           setStatusMessage('')
@@ -215,6 +224,7 @@ export default function Dashboard({ profile, onReset }: Props) {
           setIsStreaming(false)
           setChatLoading(false)
           setProcessStage('complete')
+          processLogs.current.push(`[+${Date.now() - startTime}ms] done, total=${Date.now() - startTime}ms`)
 
           if (user) {
             api.saveUserSettings(user.id, profile.business_type, profile.neighborhood).catch(() => {})
@@ -232,6 +242,7 @@ export default function Dashboard({ profile, onReset }: Props) {
           setAgentActive(false)
           setStatusMessage('')
           setProcessStage('complete')
+          processLogs.current.push(`[+${Date.now() - startTime}ms] error: ${_errorMsg} (local fallback)`)
 
           const nb = profile.neighborhood
           const biz = profile.business_type.toLowerCase()
@@ -485,6 +496,7 @@ export default function Dashboard({ profile, onReset }: Props) {
             statusMessage={statusMessage}
             processStage={processStage}
             chatQuestion={chatQuestion}
+            processLogs={processLogs.current}
           />
         </div>
       </div>

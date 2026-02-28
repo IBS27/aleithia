@@ -28,9 +28,10 @@ interface Props {
   statusMessage?: string
   processStage?: ProcessStage
   chatQuestion?: string
+  processLogs?: string[]
 }
 
-export default function ChatPanel({ messages, onSend, loading, isStreaming, agentInfo, agentActive, agentElapsedMs, statusMessage, processStage, chatQuestion }: Props) {
+export default function ChatPanel({ messages, onSend, loading, isStreaming, agentInfo, agentActive, agentElapsedMs, statusMessage, processStage, chatQuestion, processLogs }: Props) {
   const [input, setInput] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -106,6 +107,7 @@ export default function ChatPanel({ messages, onSend, loading, isStreaming, agen
             question={chatQuestion}
             agentInfo={agentInfo ?? null}
             elapsedMs={agentElapsedMs}
+            logs={processLogs}
           />
         )}
 
