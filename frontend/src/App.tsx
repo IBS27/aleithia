@@ -9,6 +9,7 @@ import Dashboard from './components/Dashboard.tsx'
 import ProfilePage from './components/ProfilePage.tsx'
 import Drawer from './components/Drawer.tsx'
 import WhyUs from './components/WhyUs.tsx'
+import LeadAnalystPage from './components/LeadAnalystPage.tsx'
 
 // Lazy-load pages that import @supermemory/memory-graph (its CSS has a global
 // button reset that conflicts with Tailwind's bg-white utility)
@@ -70,6 +71,7 @@ function App() {
     <Routes>
       <Route path="/how-it-works" element={<Suspense fallback={<div className="min-h-screen bg-[#06080d]" />}><HowItWorks onBack={() => navigate('/')} /></Suspense>} />
       <Route path="/why-us" element={<WhyUs onBack={() => navigate('/')} />} />
+      <Route path="/lead-analyst" element={<LeadAnalystPage onBack={() => navigate('/')} />} />
       <Route path="/memory-graph" element={<Suspense fallback={<div className="min-h-screen bg-[#06080d]" />}><MemoryGraphPage onBack={() => navigate('/')} /></Suspense>} />
       <Route
         path="/profile"

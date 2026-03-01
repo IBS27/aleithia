@@ -1,4 +1,5 @@
 import { Suspense, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { SignedIn, SignedOut, SignInButton, SignUpButton, useUser } from '@clerk/clerk-react'
 import Spline from '@splinetool/react-spline'
 import BlurText from './BlurText'
@@ -88,6 +89,7 @@ const MAX_LOAD_TIME_MS = 5000
 
 export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }: Props) {
   const { user } = useUser()
+  const navigate = useNavigate()
   const [isReady, setIsReady] = useState(false)
   const [heroLoaded, setHeroLoaded] = useState(false)
   const [minTimeElapsed, setMinTimeElapsed] = useState(false)
@@ -259,6 +261,105 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
         />
       </section>
 
+      {/* ── Powered By — Technology Stack ── */}
+      <section className="border-t border-white/[0.04] py-20">
+        <div className="max-w-6xl mx-auto px-10">
+          <p className="text-xs font-mono uppercase tracking-[0.3em] text-white/25 mb-4 text-center">
+            Technology Stack
+          </p>
+          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-4 text-center">
+            Built on best-in-class infrastructure.
+          </h2>
+          <p className="text-sm text-white/40 mb-14 text-center max-w-2xl mx-auto">
+            33+ serverless functions, 5 GPU model classes, 14 data pipelines — orchestrated across these technologies.
+          </p>
+
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {[
+              {
+                logo: logoImg(SPONSOR_LOGO_SVGS.modal, 'Modal'),
+                name: 'Modal',
+                role: 'Compute Platform',
+                desc: '33+ serverless functions. H100 & T4 GPUs, cron scheduling, volumes, queues, sandboxes.',
+                color: 'border-green-500/20 hover:border-green-500/40',
+                glow: 'hover:shadow-[0_0_30px_-5px_rgba(34,197,94,0.15)]',
+              },
+              {
+                logo: logoImg(SPONSOR_LOGO_SVGS.supermemory, 'SuperMemory'),
+                name: 'SuperMemory',
+                role: 'RAG Memory',
+                desc: 'Long-term memory layer. User profiles, document sync, semantic retrieval for agent context.',
+                color: 'border-blue-500/20 hover:border-blue-500/40',
+                glow: 'hover:shadow-[0_0_30px_-5px_rgba(59,130,246,0.15)]',
+              },
+              {
+                logo: <ActianVectorAILogo />,
+                name: 'Actian VectorAI DB',
+                role: 'Vector Search',
+                desc: 'HNSW-indexed 384-dim embeddings. Sub-15ms semantic retrieval across 15 collections.',
+                color: 'border-purple-500/20 hover:border-purple-500/40',
+                glow: 'hover:shadow-[0_0_30px_-5px_rgba(168,85,247,0.15)]',
+              },
+              {
+                logo: <ArizeAILogo />,
+                name: 'Arize AI',
+                role: 'Observability',
+                desc: 'OpenTelemetry tracing. Connected spans across web, agents, LLM, and VectorDB containers.',
+                color: 'border-orange-500/20 hover:border-orange-500/40',
+                glow: 'hover:shadow-[0_0_30px_-5px_rgba(249,115,22,0.15)]',
+              },
+              {
+                logo: <OpenAILogo />,
+                name: 'OpenAI GPT-4o',
+                role: 'Hybrid Intelligence',
+                desc: 'Deep Dive code gen, follow-up suggestions, regulatory impact summaries, vision assessment.',
+                color: 'border-white/10 hover:border-white/30',
+                glow: 'hover:shadow-[0_0_30px_-5px_rgba(255,255,255,0.1)]',
+              },
+              {
+                logo: <ModelLogo name="Qwen3-8B" />,
+                name: 'Qwen3-8B AWQ',
+                role: 'Self-Hosted LLM',
+                desc: 'INT4 quantized on H100 via vLLM. 20 concurrent inputs. Streaming chat & intelligence briefs.',
+                color: 'border-violet-500/20 hover:border-violet-500/40',
+                glow: 'hover:shadow-[0_0_30px_-5px_rgba(139,92,246,0.15)]',
+              },
+              {
+                logo: <HfLogoWithName name="BART" />,
+                name: 'BART-large-MNLI',
+                role: 'Zero-Shot Classifier',
+                desc: '406M param classifier on T4. Categorizes docs into regulatory, economic, safety, community.',
+                color: 'border-yellow-500/20 hover:border-yellow-500/40',
+                glow: 'hover:shadow-[0_0_30px_-5px_rgba(234,179,8,0.15)]',
+              },
+              {
+                logo: <ModelLogo name="RoBERTa" />,
+                name: 'RoBERTa-Sentiment',
+                role: 'Sentiment Analyzer',
+                desc: 'Twitter-trained sentiment model on T4. Scores every document positive/negative/neutral.',
+                color: 'border-cyan-500/20 hover:border-cyan-500/40',
+                glow: 'hover:shadow-[0_0_30px_-5px_rgba(6,182,212,0.15)]',
+              },
+            ].map(t => (
+              <div
+                key={t.name}
+                className={`group border ${t.color} ${t.glow} rounded-lg p-5 bg-white/[0.02] transition-all duration-300`}
+              >
+                <div className="flex items-center gap-3 mb-3 text-white/50 group-hover:text-white/80 transition-colors [&_img]:h-5 [&_img]:w-auto [&_img]:object-contain [&_svg]:h-5 [&_svg]:w-auto [&_svg]:shrink-0">
+                  {t.logo}
+                </div>
+                <p className="text-[10px] font-mono uppercase tracking-wider text-white/30 mb-2">
+                  {t.role}
+                </p>
+                <p className="text-xs text-white/50 leading-relaxed group-hover:text-white/60 transition-colors">
+                  {t.desc}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ── City Graph Globe ── */}
       <section className="relative py-20 overflow-hidden border-t border-white/[0.04] isolate" style={{ minHeight: 500 }}>
         <div className="relative z-10 max-w-7xl mx-auto px-10">
@@ -346,7 +447,7 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
                 spawn 4 parallel worker agents into E2B cloud sandboxes.
                 Findings are synthesized into a single actionable brief — autonomously, every 5 minutes.
               </p>
-              <div className="flex items-center gap-6 text-[10px] font-mono text-white/25 uppercase tracking-wider">
+              <div className="flex items-center gap-6 text-[10px] font-mono text-white/25 uppercase tracking-wider mb-6">
                 <span>Qwen3-8B</span>
                 <span className="text-white/10">|</span>
                 <span>E2B Sandboxes</span>
@@ -355,6 +456,12 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
                 <span className="text-white/10">|</span>
                 <span>5-min cron</span>
               </div>
+              <button
+                onClick={() => navigate('/lead-analyst')}
+                className="px-6 py-2.5 text-xs font-medium border border-violet-500/30 text-violet-300/80 hover:text-violet-200 hover:border-violet-400/50 transition-colors cursor-pointer"
+              >
+                Technical Deep Dive &rarr;
+              </button>
             </div>
 
             {/* Right: mini agent tree diagram */}
@@ -419,6 +526,126 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── System Architecture — Connection Chain ── */}
+      <section className="border-t border-white/[0.04] py-20">
+        <div className="max-w-5xl mx-auto px-10">
+          <p className="text-xs font-mono uppercase tracking-[0.25em] text-cyan-400/60 mb-4">
+            Zero Local Infrastructure
+          </p>
+          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-5">
+            Fully serverless. Nothing runs on your machine.
+          </h2>
+          <p className="text-base text-white/45 leading-relaxed mb-12 max-w-2xl">
+            The entire backend — vector database, GPU inference, data pipelines — runs as serverless
+            containers on Modal. The frontend on Vercel talks to a single API gateway. No servers to
+            manage, no databases to host, no GPUs to provision.
+          </p>
+
+          {/* Connection chain diagram */}
+          <div className="flex flex-col items-center gap-0">
+            {/* Row 1: Vercel */}
+            <div className="border border-white/[0.1] bg-white/[0.03] px-8 py-4 text-center max-w-md w-full">
+              <div className="flex items-center justify-center gap-3 mb-1.5">
+                <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                <span className="text-sm font-semibold text-white">Vercel</span>
+              </div>
+              <p className="text-[10px] font-mono text-white/25 uppercase tracking-wider">
+                React 19 + TypeScript Frontend
+              </p>
+              <p className="text-[9px] font-mono text-white/15 mt-1">
+                Static assets &middot; Edge CDN &middot; Zero compute
+              </p>
+            </div>
+
+            {/* Arrow */}
+            <div className="flex flex-col items-center">
+              <div className="w-px h-4 bg-white/[0.1]" />
+              <span className="text-[8px] font-mono text-white/20 px-2 py-0.5 border border-white/[0.06] bg-white/[0.02]">HTTPS</span>
+              <div className="w-px h-4 bg-white/[0.1]" />
+            </div>
+
+            {/* Row 2: Modal Web API */}
+            <div className="border border-cyan-500/20 bg-cyan-500/[0.04] px-8 py-4 text-center max-w-md w-full">
+              <div className="flex items-center justify-center gap-3 mb-1.5">
+                <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                <span className="text-sm font-semibold text-white">Modal Web API</span>
+              </div>
+              <p className="text-[10px] font-mono text-white/25 uppercase tracking-wider">
+                FastAPI &middot; 43 Endpoints &middot; @modal.asgi_app()
+              </p>
+              <p className="text-[9px] font-mono text-white/15 mt-1">
+                /chat &middot; /neighborhood &middot; /analyze &middot; /brief
+              </p>
+            </div>
+
+            {/* Branch arrow */}
+            <div className="w-px h-4 bg-white/[0.08]" />
+            <div className="flex flex-col items-center">
+              <span className="text-[8px] font-mono text-white/20 px-2 py-0.5 border border-white/[0.06] bg-white/[0.02]">Modal RPC</span>
+            </div>
+            <div className="relative w-full max-w-lg h-6">
+              <div className="absolute top-0 left-[15%] right-[15%] h-px bg-white/[0.08]" />
+              {[0, 1, 2].map(i => (
+                <div key={i} className="absolute top-0 h-full w-px bg-white/[0.08]" style={{ left: `${15 + i * 35}%` }} />
+              ))}
+            </div>
+
+            {/* Row 3: Internal services */}
+            <div className="grid grid-cols-3 gap-3 w-full max-w-lg">
+              <div className="border border-purple-500/20 bg-purple-500/[0.04] p-3 text-center">
+                <span className="text-[10px] font-mono font-bold text-purple-300 uppercase tracking-wider">
+                  VectorAI DB
+                </span>
+                <p className="text-[8px] font-mono text-white/20 mt-1">384-dim HNSW</p>
+                <p className="text-[8px] font-mono text-white/15">15 collections</p>
+                <p className="text-[7px] font-mono text-purple-400/40 mt-1">min_containers=1</p>
+              </div>
+              <div className="border border-violet-500/20 bg-violet-500/[0.04] p-3 text-center">
+                <span className="text-[10px] font-mono font-bold text-violet-300 uppercase tracking-wider">
+                  Qwen3-8B
+                </span>
+                <p className="text-[8px] font-mono text-white/20 mt-1">H100 &middot; vLLM</p>
+                <p className="text-[8px] font-mono text-white/15">INT4 AWQ</p>
+                <p className="text-[7px] font-mono text-violet-400/40 mt-1">min_containers=1</p>
+              </div>
+              <div className="border border-amber-500/20 bg-amber-500/[0.04] p-3 text-center">
+                <span className="text-[10px] font-mono font-bold text-amber-300 uppercase tracking-wider">
+                  Classifiers
+                </span>
+                <p className="text-[8px] font-mono text-white/20 mt-1">T4 &middot; BART</p>
+                <p className="text-[8px] font-mono text-white/15">RoBERTa</p>
+                <p className="text-[7px] font-mono text-amber-400/40 mt-1">@modal.batched</p>
+              </div>
+            </div>
+
+            {/* Bottom note */}
+            <div className="mt-8 border border-white/[0.06] bg-white/[0.02] px-6 py-3 max-w-lg w-full">
+              <div className="flex items-start gap-3">
+                <span className="text-white/20 text-xs mt-0.5">*</span>
+                <p className="text-[11px] text-white/30 leading-relaxed">
+                  VectorAI DB runs as a <span className="text-white/50">Modal container</span> with
+                  the server process started at boot. Data persists on a <span className="text-white/50">Modal Volume</span> at{' '}
+                  <span className="font-mono text-[10px] text-white/40">/data/vectordb</span>. All
+                  inter-service calls use Modal's internal RPC — no public network traffic between
+                  services.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Tech tags */}
+          <div className="flex items-center justify-center gap-6 text-[10px] font-mono text-white/25 uppercase tracking-wider mt-10">
+            <span>Vercel Edge</span>
+            <span className="text-white/10">|</span>
+            <span>Modal Serverless</span>
+            <span className="text-white/10">|</span>
+            <span>Zero Ops</span>
+            <span className="text-white/10">|</span>
+            <span>Internal RPC</span>
           </div>
         </div>
       </section>
