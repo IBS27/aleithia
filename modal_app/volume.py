@@ -133,6 +133,20 @@ parking_image = (
     .add_local_python_source("modal_app", copy=True)
 )
 
+# VectorAI DB: Actian vector database + embedding model + Python client
+vectordb_image = (
+    modal.Image.from_registry("williamimoh/actian-vectorai-db:1.0b")
+    .pip_install(
+        "sentence-transformers==3.3.1",
+        "torch>=2.4.0",
+        "grpcio>=1.60.0",
+        "httpx==0.27.0",
+        "pydantic==2.9.0",
+        *_arize_packages,
+    )
+    .add_local_python_source("modal_app", copy=True)
+)
+
 # TikTok scraper: Playwright + Kernel cloud browser
 tiktok_image = (
     modal.Image.debian_slim(python_version="3.12")
