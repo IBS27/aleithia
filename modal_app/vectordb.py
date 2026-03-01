@@ -56,3 +56,223 @@ def build_embed_text(doc: dict) -> str:
     title = doc.get("title", "")
     content = doc.get("content", "")[:EMBED_CONTENT_LIMIT]
     return f"{title} {content}".strip()
+
+
+# ---------------------------------------------------------------------------
+# VectorAI DB Modal Service
+# ---------------------------------------------------------------------------
+
+import modal
+
+from modal_app.volume import app, volume, vectordb_image
+
+
+VECTORDB_DATA_PATH = "/data/vectordb"
+
+# Source-specific collections + unified enriched collection
+COLLECTIONS = [
+    "news", "politics", "reddit", "reviews", "realestate",
+    "federal_register", "tiktok", "demographics", "public_data",
+    "traffic", "cctv", "vision", "parking", "worldpop", "enriched",
+]
+
+
+@app.cls(
+    image=vectordb_image,
+    volumes={"/data": volume},
+    secrets=[modal.Secret.from_name("arize-secrets")],
+    min_containers=1,
+    scaledown_window=300,
+    timeout=120,
+)
+class VectorDBService:
+    """Actian VectorAI DB service with sentence-transformer embeddings.
+
+    Manages the VectorAI DB process, creates collections, and provides
+    embed/upsert/search methods for the agent swarm and enrichment pipeline.
+    """
+
+    @modal.enter()
+    def startup(self):
+        """Start VectorAI DB process and connect client."""
+        import subprocess
+        from pathlib import Path
+        from sentence_transformers import SentenceTransformer
+
+        from modal_app.instrumentation import init_tracing, get_tracer
+        init_tracing()
+        self._tracer = get_tracer("alethia.vectordb")
+
+        # Ensure data directory exists
+        Path(VECTORDB_DATA_PATH).mkdir(parents=True, exist_ok=True)
+
+        # Start VectorAI DB server process (background)
+        self._server_proc = subprocess.Popen(
+            ["vectoraidb", "--data-dir", VECTORDB_DATA_PATH, "--port", "50051"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        # Load embedding model
+        self._embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+        # Wait for server to be ready, then connect
+        import time
+        from cortex.client import CortexClient
+        from cortex.models import DistanceMetric
+
+        for attempt in range(30):
+            try:
+                self._client = CortexClient(host="localhost", port=50051)
+                self._client.health_check()
+                break
+            except Exception:
+                time.sleep(1)
+        else:
+            raise RuntimeError("VectorAI DB failed to start within 30s")
+
+        # Create collections if they don't exist
+        for collection_name in COLLECTIONS:
+            if not self._client.has_collection(collection_name):
+                self._client.create_collection(
+                    name=collection_name,
+                    dimension=VECTOR_DIMENSION,
+                    distance_metric=DistanceMetric.COSINE,
+                )
+
+        # Mark as healthy
+        global _vectordb_healthy
+        _vectordb_healthy = True
+        print(f"VectorAI DB ready: {len(COLLECTIONS)} collections initialized")
+
+    @modal.method()
+    def embed_text(self, text: str) -> list[float]:
+        """Embed text using all-MiniLM-L6-v2. Returns 384-dim float vector."""
+        span_ctx = self._tracer.start_as_current_span("vectordb.embed") if self._tracer else None
+        span = span_ctx.__enter__() if span_ctx else None
+        try:
+            embedding = self._embedder.encode(text, normalize_embeddings=True)
+            if span:
+                span.set_attribute("vectordb.text_length", len(text))
+            return embedding.tolist()
+        finally:
+            if span_ctx:
+                span_ctx.__exit__(None, None, None)
+
+    @modal.method()
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Batch embed texts. Returns list of 384-dim float vectors."""
+        span_ctx = self._tracer.start_as_current_span("vectordb.embed_batch") if self._tracer else None
+        span = span_ctx.__enter__() if span_ctx else None
+        try:
+            embeddings = self._embedder.encode(texts, normalize_embeddings=True, batch_size=32)
+            if span:
+                span.set_attribute("vectordb.batch_size", len(texts))
+            return [e.tolist() for e in embeddings]
+        finally:
+            if span_ctx:
+                span_ctx.__exit__(None, None, None)
+
+    @modal.method()
+    def upsert_doc(self, doc_id: str, embedding: list[float], payload: dict, collection: str = "enriched"):
+        """Upsert a single document vector + payload into a collection."""
+        span_ctx = self._tracer.start_as_current_span("vectordb.upsert") if self._tracer else None
+        span = span_ctx.__enter__() if span_ctx else None
+        try:
+            self._client.upsert(
+                collection=collection,
+                id=doc_id,
+                vector=embedding,
+                payload=payload,
+            )
+            if span:
+                span.set_attribute("vectordb.collection", collection)
+                span.set_attribute("vectordb.doc_id", doc_id)
+        finally:
+            if span_ctx:
+                span_ctx.__exit__(None, None, None)
+
+    @modal.method()
+    def batch_upsert_docs(self, doc_ids: list[str], embeddings: list[list[float]], payloads: list[dict], collection: str = "enriched"):
+        """Batch upsert documents into a collection."""
+        span_ctx = self._tracer.start_as_current_span("vectordb.batch_upsert") if self._tracer else None
+        span = span_ctx.__enter__() if span_ctx else None
+        try:
+            self._client.batch_upsert(
+                collection=collection,
+                ids=doc_ids,
+                vectors=embeddings,
+                payloads=payloads,
+            )
+            self._client.flush(collection)
+            if span:
+                span.set_attribute("vectordb.collection", collection)
+                span.set_attribute("vectordb.batch_size", len(doc_ids))
+        finally:
+            if span_ctx:
+                span_ctx.__exit__(None, None, None)
+
+    @modal.method()
+    def search(self, query_embedding: list[float], collection: str = "enriched", top_k: int = 20, filter_dict: dict | None = None) -> list[dict]:
+        """Semantic search with optional payload filters.
+
+        Args:
+            query_embedding: 384-dim query vector
+            collection: Collection name to search
+            top_k: Number of results to return
+            filter_dict: Optional filter spec, e.g. {"neighborhood": "Loop"}
+
+        Returns:
+            List of dicts with keys: id, score, payload
+        """
+        span_ctx = self._tracer.start_as_current_span("vectordb.search") if self._tracer else None
+        span = span_ctx.__enter__() if span_ctx else None
+        try:
+            if filter_dict:
+                from cortex.filters import Filter, Field
+                f = Filter()
+                for key, value in filter_dict.items():
+                    f = f.must(Field(key).eq(value))
+                results = self._client.search_filtered(collection, query_embedding, f, top_k=top_k)
+            else:
+                results = self._client.search(collection, query_embedding, top_k=top_k)
+
+            output = [
+                {"id": r.id, "score": r.score, "payload": r.payload}
+                for r in results
+            ]
+            if span:
+                span.set_attribute("vectordb.collection", collection)
+                span.set_attribute("vectordb.top_k", top_k)
+                span.set_attribute("vectordb.results_count", len(output))
+                span.set_attribute("vectordb.has_filter", bool(filter_dict))
+            return output
+        finally:
+            if span_ctx:
+                span_ctx.__exit__(None, None, None)
+
+    @modal.method()
+    def search_neighborhood(self, query_embedding: list[float], neighborhood: str, top_k: int = 50) -> list[dict]:
+        """Convenience: search enriched collection filtered by neighborhood."""
+        return self.search.local(
+            query_embedding=query_embedding,
+            collection="enriched",
+            top_k=top_k,
+            filter_dict={"neighborhood": neighborhood},
+        )
+
+    @modal.method()
+    def health_check(self) -> dict:
+        """Return health status and collection stats."""
+        try:
+            self._client.health_check()
+            stats = {}
+            for name in COLLECTIONS:
+                try:
+                    count = self._client.count(name)
+                    stats[name] = count
+                except Exception:
+                    stats[name] = -1
+            return {"status": "healthy", "collections": stats}
+        except Exception as e:
+            return {"status": "unhealthy", "error": str(e)}
