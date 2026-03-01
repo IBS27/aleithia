@@ -232,22 +232,22 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
   */
 
   const refreshData = async () => {
-    try {
-      const [nbData, srcData] = await Promise.all([
+      try {
+        const [nbData, srcData] = await Promise.all([
         api.neighborhood(profile.neighborhood, profile.business_type),
-        api.sources(),
-      ])
-      setNeighborhoodData(nbData)
-      setSources(srcData)
-      setRiskScore(computeRiskScore(nbData, profile))
-      setLoading(false)
+          api.sources(),
+        ])
+        setNeighborhoodData(nbData)
+        setSources(srcData)
+        setRiskScore(computeRiskScore(nbData, profile))
+        setLoading(false)
       // Fetch trends (non-blocking)
       fetchTrends(profile.neighborhood).then(t => setTrends(t)).catch(() => {})
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load data')
-      setLoading(false)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load data')
+        setLoading(false)
+      }
     }
-  }
 
   useEffect(() => {
     let cancelled = false
@@ -302,8 +302,8 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
   /*
     Legacy ChatPanel handler intentionally commented out (not deleted):
     const handleChat = async (message: string) => {
-      setMessages(prev => [...prev, { role: 'user', content: message, timestamp: new Date() }])
-      setChatLoading(true)
+    setMessages(prev => [...prev, { role: 'user', content: message, timestamp: new Date() }])
+    setChatLoading(true)
       setAgentActive(true)
       setAgentInfo(null)
       setStatusMessage('')
@@ -383,47 +383,47 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
             setProcessStage('complete')
             processLogs.current.push(`[+${Date.now() - startTime}ms] error: ${_errorMsg} (local fallback)`)
 
-            const nb = profile.neighborhood
-            const biz = profile.business_type.toLowerCase()
+      const nb = profile.neighborhood
+      const biz = profile.business_type.toLowerCase()
             let response = ''
 
-            if (message.toLowerCase().includes('permit')) {
-              const permits = neighborhoodData?.permits || []
-              response = `Based on ${permits.length} recent permits in ${nb}:\n\n`
-              if (permits.length > 0) {
-                response += permits.slice(0, 3).map(p => {
-                  const r = p.metadata?.raw_record || {} as Record<string, string>
-                  return `- ${r.work_type || 'Permit'}: ${r.street_number || ''} ${r.street_direction || ''} ${r.street_name || ''} (${r.permit_status || 'Active'})`
-                }).join('\n')
-              }
-              response += `\n\nFor a ${biz}, you'll typically need a Limited Business License and applicable permits for your specific operation.`
-            } else if (message.toLowerCase().includes('inspection') || message.toLowerCase().includes('health')) {
-              const stats = neighborhoodData?.inspection_stats || { total: 0, failed: 0, passed: 0 }
-              response = `Food inspection data for ${nb}:\n\n`
+      if (message.toLowerCase().includes('permit')) {
+        const permits = neighborhoodData?.permits || []
+        response = `Based on ${permits.length} recent permits in ${nb}:\n\n`
+        if (permits.length > 0) {
+          response += permits.slice(0, 3).map(p => {
+            const r = p.metadata?.raw_record || {} as Record<string, string>
+            return `- ${r.work_type || 'Permit'}: ${r.street_number || ''} ${r.street_direction || ''} ${r.street_name || ''} (${r.permit_status || 'Active'})`
+          }).join('\n')
+        }
+        response += `\n\nFor a ${biz}, you'll typically need a Limited Business License and applicable permits for your specific operation.`
+      } else if (message.toLowerCase().includes('inspection') || message.toLowerCase().includes('health')) {
+        const stats = neighborhoodData?.inspection_stats || { total: 0, failed: 0, passed: 0 }
+        response = `Food inspection data for ${nb}:\n\n`
               response += `- **Total inspections:** ${stats.total}\n- **Passed:** ${stats.passed}\n- **Failed:** ${stats.failed}\n`
-              if (stats.total > 0) {
+        if (stats.total > 0) {
                 response += `- **Pass rate:** ${Math.round((stats.passed / stats.total) * 100)}%\n`
-              }
-              response += `\nThis data helps gauge the regulatory environment you'll be operating in.`
-            } else if (message.toLowerCase().includes('competition') || message.toLowerCase().includes('business')) {
-              const licenses = neighborhoodData?.licenses || []
+        }
+        response += `\nThis data helps gauge the regulatory environment you'll be operating in.`
+      } else if (message.toLowerCase().includes('competition') || message.toLowerCase().includes('business')) {
+        const licenses = neighborhoodData?.licenses || []
               response = `There are **${licenses.length}** active business licenses in ${nb}.\n\n`
-              if (licenses.length > 0) {
-                response += 'Nearby businesses include:\n'
-                response += licenses.slice(0, 5).map(l => {
-                  const r = l.metadata?.raw_record || {} as Record<string, string>
-                  return `- ${r.doing_business_as_name || r.legal_name || 'Unknown'} (${r.license_description || 'Business'})`
-                }).join('\n')
-              }
-            } else {
-              const total = (neighborhoodData?.inspection_stats.total || 0) + (neighborhoodData?.permit_count || 0) + (neighborhoodData?.license_count || 0)
+        if (licenses.length > 0) {
+          response += 'Nearby businesses include:\n'
+          response += licenses.slice(0, 5).map(l => {
+            const r = l.metadata?.raw_record || {} as Record<string, string>
+            return `- ${r.doing_business_as_name || r.legal_name || 'Unknown'} (${r.license_description || 'Business'})`
+          }).join('\n')
+        }
+      } else {
+        const total = (neighborhoodData?.inspection_stats.total || 0) + (neighborhoodData?.permit_count || 0) + (neighborhoodData?.license_count || 0)
               response = `Here's what I found about **${nb}** for a ${biz}:\n\n`
               response += `We analyzed **${total}** data points across food inspections, building permits, and business licenses.\n\n`
-              if (riskScore) {
+        if (riskScore) {
                 response += `**Risk score:** ${riskScore.overall_score}/10 (${riskScore.overall_score <= 4 ? 'low' : riskScore.overall_score <= 7 ? 'moderate' : 'high'} risk)\n\n`
-              }
-              response += 'Ask me about specific topics: permits, inspections, competition, or zoning.'
-            }
+        }
+        response += 'Ask me about specific topics: permits, inspections, competition, or zoning.'
+      }
 
             processLogs.current.push(`\n--- response (local fallback) ---\n${response}`)
             setMessages(prev => {
@@ -436,11 +436,11 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
         }, userId)
       } catch {
         setIsStreaming(false)
-        setChatLoading(false)
+      setChatLoading(false)
         setAgentActive(false)
         setProcessStage('complete')
       }
-    }
+  }
   */
 
   const allTabs: { key: Tab; label: string; count?: number; isEmpty?: () => boolean }[] = [
@@ -602,7 +602,7 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
                   {/* HUD quadrant grid: Map + Risk | Demographics */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="h-[280px] min-h-0">
-                      <MapView activeNeighborhood={profile.neighborhood} />
+                    <MapView activeNeighborhood={profile.neighborhood} />
                     </div>
                     <div className="min-h-0">
                       {riskScore ? <RiskCard score={riskScore} /> : <div className="h-full border border-white/[0.06] bg-white/[0.01] p-6 flex items-center justify-center"><span className="text-[10px] font-mono text-white/20">Loading risk assessment</span></div>}
@@ -1124,21 +1124,23 @@ function VaultTab({
 }) {
   // Rough estimate: 2 min per doc manually vs seconds with AI
   const hoursReclaimed = dataPoints ? Math.round((dataPoints * 2) / 60 * 10) / 10 : 0
-  const manualMinutes = dataPoints * 2
-  const aiMinutes = Math.max(1, Math.round(dataPoints * 0.05))
 
   // Data volume by source for charts
+  // Theme-aligned bar colors: blue accent (#2B95D6) and white, alternating
+  const barColors = ['bg-[#2B95D6]/55', 'bg-white/45', 'bg-[#2B95D6]/45', 'bg-white/40', 'bg-[#2B95D6]/50', 'bg-white/35', 'bg-[#2B95D6]/40', 'bg-white/30']
   const sourceData = neighborhoodData
     ? [
-        { label: 'Inspections', value: neighborhoodData.inspection_stats?.total ?? 0, color: 'bg-amber-500/70' },
-        { label: 'Permits', value: neighborhoodData.permit_count ?? 0, color: 'bg-blue-500/70' },
-        { label: 'Licenses', value: neighborhoodData.license_count ?? 0, color: 'bg-emerald-500/70' },
-        { label: 'Intel', value: (neighborhoodData.news?.length ?? 0) + (neighborhoodData.politics?.length ?? 0), color: 'bg-violet-500/70' },
-        { label: 'Community', value: (neighborhoodData.reddit?.length ?? 0) + (neighborhoodData.tiktok?.length ?? 0), color: 'bg-rose-500/70' },
-        { label: 'Market', value: (neighborhoodData.reviews?.length ?? 0) + (neighborhoodData.realestate?.length ?? 0), color: 'bg-cyan-500/70' },
-        { label: 'Vision', value: neighborhoodData.cctv?.cameras?.length ?? 0, color: 'bg-orange-500/70' },
-        { label: 'Traffic', value: neighborhoodData.traffic?.length ?? 0, color: 'bg-slate-500/70' },
-      ].filter((d) => d.value > 0)
+        { label: 'Inspections', value: neighborhoodData.inspection_stats?.total ?? 0 },
+        { label: 'Permits', value: neighborhoodData.permit_count ?? 0 },
+        { label: 'Licenses', value: neighborhoodData.license_count ?? 0 },
+        { label: 'Intel', value: (neighborhoodData.news?.length ?? 0) + (neighborhoodData.politics?.length ?? 0) },
+        { label: 'Community', value: (neighborhoodData.reddit?.length ?? 0) + (neighborhoodData.tiktok?.length ?? 0) },
+        { label: 'Market', value: (neighborhoodData.reviews?.length ?? 0) + (neighborhoodData.realestate?.length ?? 0) },
+        { label: 'Vision', value: neighborhoodData.cctv?.cameras?.length ?? 0 },
+        { label: 'Traffic', value: neighborhoodData.traffic?.length ?? 0 },
+      ]
+      .filter((d) => d.value > 0)
+      .map((d, i) => ({ ...d, color: barColors[i % barColors.length] }))
     : []
   const maxSource = Math.max(...sourceData.map((d) => d.value), 1)
 
@@ -1146,7 +1148,7 @@ function VaultTab({
     <div className="space-y-6">
       {/* 2. Neural Graph Visualization */}
       <div className="border border-white/[0.06] bg-white/[0.02] p-5">
-        <h3 className="text-sm font-semibold text-white mb-3">2. The &quot;Neural&quot; Graph Visualization</h3>
+        <h3 className="text-sm font-semibold text-white mb-3">The &quot;Neural&quot; Graph Visualization</h3>
         <p className="text-xs text-white/60 leading-relaxed mb-3">
           The standout feature is the Knowledge Graph, which visually proves that content is connected.
         </p>
@@ -1211,45 +1213,19 @@ function VaultTab({
         </div>
       </div>
 
-      {/* 4. Visualizing the &quot;Attention Crisis&quot; */}
+      {/* Visualizing the &quot;Attention Crisis&quot; */}
       <div className="border border-white/[0.06] bg-white/[0.02] p-5">
-        <h3 className="text-sm font-semibold text-white mb-3">4. Visualizing the &quot;Attention Crisis&quot;</h3>
-        <p className="text-xs text-white/60 leading-relaxed mb-4">
-          Time saved by using AI analysis vs. manually reviewing each data point (est. 2 min/doc).
-        </p>
+        <h3 className="text-sm font-semibold text-white mb-3">Visualizing the &quot;Attention Crisis&quot;</h3>
         <div className="space-y-4">
           <div className="flex items-center gap-4 p-4 border border-white/[0.06]">
             <div className="text-2xl font-bold font-mono text-white">{hoursReclaimed > 0 ? `${hoursReclaimed}h` : '—'}</div>
             <div>
               <div className="text-[10px] font-mono uppercase tracking-wider text-white/40 mb-1">Time Reclaimed</div>
               <p className="text-xs text-white/50">
-                {dataPoints ? `Hours saved vs. manually reviewing ${dataPoints} data points.` : 'A prominent metric showing hours saved by AI vs. manual review.'}
+                {dataPoints ? `Hours saved vs. manually reviewing ${dataPoints} data points.` : 'Hours saved by AI vs. manual review.'}
               </p>
             </div>
           </div>
-          {dataPoints > 0 && (
-            <div className="space-y-2">
-              <div className="text-[10px] font-mono uppercase tracking-wider text-white/40 mb-2">Manual vs. AI Review Time</div>
-              <div className="flex items-end gap-6 h-20">
-                <div className="flex-1 flex flex-col items-center">
-                  <div
-                    className="w-full max-w-[60px] mx-auto bg-red-500/50 rounded-t"
-                    style={{ height: '100%' }}
-                  />
-                  <span className="text-[10px] font-mono text-white/40 mt-1">Manual</span>
-                  <span className="text-[9px] font-mono text-white/30">{manualMinutes}m</span>
-                </div>
-                <div className="flex-1 flex flex-col items-center">
-                  <div
-                    className="w-full max-w-[60px] mx-auto bg-emerald-500/70 rounded-t"
-                    style={{ height: `${Math.max(6, (aiMinutes / manualMinutes) * 100)}%` }}
-                  />
-                  <span className="text-[10px] font-mono text-white/40 mt-1">Aleithia</span>
-                  <span className="text-[9px] font-mono text-white/30">{aiMinutes}m</span>
-                </div>
-              </div>
-            </div>
-          )}
           {sourceData.length > 0 && (
             <div className="p-4 border border-white/[0.06]">
               <div className="text-[10px] font-mono uppercase tracking-wider text-white/40 mb-2">Impact: Data Volume by Source</div>

@@ -17,6 +17,7 @@
     "@splinetool/runtime": "^1.12.61",
     "@supermemory/memory-graph": "^0.1.8",
     "@tailwindcss/vite": "^4.2.1",
+    "framer-motion": "^12.34.3",
     "jspdf": "^4.2.0",
     "mapbox-gl": "^3.19.0",
     "react": "^19.2.0",

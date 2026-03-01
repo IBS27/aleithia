@@ -76,26 +76,10 @@ const STATS = [
 ]
 
 const DATA_PILLARS = [
-  {
-    label: '01',
-    title: 'Live Data Ingestion',
-    desc: 'Reddit, Yelp, permits, transit, council meetings — scraped and normalized in real time.',
-  },
-  {
-    label: '02',
-    title: 'LLM Enrichment',
-    desc: 'Entity extraction, sentiment analysis, geo-tagging, and policy direction inference.',
-  },
-  {
-    label: '03',
-    title: 'City Graph',
-    desc: 'Entities and weighted relationships updated continuously from enriched events.',
-  },
-  {
-    label: '04',
-    title: 'Risk & Opportunity',
-    desc: 'Traverses the graph to produce quantified briefs with transparent assumptions.',
-  },
+  { label: '01', title: 'Live Data Ingestion', desc: 'Real-time scraping.' },
+  { label: '02', title: 'LLM Enrichment', desc: 'Sentiment, entities, geo.' },
+  { label: '03', title: 'City Graph', desc: 'Continuous updates.' },
+  { label: '04', title: 'Risk & Opportunity', desc: 'Quantified briefs.' },
 ]
 
 const MIN_LOAD_TIME_MS = 700
@@ -135,9 +119,6 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
         }`}
         aria-hidden={isReady}
       >
-        <p className="text-xs font-mono font-medium uppercase tracking-[0.3em] text-white/40 mb-4">
-          Chicago Data Platform
-        </p>
         <h1 className="text-4xl sm:text-6xl font-bold tracking-tight mb-6">
           ALETHIA
         </h1>
@@ -167,12 +148,12 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
             <SignedOut>
               <SignInButton mode="modal">
                 <button className="pointer-events-auto px-4 py-2 text-sm font-medium text-white/80 hover:text-white transition-colors cursor-pointer font-mono uppercase text-[10px] tracking-wider">
-                  Auth
+                  Sign In
                 </button>
               </SignInButton>
               <SignUpButton mode="modal">
                 <button className="pointer-events-auto px-6 py-2 text-sm font-medium !bg-white !text-[#06080d] hover:!bg-white/90 transition-colors cursor-pointer">
-                  Initialize Session
+                  Get Started
                 </button>
               </SignUpButton>
             </SignedOut>
@@ -182,7 +163,7 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
                 onClick={onGetStarted}
                 className="pointer-events-auto px-6 py-2 text-sm font-medium !bg-white !text-[#06080d] hover:!bg-white/90 transition-colors cursor-pointer"
               >
-                Initialize Session
+                Get Started
               </button>
             </SignedIn>
           </div>
@@ -240,10 +221,7 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
       </section>
 
       {/* ── Sponsors Ticker ── */}
-      <section id="next" className="relative border-t border-white/[0.04] py-10 scroll-mt-0">
-        <p className="text-center text-[10px] font-mono uppercase tracking-[0.3em] text-white/20 mb-6">
-          Made possible by
-        </p>
+      <section id="next" className="relative border-t border-white/[0.04] py-8 scroll-mt-0">
         <LogoLoop
           logos={SPONSOR_LOGOS.map((s) => {
             const sizeClass = (s as { extraLarge?: boolean }).extraLarge
@@ -271,17 +249,11 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
       </section>
 
       {/* ── City Graph Globe ── */}
-      <section className="relative py-28 overflow-hidden border-t border-white/[0.04]">
+      <section className="relative py-20 overflow-hidden border-t border-white/[0.04]">
         <div className="relative z-10 max-w-7xl mx-auto px-10">
-          <div className="mb-16">
-            <p className="text-xs font-mono font-medium uppercase tracking-[0.3em] text-white/30 mb-4">
-              Pipeline Overview
-            </p>
-            <h2 className="text-4xl sm:text-5xl font-bold tracking-tight text-white leading-[1.1]">
-              One city.<br />
-              Every signal.
-            </h2>
-          </div>
+          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-12">
+            One city. Every signal.
+          </h2>
 
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <Suspense
@@ -298,7 +270,7 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
               {DATA_PILLARS.map((p) => (
                 <div
                   key={p.title}
-                  className="group border-t border-white/[0.06] py-7 hover:bg-white/[0.02] transition-colors px-1"
+                  className="group border-t border-white/[0.06] py-5 hover:bg-white/[0.02] transition-colors px-1"
                 >
                   <div className="flex items-start gap-6">
                     <span className="text-xs font-mono text-white/20 pt-0.5 shrink-0">
@@ -322,7 +294,7 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
       </section>
 
       {/* ── Live Stats ── */}
-      <section className="border-t border-white/[0.04] py-16">
+      <section className="border-t border-white/[0.04] py-12">
         <div className="max-w-5xl mx-auto px-10 grid grid-cols-2 sm:grid-cols-4 gap-8">
           {STATS.map((s) => (
             <div key={s.label} className="text-center">
@@ -349,15 +321,12 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
 
       {/* ── Memory Graph ── */}
       <section className="relative border-t border-white/[0.04]">
-        <div className="px-10 py-20 max-w-7xl ml-auto text-right">
-          <p className="text-xs font-mono font-medium uppercase tracking-[0.3em] text-white/30 mb-4">
-            Knowledge layer
-          </p>
-          <h2 className="text-4xl sm:text-5xl font-bold tracking-tight text-white leading-[1.1] mb-4">
+        <div className="px-10 py-16 max-w-7xl ml-auto text-right">
+          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-2">
             Memory Graph
           </h2>
-          <p className="text-base text-white/50 mb-10 max-w-2xl ml-auto">
-            Every ingested document is stored in Supermemory and connected by semantic similarity. Explore the knowledge graph powering Alethia's intelligence.
+          <p className="text-sm text-white/50 mb-8 max-w-xl ml-auto">
+            Documents connected by semantic similarity.
           </p>
           <button
             onClick={onViewSource}
@@ -372,9 +341,6 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
       {onViewWhyUs && (
         <section className="border-t border-white/[0.04] py-16">
           <div className="max-w-5xl mx-auto px-10 text-center">
-            <p className="text-xs font-mono font-medium uppercase tracking-[0.3em] text-white/30 mb-4">
-              Value proposition
-            </p>
             <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-6">
               Why choose Aleithia?
             </h2>
@@ -392,15 +358,10 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
       )}
 
       {/* ── Footer ── */}
-      <footer className="px-10 py-8 border-t border-white/[0.04]">
-        <div className="flex items-center justify-between max-w-7xl mx-auto">
-          <p className="text-xs font-mono text-white/20">
-            Built at HackIllinois 2026
-          </p>
-          <p className="text-xs font-mono text-white/20">
-            Mission-critical city intelligence.
-          </p>
-        </div>
+      <footer className="px-10 py-6 border-t border-white/[0.04]">
+        <p className="text-xs font-mono text-white/20 text-center">
+          HackIllinois 2026
+        </p>
       </footer>
     </div>
   )

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { motion } from 'framer-motion'
 import type { UserProfile } from '../types/index.ts'
 
 const NEIGHBORHOODS = [
@@ -45,9 +46,43 @@ export default function OnboardingForm({ onSubmit, onCancel, initialProfile, emb
   }
 
   return (
-    <div className={`flex flex-col bg-[#06080d] ${embedded ? '' : 'min-h-screen'}`}>
+    <div className={`relative flex flex-col overflow-hidden bg-[#06080d] ${embedded ? '' : 'min-h-screen'}`}>
+      {/* Subtle animated background */}
+      <motion.div
+        className="absolute inset-0 pointer-events-none"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.6 }}
+      >
+        <motion.div
+          className="absolute -top-1/2 -left-1/2 w-full h-full rounded-full bg-gradient-to-br from-white/[0.03] via-transparent to-transparent"
+          animate={{
+            x: [0, 30, 0],
+            y: [0, 20, 0],
+            scale: [1, 1.05, 1],
+          }}
+          transition={{ duration: 12, repeat: Infinity, ease: 'easeInOut' }}
+        />
+        <motion.div
+          className="absolute -bottom-1/2 -right-1/2 w-full h-full rounded-full bg-gradient-to-tl from-white/[0.02] via-transparent to-transparent"
+          animate={{
+            x: [0, -25, 0],
+            y: [0, -15, 0],
+            scale: [1, 1.08, 1],
+          }}
+          transition={{ duration: 14, repeat: Infinity, ease: 'easeInOut' }}
+        />
+        <motion.div
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-white/[0.015]"
+          animate={{
+            scale: [1, 1.1, 1],
+            opacity: [0.3, 0.5, 0.3],
+          }}
+          transition={{ duration: 10, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      </motion.div>
       {!embedded && (
-      <nav className="flex items-center justify-between px-10 py-5 bg-white/[0.03] backdrop-blur-md border-b border-white/[0.06] shrink-0">
+      <nav className="relative z-10 flex items-center justify-between px-10 py-5 bg-white/[0.03] backdrop-blur-md border-b border-white/[0.06] shrink-0">
         <button
           type="button"
           onClick={() => onCancel?.()}
@@ -67,7 +102,7 @@ export default function OnboardingForm({ onSubmit, onCancel, initialProfile, emb
       </nav>
       )}
 
-      <div className={`flex items-center justify-center p-6 ${embedded ? '' : 'flex-1'}`}>
+      <div className={`relative z-10 flex items-center justify-center p-6 ${embedded ? '' : 'flex-1'}`}>
         <div className="max-w-md w-full">
           <div className="mb-12">
             <h1 className="text-3xl font-bold tracking-tight text-white mb-2">
