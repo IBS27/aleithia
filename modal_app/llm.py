@@ -32,12 +32,14 @@ When answering questions:
     secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     scaledown_window=300,
     timeout=600,
+    enable_memory_snapshot=True,
+    experimental_options={"enable_gpu_snapshot": True},
 )
 @modal.concurrent(max_inputs=20)
 class AlethiaLLM:
     """Self-hosted Qwen3-8B inference engine on H100 GPU."""
 
-    @modal.enter()
+    @modal.enter(snap=True)
     def load_model(self):
         from modal_app.instrumentation import init_tracing, get_tracer
         init_tracing()

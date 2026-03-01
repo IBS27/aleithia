@@ -255,11 +255,13 @@ async def cctv_ingester():
     volumes={"/data": volume},
     scaledown_window=120,
     timeout=120,
+    enable_memory_snapshot=True,
+    experimental_options={"enable_gpu_snapshot": True},
 )
 class TrafficAnalyzer:
     """YOLOv8n inference on CCTV frames — counts persons, vehicles, bicycles."""
 
-    @modal.enter()
+    @modal.enter(snap=True)
     def load_model(self):
         from ultralytics import YOLO
         self.model = YOLO("yolov8n.pt")  # stock COCO-80, ~6MB auto-download

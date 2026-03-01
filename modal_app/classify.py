@@ -16,11 +16,11 @@ from modal_app.volume import app, volume, classify_image, VOLUME_MOUNT, PROCESSE
 doc_queue = modal.Queue.from_name("new-docs", create_if_missing=True)
 
 
-@app.cls(gpu="T4", image=classify_image, scaledown_window=120, secrets=[modal.Secret.from_name("arize-secrets")])
+@app.cls(gpu="T4", image=classify_image, scaledown_window=120, secrets=[modal.Secret.from_name("arize-secrets")], enable_memory_snapshot=True, experimental_options={"enable_gpu_snapshot": True})
 class DocClassifier:
     """Zero-shot document classifier using facebook/bart-large-mnli (406M params)."""
 
-    @modal.enter()
+    @modal.enter(snap=True)
     def load_model(self):
         from modal_app.instrumentation import init_tracing, get_tracer
         init_tracing()
@@ -64,11 +64,11 @@ class DocClassifier:
                 span_ctx.__exit__(None, None, None)
 
 
-@app.cls(gpu="T4", image=classify_image, scaledown_window=120, secrets=[modal.Secret.from_name("arize-secrets")])
+@app.cls(gpu="T4", image=classify_image, scaledown_window=120, secrets=[modal.Secret.from_name("arize-secrets")], enable_memory_snapshot=True, experimental_options={"enable_gpu_snapshot": True})
 class SentimentAnalyzer:
     """Sentiment analysis using cardiffnlp/twitter-roberta-base-sentiment-latest."""
 
-    @modal.enter()
+    @modal.enter(snap=True)
     def load_model(self):
         from modal_app.instrumentation import init_tracing, get_tracer
         init_tracing()
