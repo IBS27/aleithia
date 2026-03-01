@@ -114,7 +114,7 @@ class DatasetSummary:
 
 
 def _build_geo_metrics(summaries: dict[str, DatasetSummary]) -> dict:
-    """Build GeoJSON FeatureCollection from aggregated summaries."""
+    """Build GeoJSON FeatureCollection from aggregated summaries and enriched docs."""
     neighborhood_data: dict[str, dict] = defaultdict(lambda: {
         "regulatory_density": 0.0,
         "business_activity": 0.0,
@@ -144,6 +144,82 @@ def _build_geo_metrics(summaries: dict[str, DatasetSummary]) -> dict:
         for hood, count in rv_summary.counts_by_neighborhood.items():
             neighborhood_data[hood]["review_count"] += count
             neighborhood_data[hood]["business_activity"] += min(count * 2.0, 100.0)
+
+    # Aggregate from enriched documents — classification + sentiment
+    enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
+    if enriched_dir.exists():
+        # Per-neighborhood accumulators for averaging
+        sentiment_totals: dict[str, list[float]] = defaultdict(list)
+        regulatory_counts: dict[str, int] = defaultdict(int)
+        business_counts: dict[str, int] = defaultdict(int)
+        safety_counts: dict[str, int] = defaultdict(int)
+
+        for jf in enriched_dir.rglob("*.json"):
+            try:
+                doc = json.loads(jf.read_text())
+            except Exception:
+                continue
+
+            hood = doc.get("geo", {}).get("neighborhood", "")
+            if not hood:
+                continue
+            # Normalize community area numbers to names
+            try:
+                area_num = int(hood)
+                hood = COMMUNITY_AREA_MAP.get(area_num, str(area_num))
+            except (ValueError, TypeError):
+                pass
+
+            # Classification — count by top label
+            classification = doc.get("classification", {})
+            labels = classification.get("labels", [])
+            if labels:
+                top_label = labels[0].lower()
+                if top_label == "regulatory":
+                    regulatory_counts[hood] += 1
+                elif top_label in ("economic", "business"):
+                    business_counts[hood] += 1
+                elif top_label == "safety":
+                    safety_counts[hood] += 1
+
+            # Sentiment — accumulate for averaging
+            sentiment = doc.get("sentiment", {})
+            slabel = sentiment.get("label", "").lower()
+            sscore = sentiment.get("score", 0.0)
+            if slabel == "positive":
+                sentiment_totals[hood].append(sscore)
+            elif slabel == "negative":
+                sentiment_totals[hood].append(-sscore)
+            elif slabel == "neutral":
+                sentiment_totals[hood].append(0.0)
+
+        # Apply enriched metrics to neighborhood data
+        for hood in set(regulatory_counts) | set(business_counts) | set(sentiment_totals) | set(safety_counts):
+            props = neighborhood_data[hood]
+
+            # regulatory_density: normalized count of regulatory-classified docs
+            if hood in regulatory_counts:
+                props["regulatory_density"] = min(regulatory_counts[hood] * 3.0, 100.0)
+
+            # business_activity: supplement with economic/business-classified docs
+            if hood in business_counts:
+                props["business_activity"] = min(
+                    props["business_activity"] + business_counts[hood] * 2.0, 100.0
+                )
+
+            # avg_review_rating: average sentiment mapped to 0-5 scale
+            if hood in sentiment_totals and sentiment_totals[hood]:
+                avg_sentiment = sum(sentiment_totals[hood]) / len(sentiment_totals[hood])
+                props["avg_review_rating"] = round((avg_sentiment + 1.0) * 2.5, 2)
+                props["sentiment"] = round(avg_sentiment, 4)
+
+            # risk_score: weighted combination of regulatory + safety + negative sentiment
+            reg = regulatory_counts.get(hood, 0)
+            safe = safety_counts.get(hood, 0)
+            neg_sent = sum(1 for s in sentiment_totals.get(hood, []) if s < -0.5)
+            props["risk_score"] = min((reg * 2.0 + safe * 3.0 + neg_sent * 2.5), 100.0)
+
+        print(f"Compress [enriched]: processed docs across {len(sentiment_totals)} neighborhoods")
 
     # Build GeoJSON
     features = []
