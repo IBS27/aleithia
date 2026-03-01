@@ -1,3 +1,13 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { MemoryGraph, injectStyles } from '@supermemory/memory-graph'
+import '@supermemory/memory-graph/styles.css'
+import type { DocumentWithMemories } from '@supermemory/memory-graph'
+import { api } from '../api.ts'
+
+injectStyles()
+
+const PAGE_SIZE = 50
+
 interface Props {
   onBack: () => void
 }
@@ -8,7 +18,86 @@ const BODY = 'text-sm text-white/60 leading-relaxed space-y-3'
 const CODE = 'font-mono text-xs bg-white/[0.06] border border-white/[0.08] rounded px-2 py-1 text-white/80'
 const CARD = 'border border-white/[0.06] rounded-lg p-6 bg-white/[0.02]'
 
+function normalizeDocs(raw: Record<string, unknown>[]): DocumentWithMemories[] {
+  return raw.map((doc) => ({
+    ...doc,
+    memoryEntries: (doc.memoryEntries ?? []) as DocumentWithMemories['memoryEntries'],
+    contentHash: (doc.contentHash ?? null) as string | null,
+    orgId: (doc.orgId ?? '') as string,
+    userId: (doc.userId ?? '') as string,
+    status: (doc.status ?? 'done') as DocumentWithMemories['status'],
+    createdAt: (doc.createdAt ?? new Date().toISOString()) as string,
+    updatedAt: (doc.updatedAt ?? new Date().toISOString()) as string,
+  })) as DocumentWithMemories[]
+}
+
 export default function HowItWorks({ onBack }: Props) {
+  // Memory graph state
+  const [documents, setDocuments] = useState<DocumentWithMemories[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+  const [page, setPage] = useState(1)
+  const [hasMore, setHasMore] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [highlightsVisible, setHighlightsVisible] = useState(false)
+  const [selectedSpace, setSelectedSpace] = useState('')
+  const [slideshowActive, setSlideshowActive] = useState(false)
+
+  useEffect(() => {
+    api
+      .graph({ page: 1, limit: PAGE_SIZE })
+      .then((data) => {
+        const raw = (data as { documents?: Record<string, unknown>[]; pagination?: { totalPages: number } }).documents ?? []
+        const pagination = (data as { pagination?: { totalPages: number } }).pagination
+        setDocuments(normalizeDocs(raw))
+        setHasMore(pagination ? pagination.totalPages > 1 : false)
+        setPage(1)
+        setIsLoading(false)
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err : new Error(String(err)))
+        setIsLoading(false)
+      })
+  }, [])
+
+  const loadMore = useCallback(async () => {
+    if (isLoadingMore) return
+    const nextPage = page + 1
+    setIsLoadingMore(true)
+    try {
+      const data = await api.graph({ page: nextPage, limit: PAGE_SIZE })
+      const raw = (data as { documents?: Record<string, unknown>[]; pagination?: { totalPages: number } }).documents ?? []
+      const pagination = (data as { pagination?: { totalPages: number } }).pagination
+      setDocuments((prev) => [...prev, ...normalizeDocs(raw)])
+      setHasMore(pagination ? nextPage < pagination.totalPages : false)
+      setPage(nextPage)
+    } catch (err) {
+      console.error('Failed to load more documents:', err)
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }, [page, isLoadingMore])
+
+  const highlightDocumentIds = useMemo(() => {
+    if (!searchQuery.trim()) return undefined
+    const q = searchQuery.toLowerCase()
+    return documents
+      .filter((doc) => {
+        const title = ((doc as Record<string, unknown>).title as string) ?? ''
+        const content = ((doc as Record<string, unknown>).content as string) ?? ''
+        const source = ((doc as Record<string, unknown>).source as string) ?? ''
+        return title.toLowerCase().includes(q) || content.toLowerCase().includes(q) || source.toLowerCase().includes(q)
+      })
+      .map((doc) => doc.id)
+  }, [searchQuery, documents])
+
+  useEffect(() => {
+    setHighlightsVisible(!!highlightDocumentIds && highlightDocumentIds.length > 0)
+  }, [highlightDocumentIds])
+
+  const matchCount = highlightDocumentIds?.length ?? 0
+
   return (
     <div className="min-h-screen bg-[#06080d] text-white">
       {/* Nav */}
@@ -184,14 +273,88 @@ export default function HowItWorks({ onBack }: Props) {
             <span className={CODE}>modal_app/compress.py</span> — Raw data → neighborhood summaries + GeoJSON for Mapbox. <span className={CODE}>modal_app/reconciler.py</span> runs every 5 min: checks pipeline freshness, auto-restarts stale ingesters, cost tracking via <span className={CODE}>modal.Dict</span>.
           </p>
         </section>
+      </main>
 
-        {/* Footer */}
-        <footer className="pt-16 border-t border-white/[0.04]">
+      {/* Memory Graph — full-width, outside max-w container */}
+      <section className="border-t border-white/[0.04]">
+        <div className="max-w-4xl mx-auto px-10 pt-20 pb-6">
+          <p className={SECTION_HEADER}>Knowledge layer</p>
+          <h2 className="text-4xl sm:text-5xl font-bold tracking-tight text-white leading-[1.1] mb-4">
+            Memory Graph
+          </h2>
+          <p className="text-base text-white/50 mb-8 max-w-2xl">
+            Every ingested document is stored in Supermemory and connected by semantic similarity. Search, filter by source, or run a slideshow to explore the knowledge graph.
+          </p>
+        </div>
+
+        {/* Toolbar */}
+        <div className="flex items-center gap-4 px-10 py-3 bg-[#06080d]/95 backdrop-blur-md border-y border-white/[0.06]">
+          <div className="relative flex-1 max-w-sm">
+            <input
+              type="text"
+              placeholder="Search documents..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full px-3 py-1.5 text-sm bg-white/[0.06] border border-white/[0.1] text-white placeholder-white/30 focus:outline-none focus:border-white/30 transition-colors"
+            />
+            {searchQuery && (
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono text-white/40">
+                {matchCount} found
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setSlideshowActive((prev) => !prev)}
+            className={`px-4 py-1.5 text-sm font-medium border transition-colors cursor-pointer ${
+              slideshowActive
+                ? 'bg-white text-[#06080d] border-white'
+                : 'border-white/20 text-white/60 hover:text-white hover:border-white/40'
+            }`}
+          >
+            {slideshowActive ? 'Stop Slideshow' : 'Slideshow'}
+          </button>
+          <span className="text-xs font-mono text-white/30 ml-auto">
+            {documents.length} docs loaded{hasMore ? ' (more available)' : ''}
+          </span>
+        </div>
+
+        <div className="h-[700px] w-full">
+          <MemoryGraph
+            documents={documents}
+            isLoading={isLoading}
+            error={error}
+            variant="console"
+            maxNodes={80}
+            showSpacesSelector
+            selectedSpace={selectedSpace}
+            onSpaceChange={setSelectedSpace}
+            hasMore={hasMore}
+            loadMoreDocuments={loadMore}
+            isLoadingMore={isLoadingMore}
+            totalLoaded={documents.length}
+            autoLoadOnViewport
+            highlightDocumentIds={highlightDocumentIds}
+            highlightsVisible={highlightsVisible}
+            isSlideshowActive={slideshowActive}
+            onSlideshowNodeChange={() => {}}
+            onSlideshowStop={() => setSlideshowActive(false)}
+          >
+            <div className="flex items-center justify-center h-full">
+              <p className="text-sm font-mono text-white/20">No documents ingested yet</p>
+            </div>
+          </MemoryGraph>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="px-10 py-8 border-t border-white/[0.04]">
+        <div className="max-w-4xl mx-auto">
           <p className="text-xs font-mono text-white/20">
             Built at HackIllinois 2026 · Chicago Open Data / Reddit / Yelp / Legistar
           </p>
-        </footer>
-      </main>
+        </div>
+      </footer>
     </div>
   )
 }

@@ -98,7 +98,7 @@ export default function OnboardingForm({ onSubmit, onCancel, initialProfile }: P
             <button
               type="submit"
               disabled={!businessType || !neighborhood}
-              className="w-full bg-white text-[#06080d] disabled:bg-white/[0.06] disabled:text-white/20 font-semibold py-3.5 text-sm tracking-wide transition-colors hover:bg-gray-200 cursor-pointer"
+              className="w-full bg-white text-[#06080d] disabled:bg-white/[0.06] disabled:text-white/20 disabled:cursor-not-allowed disabled:hover:bg-white/[0.06] font-semibold py-3.5 text-sm tracking-wide transition-colors hover:bg-gray-200 cursor-pointer"
             >
               Run Analysis
             </button>

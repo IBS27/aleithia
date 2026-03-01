@@ -20,6 +20,7 @@ import DemographicsCard from './DemographicsCard.tsx'
 import PipelineMonitor from './PipelineMonitor.tsx'
 import MLMonitor from './MLMonitor.tsx'
 import CCTVFeedCard from './CCTVFeedCard.tsx'
+import InsightsCard from './InsightsCard.tsx'
 
 type Tab = 'overview' | 'inspections' | 'permits' | 'licenses' | 'news' | 'community' | 'market' | 'models'
 
@@ -503,6 +504,10 @@ export default function Dashboard({ profile, onReset }: Props) {
                       <DemographicsCard metrics={neighborhoodData.metrics} demographics={neighborhoodData.demographics} cctv={neighborhoodData.cctv} />
                     )}
                   </div>
+
+                  {neighborhoodData && (
+                    <InsightsCard data={neighborhoodData} profile={profile} />
+                  )}
 
                   {neighborhoodData?.traffic && neighborhoodData.traffic.length > 0 && (
                     <TrafficCard data={neighborhoodData.traffic} />

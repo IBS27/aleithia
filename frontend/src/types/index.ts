@@ -181,3 +181,32 @@ export interface GeoJSON {
 export interface DataSources {
   [key: string]: { count: number; active: boolean }
 }
+
+export type InsightSignal = 'positive' | 'neutral' | 'negative'
+export type RiskProfile = 'conservative' | 'growth' | 'budget'
+
+export interface SubMetric {
+  name: string
+  value: number
+  raw: string
+}
+
+export interface CategoryScore {
+  id: string
+  name: string
+  score: number
+  subMetrics: SubMetric[]
+  claim: string
+  signal: InsightSignal
+  signalLabel: string
+  sources: string[]
+  dataPoints: number
+}
+
+export interface InsightsResult {
+  categories: CategoryScore[]
+  overall: number
+  profile: RiskProfile
+  coverageCount: number
+  computedAt: string
+}

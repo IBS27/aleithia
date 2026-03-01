@@ -161,7 +161,7 @@ export default function ChatPanel({ messages, onSend, loading, isStreaming, agen
           <button
             type="submit"
             disabled={!input.trim() || loading}
-            className="bg-white text-[#06080d] disabled:bg-white/[0.06] disabled:text-white/20 px-4 py-2.5 text-xs font-medium transition-colors cursor-pointer"
+            className="bg-white text-[#06080d] disabled:bg-white/[0.06] disabled:text-white/20 disabled:cursor-not-allowed px-4 py-2.5 text-xs font-medium transition-colors cursor-pointer"
           >
             Send
           </button>
