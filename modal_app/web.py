@@ -1356,53 +1356,14 @@ async def summary():
 
 @web_app.get("/cctv/latest")
 async def cctv_latest():
-<<<<<<< HEAD
-    """Latest CCTV analysis per camera: counts, density, location."""
-    volume.reload()
-    analysis_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "analysis"
-    if not analysis_dir.exists():
-        return {"cameras": [], "count": 0}
-
-    latest_by_cam: dict[str, dict] = {}
-    for jf in sorted(analysis_dir.glob("*.json"), reverse=True)[:500]:
-        try:
-            data = json.loads(jf.read_text())
-            cam_id = data.get("camera_id", "")
-            if cam_id not in latest_by_cam:
-                latest_by_cam[cam_id] = data
-        except Exception:
-            continue
-
-    cameras = list(latest_by_cam.values())
-    return {"cameras": cameras, "count": len(cameras)}
-=======
     """Latest CCTV analysis — temporarily disabled, pipeline not yet fully implemented."""
     return {"cameras": [], "count": 0}
->>>>>>> 3290bc39cb9d263e839f37975962e9c3a2f08abd
 
 
 @web_app.get("/cctv/frame/{camera_id}")
 async def cctv_frame(camera_id: str):
-<<<<<<< HEAD
-    """Serve latest annotated JPEG for a camera."""
-    from fastapi.responses import Response
-
-    volume.reload()
-    ann_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "annotated"
-    if not ann_dir.exists():
-        return JSONResponse({"error": "no annotated frames"}, status_code=404)
-
-    # Find latest annotated frame for this camera
-    frames = sorted(ann_dir.glob(f"{camera_id}_*.jpg"), reverse=True)
-    if not frames:
-        return JSONResponse({"error": f"no frames for camera {camera_id}"}, status_code=404)
-
-    frame_bytes = frames[0].read_bytes()
-    return Response(content=frame_bytes, media_type="image/jpeg")
-=======
     """Serve latest annotated JPEG — temporarily disabled, pipeline not yet fully implemented."""
     return JSONResponse({"error": "CCTV temporarily disabled"}, status_code=503)
->>>>>>> 3290bc39cb9d263e839f37975962e9c3a2f08abd
 
 
 @web_app.get("/geo")
