@@ -1,13 +1,52 @@
 import { Suspense } from 'react'
+import { SignedIn, SignedOut, SignInButton, SignUpButton, useUser } from '@clerk/clerk-react'
 import Spline from '@splinetool/react-spline'
 import type { Application } from '@splinetool/runtime'
 import CityGlobe from './CityGlobe'
 import LogoLoop from './LogoLoop'
+import { ArizeAILogo, ModelLogo } from './SponsorLogos'
+
+const SPONSOR_LOGO_SVGS = {
+  modal: '/logo/modal-wordmark.svg',
+  supermemory: '/logo/logo-fullmark.svg',
+  chatgpt: '/logo/chatgpt.jpg',
+  huggingface: '/logo/hf-logo.svg',
+}
 
 interface Props {
   onGetStarted: () => void
   onViewSource?: () => void
 }
+
+const logoImg = (src: string, alt: string, invert?: boolean) => (
+  <img
+    src={src}
+    alt={alt}
+    className={`w-auto object-contain ${invert ? 'invert' : ''}`}
+  />
+)
+
+const HfLogoWithName = ({ name }: { name: string }) => (
+  <span className="flex items-center gap-4 h-14">
+    <img
+      src={SPONSOR_LOGO_SVGS.huggingface}
+      alt="Hugging Face"
+      className="h-14 w-auto object-contain shrink-0"
+      style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}
+    />
+    <span className="font-semibold text-[1.25rem] whitespace-nowrap leading-none">{name}</span>
+  </span>
+)
+
+const SPONSOR_LOGOS = [
+  { node: logoImg(SPONSOR_LOGO_SVGS.modal, 'Modal'), large: false },
+  { node: logoImg(SPONSOR_LOGO_SVGS.supermemory, 'SuperMemory'), large: false },
+  { node: <ArizeAILogo />, large: true },
+  { node: logoImg(SPONSOR_LOGO_SVGS.chatgpt, 'ChatGPT', true), large: true, extraLarge: true },
+  { node: <ModelLogo name="Qwen3-8B" />, large: true },
+  { node: <HfLogoWithName name="BART-large-MNLI" />, large: true },
+  { node: <ModelLogo name="RoBERTa-Sentiment" />, large: true },
+]
 
 function makeStatic(app: Application) {
   const a = app as Record<string, any>
@@ -27,16 +66,6 @@ function tuneScene(app: Application) {
     }
   })
 }
-
-const SPONSORS = [
-  { name: 'Modal' },
-  { name: 'SuperMemory' },
-  { name: 'Arize AI' },
-  { name: 'OpenAI' },
-  { name: 'GPT-4o' },
-  { name: 'Claude' },
-  { name: 'Cursor Agent' },
-]
 
 const STATS = [
   { value: '9', label: 'Live Sources' },
@@ -69,6 +98,7 @@ const DATA_PILLARS = [
 ]
 
 export default function LandingPage({ onGetStarted, onViewSource }: Props) {
+  const { user } = useUser()
   return (
     <div className="bg-[#06080d] text-white">
       {/* ── Hero ── */}
@@ -88,12 +118,29 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
             <span className="text-lg font-semibold tracking-tight text-white uppercase">
               Alethia
             </span>
-            <button
-              onClick={onGetStarted}
-              className="pointer-events-auto px-6 py-2 text-sm font-medium bg-white text-[#06080d] hover:bg-gray-200 transition-colors cursor-pointer"
-            >
-              Get Started
-            </button>
+            <div className="flex items-center gap-3">
+              <SignedOut>
+                <SignInButton mode="modal">
+                  <button className="pointer-events-auto px-4 py-2 text-sm font-medium text-white/80 hover:text-white transition-colors cursor-pointer">
+                    Log in
+                  </button>
+                </SignInButton>
+                <SignUpButton mode="modal">
+                  <button className="pointer-events-auto px-6 py-2 text-sm font-medium bg-white text-[#06080d] hover:bg-gray-200 transition-colors cursor-pointer">
+                    Get Started
+                  </button>
+                </SignUpButton>
+              </SignedOut>
+              <SignedIn>
+                <span className="text-xs font-mono text-white/40 mr-2">{user?.primaryEmailAddress?.emailAddress}</span>
+                <button
+                  onClick={onGetStarted}
+                  className="pointer-events-auto px-6 py-2 text-sm font-medium bg-white text-[#06080d] hover:bg-gray-200 transition-colors cursor-pointer"
+                >
+                  Get Started
+                </button>
+              </SignedIn>
+            </div>
           </nav>
 
           <div className="flex-1 flex items-center justify-center px-10">
@@ -133,39 +180,32 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
       {/* ── Sponsors Ticker ── */}
       <section className="relative border-t border-white/[0.04] py-10">
         <p className="text-center text-[10px] font-mono uppercase tracking-[0.3em] text-white/20 mb-6">
-          Sponsored by
+          Made possible by
         </p>
         <LogoLoop
-          logos={SPONSORS.map((s) => ({
-            node: (
-              <span className="text-sm font-semibold tracking-wide text-white/40 hover:text-white/70 transition-colors uppercase">
-                {s.name}
-              </span>
-            ),
-          }))}
+          logos={SPONSOR_LOGOS.map((s) => {
+            const sizeClass = (s as { extraLarge?: boolean }).extraLarge
+              ? '[&_img]:h-20 [&_svg]:h-20'
+              : s.large
+                ? '[&_img]:h-14 [&_svg]:h-14'
+                : '[&_img]:h-7 [&_svg]:h-7'
+            return {
+              node: (
+                <span
+                  className={`flex items-center px-4 py-2 text-white/30 hover:text-white/60 transition-colors [&_img]:opacity-70 [&:hover_img]:opacity-100 [&_img]:w-auto [&_img]:object-contain [&_svg]:w-auto [&_svg]:shrink-0 ${sizeClass}`}
+                >
+                  {s.node}
+                </span>
+              ),
+            }
+          })}
           speed={40}
-          gap={64}
-          logoHeight={24}
+          gap={120}
+          logoHeight={80}
           pauseOnHover
           fadeOut
           fadeOutColor="#06080d"
         />
-      </section>
-
-      {/* ── Live Stats ── */}
-      <section className="border-t border-white/[0.04] py-16">
-        <div className="max-w-5xl mx-auto px-10 grid grid-cols-2 sm:grid-cols-4 gap-8">
-          {STATS.map((s) => (
-            <div key={s.label} className="text-center">
-              <p className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-1">
-                {s.value}
-              </p>
-              <p className="text-xs font-mono text-white/30 uppercase tracking-wider">
-                {s.label}
-              </p>
-            </div>
-          ))}
-        </div>
       </section>
 
       {/* ── City Graph Globe ── */}
@@ -219,9 +259,25 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
         </div>
       </section>
 
+      {/* ── Live Stats ── */}
+      <section className="border-t border-white/[0.04] py-16">
+        <div className="max-w-5xl mx-auto px-10 grid grid-cols-2 sm:grid-cols-4 gap-8">
+          {STATS.map((s) => (
+            <div key={s.label} className="text-center">
+              <p className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-1">
+                {s.value}
+              </p>
+              <p className="text-xs font-mono text-white/30 uppercase tracking-wider">
+                {s.label}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
       {/* ── Interactive 3D Section ── */}
-      <section className="relative h-screen overflow-hidden border-t border-white/[0.04]">
-        <div className="absolute inset-0 scale-[2] origin-center pointer-events-none">
+      <section className="relative h-[50vh] overflow-hidden border-t border-white/[0.04]">
+        <div className="absolute inset-0 scale-[1.8] -rotate-[22deg] origin-center translate-x-1/3 translate-y-[20%] pointer-events-none">
           <Spline
             scene="https://prod.spline.design/2pfbb0RwX88uLSBZ/scene.splinecode"
             onLoad={(app) => makeStatic(app)}
