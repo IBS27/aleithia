@@ -207,7 +207,7 @@ export default function RecursiveAgentPanel() {
   // ── Autonomous Systems state ──
   const [pipelineStatus, setPipelineStatus] = useState<PipelineStatus | null>(null)
   const [gpuMetrics, setGpuMetrics] = useState<GpuMetrics | null>(null)
-  const [sysMetrics, setSysMetrics] = useState<Record<string, number> | null>(null)
+  const [, setSysMetrics] = useState<Record<string, number> | null>(null)
   const [lastHeartbeat, setLastHeartbeat] = useState<number | null>(null)
 
   // Poll pipeline status + GPU metrics + system metrics every 15s
