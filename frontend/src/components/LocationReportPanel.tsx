@@ -1,3 +1,4 @@
+import { jsPDF } from 'jspdf'
 import type { NeighborhoodData, RiskScore, UserProfile } from '../types/index.ts'
 
 interface AgentInfo {
@@ -145,16 +146,173 @@ function buildSummary(profile: UserProfile, data: NeighborhoodData | null, riskS
   return `${profile.neighborhood} looks ${posture} for a ${profile.business_type.toLowerCase()} launch based on ${totalSignals} local signals. Prioritize quick validation on the highlighted risks while leveraging the strongest demand/compliance advantages.`
 }
 
+function safeNumber(value: number | undefined): string {
+  return typeof value === 'number' ? `${value}` : 'N/A'
+}
+
 export default function LocationReportPanel({ profile, neighborhoodData, riskScore, loading, agentInfo }: Props) {
   const advantages = buildAdvantages(neighborhoodData)
   const risks = buildRisks(neighborhoodData)
   const summary = buildSummary(profile, neighborhoodData, riskScore)
 
+  const handleDownloadPdf = () => {
+    if (loading) return
+
+    const doc = new jsPDF({ unit: 'pt', format: 'letter' })
+    const marginX = 44
+    const topMargin = 48
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const pageHeight = doc.internal.pageSize.getHeight()
+    const contentWidth = pageWidth - marginX * 2
+    let y = topMargin
+
+    const ensureSpace = (minHeight = 30) => {
+      if (y + minHeight > pageHeight - 44) {
+        doc.addPage()
+        y = topMargin
+      }
+    }
+
+    const addHeading = (text: string) => {
+      ensureSpace(28)
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(14)
+      doc.text(text, marginX, y)
+      y += 18
+    }
+
+    const addParagraph = (text: string, size = 10) => {
+      const lines = doc.splitTextToSize(text, contentWidth)
+      ensureSpace(lines.length * (size + 3) + 6)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(size)
+      doc.text(lines, marginX, y)
+      y += lines.length * (size + 3) + 6
+    }
+
+    const addBullet = (text: string) => {
+      const wrapped = doc.splitTextToSize(text, contentWidth - 14)
+      ensureSpace(wrapped.length * 13 + 4)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(10)
+      doc.text('•', marginX, y)
+      doc.text(wrapped, marginX + 12, y)
+      y += wrapped.length * 13 + 4
+    }
+
+    const dateLabel = new Date().toLocaleString()
+    const rating = neighborhoodData?.metrics?.avg_review_rating
+    const stats = neighborhoodData?.inspection_stats
+    const passRate = stats && stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : null
+    const failRate = stats && stats.total > 0 ? Math.round((stats.failed / stats.total) * 100) : null
+    const congestedCount = (neighborhoodData?.traffic || []).filter((t) => {
+      const level = (t.metadata?.congestion_level as string | undefined)?.toLowerCase()
+      return level === 'heavy' || level === 'blocked'
+    }).length
+
+    const detailedAdvantages = [
+      passRate !== null && stats
+        ? `Regulatory baseline: ${stats.passed} of ${stats.total} inspections passed (${passRate}%), which may support smoother launch operations.`
+        : null,
+      typeof rating === 'number' && rating > 0
+        ? `Demand signal: local review sentiment averages ${rating.toFixed(1)}/5 across ${neighborhoodData?.reviews?.length || 0} records.`
+        : null,
+      neighborhoodData?.cctv?.cameras.length
+        ? `Street activity: ${neighborhoodData.cctv.cameras.length} nearby CCTV points report ${neighborhoodData.cctv.density} traffic density with ~${neighborhoodData.cctv.avg_pedestrians} average pedestrians.`
+        : null,
+      neighborhoodData && neighborhoodData.permit_count > 0
+        ? `Investment velocity: ${neighborhoodData.permit_count} active permits suggest current reinvestment in the area.`
+        : null,
+    ].filter((v): v is string => Boolean(v))
+
+    const detailedRisks = [
+      failRate !== null && stats
+        ? `Compliance exposure: ${stats.failed} failed inspections out of ${stats.total} (${failRate}%) may indicate tighter enforcement expectations.`
+        : null,
+      neighborhoodData && neighborhoodData.license_count > 0
+        ? `Competitive pressure: ${neighborhoodData.license_count} active licenses increase the need for differentiation and pricing discipline.`
+        : null,
+      congestedCount > 0
+        ? `Mobility friction: ${congestedCount} congested traffic zones may affect logistics, delivery times, and customer access.`
+        : null,
+      typeof rating === 'number' && rating > 0 && rating < 3.8
+        ? `Consumer expectation risk: average rating at ${rating.toFixed(1)}/5 can imply stricter quality benchmarks for new entrants.`
+        : null,
+    ].filter((v): v is string => Boolean(v))
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(18)
+    doc.text('Alethia Report Summary', marginX, y)
+    y += 22
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    doc.text(`${profile.business_type} • ${profile.neighborhood}`, marginX, y)
+    y += 14
+    doc.text(`Generated: ${dateLabel}`, marginX, y)
+    y += 16
+
+    addHeading('Executive Summary')
+    addParagraph(summary)
+
+    addHeading('Agent Intelligence')
+    if (agentInfo) {
+      addParagraph(`Agents deployed: ${agentInfo.agents_deployed} | Neighborhoods analyzed: ${agentInfo.neighborhoods.length} | Data points: ${agentInfo.data_points}`)
+      if (agentInfo.agent_summaries.length > 0) {
+        addParagraph('Top contributing agents:')
+        agentInfo.agent_summaries.slice(0, 8).forEach((agent) => {
+          addBullet(`${agent.name}: ${agent.data_points} points${agent.sources?.length ? ` (${agent.sources.join(', ')})` : ''}`)
+        })
+      }
+    } else {
+      addParagraph('Agent summary unavailable for this run. Pipeline metrics are shown from loaded neighborhood signals.')
+    }
+
+    addHeading('Detailed Advantages')
+    if (detailedAdvantages.length > 0) {
+      detailedAdvantages.forEach(addBullet)
+    } else {
+      addBullet('No strong upside concentration detected; proceed with controlled pilot testing.')
+    }
+
+    addHeading('Detailed Risks')
+    if (detailedRisks.length > 0) {
+      detailedRisks.forEach(addBullet)
+    } else {
+      addBullet('No single dominant risk detected; continue validation for category-specific constraints.')
+    }
+
+    addHeading('Data Snapshot')
+    addBullet(`Food inspections: ${safeNumber(neighborhoodData?.inspection_stats.total)} total`)
+    addBullet(`Building permits: ${safeNumber(neighborhoodData?.permit_count)}`)
+    addBullet(`Business licenses: ${safeNumber(neighborhoodData?.license_count)}`)
+    addBullet(`Intel items: ${(neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0)}`)
+    addBullet(`Community signals: ${(neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0)}`)
+    addBullet(`Market signals: ${(neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0)}`)
+    addBullet(`CCTV cameras: ${safeNumber(neighborhoodData?.cctv?.cameras.length)}`)
+    if (riskScore) {
+      addBullet(`Risk score: ${riskScore.overall_score}/10 (confidence ${(riskScore.confidence * 100).toFixed(0)}%)`)
+    }
+
+    const fileName = `report-summary-${profile.neighborhood.toLowerCase().replaceAll(' ', '-')}-${profile.business_type.toLowerCase().replaceAll(' ', '-')}.pdf`
+    doc.save(fileName)
+  }
+
   return (
     <section className="h-full flex flex-col border border-white/[0.06] bg-white/[0.02]">
-      <div className="px-4 py-3 border-b border-white/[0.06]">
-        <p className="text-[10px] font-mono uppercase tracking-wider text-white/35">Location Report</p>
-        <h3 className="text-sm font-semibold text-white mt-1">{profile.business_type} • {profile.neighborhood}</h3>
+      <div className="px-4 py-3 border-b border-white/[0.06] flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-mono uppercase tracking-wider text-white/35">Report Summary</p>
+          <h3 className="text-sm font-semibold text-white mt-1">{profile.business_type} • {profile.neighborhood}</h3>
+        </div>
+        <button
+          type="button"
+          onClick={handleDownloadPdf}
+          disabled={loading}
+          className="text-[10px] font-mono uppercase tracking-wider border border-white/20 px-2.5 py-1.5 text-white/75 hover:text-white hover:border-white/40 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
+        >
+          Download PDF
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
