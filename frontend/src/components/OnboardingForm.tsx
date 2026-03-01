@@ -25,6 +25,7 @@ interface Props {
 export default function OnboardingForm({ onSubmit, onCancel, initialProfile }: Props) {
   const [businessType, setBusinessType] = useState(initialProfile?.business_type ?? '')
   const [neighborhood, setNeighborhood] = useState(initialProfile?.neighborhood ?? '')
+  const [riskTolerance, setRiskTolerance] = useState<UserProfile['risk_tolerance']>(initialProfile?.risk_tolerance ?? 'medium')
 
   useEffect(() => {
     if (initialProfile?.business_type) {
@@ -33,12 +34,15 @@ export default function OnboardingForm({ onSubmit, onCancel, initialProfile }: P
     if (initialProfile?.neighborhood) {
       setNeighborhood(initialProfile.neighborhood)
     }
+    if (initialProfile?.risk_tolerance) {
+      setRiskTolerance(initialProfile.risk_tolerance)
+    }
   }, [initialProfile])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (businessType && neighborhood) {
-      onSubmit({ business_type: businessType, neighborhood })
+      onSubmit({ business_type: businessType, neighborhood, risk_tolerance: riskTolerance })
     }
   }
 
@@ -91,6 +95,21 @@ export default function OnboardingForm({ onSubmit, onCancel, initialProfile }: P
               {NEIGHBORHOODS.map((n) => (
                 <option key={n} value={n} className="bg-[#0a0c12]">{n}</option>
               ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-mono uppercase tracking-wider text-white/30 mb-2">
+              Risk Tolerance
+            </label>
+            <select
+              value={riskTolerance}
+              onChange={(e) => setRiskTolerance((e.target.value as UserProfile['risk_tolerance']) ?? 'medium')}
+              className="w-full bg-white/[0.03] border border-white/[0.08] px-4 py-3 text-sm text-white focus:outline-none focus:border-white/30 transition-colors appearance-none cursor-pointer"
+            >
+              <option value="low" className="bg-[#0a0c12]">Low (safety-first)</option>
+              <option value="medium" className="bg-[#0a0c12]">Medium (balanced)</option>
+              <option value="high" className="bg-[#0a0c12]">High (growth-oriented)</option>
             </select>
           </div>
 
