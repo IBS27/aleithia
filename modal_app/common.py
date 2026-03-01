@@ -1,4 +1,4 @@
-"""Shared data models and constants for all Aleithia Modal pipelines."""
+"""Shared data models and constants for all Alethia Modal pipelines."""
 from __future__ import annotations
 
 import asyncio

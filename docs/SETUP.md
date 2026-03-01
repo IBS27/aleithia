@@ -1,4 +1,4 @@
-# Aleithia Setup Guide
+# Alethia Setup Guide
 
 ## Prerequisites
 
@@ -17,7 +17,7 @@ modal token set --token-id <your-id> --token-secret <your-secret>
 All API keys are stored as a single Modal secret group:
 
 ```bash
-modal secret create aleithia-secrets \
+modal secret create alethia-secrets \
   NEWSAPI_KEY=your_key \
   REDDIT_CLIENT_ID=your_id \
   REDDIT_CLIENT_SECRET=your_secret \
@@ -73,9 +73,9 @@ modal deploy -m modal_app
 #                process_queue_batch (2min), data_reconciler (5min)
 # - 10 on-demand pipelines: politics, demographics, reviews, realestate,
 #                            federal_register, tiktok, traffic, cctv, vision, worldpop
-# - GPU inference: AleithiaLLM (H100), DocClassifier (T4), SentimentAnalyzer (T4), CCTVDetector (T4)
+# - GPU inference: AlethiaLLM (H100), DocClassifier (T4), SentimentAnalyzer (T4), CCTVDetector (T4)
 # - Agent swarm: neighborhood_intel_agent, regulatory_agent, orchestrate_query
-# - Web API: https://ibsrinivas27--aleithia-serve.modal.run (17 endpoints)
+# - Web API: https://ibsrinivas27--alethia-serve.modal.run (17 endpoints)
 # - Utilities: compress, supermemory sync, model download, scaling_demo
 # - Tracing: Arize AX via OpenTelemetry (if arize-secrets configured)
 ```
@@ -108,39 +108,39 @@ modal run -m modal_app.classify::process_queue_batch
 
 ```bash
 # Check API health
-curl https://ibsrinivas27--aleithia-serve.modal.run/health
+curl https://ibsrinivas27--alethia-serve.modal.run/health
 
 # Check metrics (doc counts, sources, neighborhoods)
-curl https://ibsrinivas27--aleithia-serve.modal.run/metrics
+curl https://ibsrinivas27--alethia-serve.modal.run/metrics
 
 # Check pipeline status (freshness, GPU status, costs)
-curl https://ibsrinivas27--aleithia-serve.modal.run/status
+curl https://ibsrinivas27--alethia-serve.modal.run/status
 
 # Check data sources
-curl https://ibsrinivas27--aleithia-serve.modal.run/sources
+curl https://ibsrinivas27--alethia-serve.modal.run/sources
 
 # Check volume contents
-modal volume ls aleithia-data /raw/
-modal volume ls aleithia-data /processed/
+modal volume ls alethia-data /raw/
+modal volume ls alethia-data /processed/
 ```
 
 ## 7. Verify Data
 
 ```bash
 # Check raw data per source
-modal volume ls aleithia-data /raw/news/
-modal volume ls aleithia-data /raw/public_data/
-modal volume ls aleithia-data /raw/politics/
-modal volume ls aleithia-data /raw/demographics/
+modal volume ls alethia-data /raw/news/
+modal volume ls alethia-data /raw/public_data/
+modal volume ls alethia-data /raw/politics/
+modal volume ls alethia-data /raw/demographics/
 
 # Check enriched (classified) documents
-modal volume ls aleithia-data /processed/enriched/
+modal volume ls alethia-data /processed/enriched/
 
 # Check compressed summaries
-modal volume ls aleithia-data /processed/summaries/
+modal volume ls alethia-data /processed/summaries/
 
 # Check GeoJSON output
-modal volume ls aleithia-data /processed/geo/
+modal volume ls alethia-data /processed/geo/
 ```
 
 ## 8. Local Frontend Development
@@ -150,7 +150,7 @@ cd frontend
 npm install
 npm run dev
 # Runs at http://localhost:5173
-# Point API calls to: https://ibsrinivas27--aleithia-serve.modal.run
+# Point API calls to: https://ibsrinivas27--alethia-serve.modal.run
 ```
 
 ## Architecture Overview
@@ -181,7 +181,7 @@ npm run dev
 │  └─ Supermemory sync                                      │
 │                                                          │
 │  STORAGE                                                  │
-│  ├─ aleithia-data (Volume)                                 │
-│  └─ aleithia-weights (Volume, model weights)               │
+│  ├─ alethia-data (Volume)                                 │
+│  └─ alethia-weights (Volume, model weights)               │
 └──────────────────────────────────────────────────────────┘
 ```

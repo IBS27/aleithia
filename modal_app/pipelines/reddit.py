@@ -288,7 +288,7 @@ class RedditRetrievalService:
     def __init__(self, client_id: str = "", client_secret: str = ""):
         self.client_id = (client_id or "").strip()
         self.client_secret = (client_secret or "").strip()
-        self.user_agent = "aleithia:v0.2 (by /u/aleithia_bot)"
+        self.user_agent = "alethia:v0.2 (by /u/alethia_bot)"
 
     @classmethod
     def from_env(cls) -> "RedditRetrievalService":
@@ -525,7 +525,7 @@ class RedditRetrievalService:
     async def _fetch_subreddit_rss(self, subreddit_name: str) -> list[dict]:
         import feedparser
 
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; Aleithia/0.2)"}
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; Alethia/0.2)"}
         async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=headers) as client:
             resp = await client.get(f"https://www.reddit.com/r/{subreddit_name}/hot.rss")
             if resp.status_code != 200:
@@ -548,7 +548,7 @@ class RedditRetrievalService:
     async def _search_rss(self, query: str, timeout_seconds: float, ingestion_mode: str) -> list[dict]:
         import feedparser
 
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; Aleithia/0.2)"}
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; Alethia/0.2)"}
         params = {
             "q": query,
             "sort": "relevance",
@@ -788,7 +788,7 @@ async def _persist_reddit_docs(docs: list[dict], ingestion_mode: str) -> int:
 @app.function(
     image=reddit_image,
     volumes={"/data": volume},
-    secrets=[modal.Secret.from_name("aleithia-secrets")],
+    secrets=[modal.Secret.from_name("alethia-secrets")],
     timeout=120,
 )
 async def persist_reddit_fallback_batch(docs: list[dict]) -> int:
@@ -799,7 +799,7 @@ async def persist_reddit_fallback_batch(docs: list[dict]) -> int:
 @app.function(
     image=reddit_image,
     volumes={"/data": volume},
-    secrets=[modal.Secret.from_name("aleithia-secrets")],
+    secrets=[modal.Secret.from_name("alethia-secrets")],
     schedule=modal.Period(hours=1),
     timeout=180,
     retries=modal.Retries(max_retries=2, backoff_coefficient=2.0),

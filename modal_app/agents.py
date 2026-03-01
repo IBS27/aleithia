@@ -167,7 +167,7 @@ Format your response with clear sections:
 @app.function(
     image=base_image,
     volumes={"/data": volume},
-    secrets=[modal.Secret.from_name("aleithia-secrets"), modal.Secret.from_name("arize-secrets")],
+    secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=120,
 )
 async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_areas: list[str] | None = None, trace_context: dict | None = None) -> dict:
@@ -177,7 +177,7 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
     """
     from modal_app.instrumentation import init_tracing, get_tracer, extract_context
     init_tracing()
-    tracer = get_tracer("aleithia.agents")
+    tracer = get_tracer("alethia.agents")
     parent_ctx = extract_context(trace_context)
 
     if focus_areas is None:
@@ -260,7 +260,7 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
                     )
                     if fallback_docs:
                         try:
-                            persist_fn = modal.Function.from_name("aleithia", "persist_reddit_fallback_batch")
+                            persist_fn = modal.Function.from_name("alethia", "persist_reddit_fallback_batch")
                             await persist_fn.spawn.aio(docs=fallback_docs)
                         except Exception as exc:
                             print(f"Reddit fallback persist spawn failed (agent): {exc}")
@@ -428,7 +428,7 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
 @app.function(
     image=base_image,
     volumes={"/data": volume},
-    secrets=[modal.Secret.from_name("aleithia-secrets"), modal.Secret.from_name("arize-secrets")],
+    secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=120,
 )
 async def regulatory_agent(business_type: str, trace_context: dict | None = None) -> dict:
@@ -439,7 +439,7 @@ async def regulatory_agent(business_type: str, trace_context: dict | None = None
     """
     from modal_app.instrumentation import init_tracing, get_tracer, extract_context
     init_tracing()
-    tracer = get_tracer("aleithia.agents")
+    tracer = get_tracer("alethia.agents")
     parent_ctx = extract_context(trace_context)
 
     report = {
@@ -597,7 +597,7 @@ async def regulatory_agent(business_type: str, trace_context: dict | None = None
 @app.function(
     image=base_image,
     volumes={"/data": volume},
-    secrets=[modal.Secret.from_name("aleithia-secrets"), modal.Secret.from_name("arize-secrets")],
+    secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=300,
 )
 async def orchestrate_query(user_id: str, question: str, business_type: str, target_neighborhood: str, trace_context: dict | None = None) -> dict:
@@ -611,7 +611,7 @@ async def orchestrate_query(user_id: str, question: str, business_type: str, tar
     """
     from modal_app.instrumentation import init_tracing, get_tracer, extract_context, inject_context
     init_tracing()
-    tracer = get_tracer("aleithia.agents")
+    tracer = get_tracer("alethia.agents")
     parent_ctx = extract_context(trace_context)
 
     span_ctx = tracer.start_as_current_span("orchestrate-query", context=parent_ctx) if tracer else None
