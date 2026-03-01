@@ -425,6 +425,46 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
             span_ctx.__exit__(None, None, None)
 
 
+async def _enrich_regulations_with_impact(regulations: list[dict], business_type: str, max_batch: int = 10) -> list[dict]:
+    """Use GPT-4o to add impact_summary fields to top regulations.
+
+    Runs as a plain async helper inside the regulatory_agent container — no
+    separate Modal function needed (secrets are already available).
+    """
+    from modal_app.openai_utils import openai_available, get_openai_client
+
+    if not openai_available() or not regulations:
+        return regulations
+
+    client = get_openai_client()
+    if not client:
+        return regulations
+
+    batch = regulations[:max_batch]
+    reg_summaries = [f"{i+1}. {r.get('title', 'Untitled')} (type: {r.get('type', 'N/A')}, agency: {r.get('agency', 'N/A')})" for i, r in enumerate(batch)]
+
+    try:
+        resp = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You analyze regulations for small business impact. Given a list of regulations and a business type, return a JSON object with an 'impacts' array containing a one-sentence impact summary for each regulation, in the same order. Be specific about what the business owner should do or watch for."},
+                {"role": "user", "content": f"Business type: {business_type}\n\nRegulations:\n" + "\n".join(reg_summaries)},
+            ],
+            max_tokens=500,
+            temperature=0.3,
+            response_format={"type": "json_object"},
+        )
+        content = resp.choices[0].message.content or "{}"
+        impacts = json.loads(content).get("impacts", [])
+        for i, impact in enumerate(impacts):
+            if i < len(regulations):
+                regulations[i]["impact_summary"] = impact
+    except Exception as e:
+        print(f"Regulatory impact enrichment failed: {e}")
+
+    return regulations
+
+
 @app.function(
     image=base_image,
     volumes={"/data": volume},
@@ -544,6 +584,11 @@ async def regulatory_agent(business_type: str, trace_context: dict | None = None
             if newest_ts:
                 cached_freshness = compute_freshness(timestamp_str=newest_ts)
                 report["freshness"][f"{source_name}_cached"] = cached_freshness
+
+        # 2b. Enrich top regulations with GPT-4o impact summaries
+        report["regulations"] = await _enrich_regulations_with_impact(
+            report["regulations"], business_type
+        )
 
         # 3. Write live data back to volume (fire-and-forget, benefits dashboard)
         if live_legistar or live_federal:

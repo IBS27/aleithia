@@ -25,6 +25,7 @@ class SourceType(str, Enum):
     TRAFFIC = "traffic"
     TIKTOK = "tiktok"
     CCTV = "cctv"
+    PARKING = "parking"
 
 
 class Document(BaseModel):

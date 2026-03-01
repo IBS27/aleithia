@@ -27,7 +27,8 @@ modal secret create alethia-secrets \
   CENSUS_API_KEY=your_key \
   SUPERMEMORY_API_KEY=your_key \
   OPENAI_API_KEY=your_key \
-  TOMTOM_API_KEY=your_key
+  TOMTOM_API_KEY=your_key \
+  MAPBOX_TOKEN=your_token
 
 # Arize tracing (separate secret group)
 modal secret create arize-secrets \
@@ -61,23 +62,26 @@ modal secret create tiktok-scraper-secrets \
 | `TOMTOM_API_KEY` | [developer.tomtom.com](https://developer.tomtom.com) | Optional — traffic monitoring; free tier available |
 | `ARIZE_SPACE_ID` | [arize.com](https://app.arize.com) | Optional — OTel tracing dashboard |
 | `ARIZE_API_KEY` | [arize.com](https://app.arize.com) | Optional — OTel tracing dashboard |
+| `MAPBOX_TOKEN` | [mapbox.com](https://account.mapbox.com/access-tokens/) | Optional — satellite parking detection pipeline |
 
 ## 4. Deploy Everything
 
 ```bash
-# Deploy all 28+ functions at once (recommended)
+# Deploy all 31+ functions at once (recommended)
 modal deploy -m modal_app
 
 # This deploys:
 # - 5 cron jobs: news (30min), reddit (1hr), public_data (daily),
 #                process_queue_batch (2min), data_reconciler (5min)
-# - 10 on-demand pipelines: politics, demographics, reviews, realestate,
-#                            federal_register, tiktok, traffic, cctv, vision, worldpop
-# - GPU inference: AlethiaLLM (H100), DocClassifier (T4), SentimentAnalyzer (T4), CCTVDetector/TrafficAnalyzer (T4)
-# - Agent swarm: neighborhood_intel_agent, regulatory_agent, orchestrate_query
-# - Web API: https://ibsrinivas27--alethia-serve.modal.run (17 endpoints)
+# - 11 on-demand pipelines: politics, demographics, reviews, realestate,
+#                            federal_register, tiktok, traffic, cctv, vision, parking, worldpop
+# - GPU inference: AlethiaLLM (H100), DocClassifier (T4), SentimentAnalyzer (T4),
+#                  CCTVDetector/TrafficAnalyzer (T4), ParkingAnalyzer (T4)
+# - Agent swarm: neighborhood_intel_agent, regulatory_agent (+ GPT-4o enrichment), orchestrate_query
+# - Web API: https://ibsrinivas27--alethia-serve.modal.run (22+ endpoints)
+# - OpenAI hybrid: GPT-4o for Deep Dive codegen, suggestions, regulatory impact, vision assess
 # - Utilities: compress, supermemory sync, model download, scaling_demo
-# - Tracing: Arize AX via OpenTelemetry (if arize-secrets configured)
+# - Tracing: Arize AX via OpenTelemetry (auto-instrumented OpenAI + LLM spans)
 ```
 
 ## 5. Run Individual Pipelines
@@ -95,6 +99,7 @@ modal run -m modal_app.pipelines.federal_register::federal_register_ingester
 modal run -m modal_app.pipelines.traffic::traffic_ingester
 modal run -m modal_app.pipelines.cctv::cctv_ingester
 modal run -m modal_app.pipelines.vision::run_vision_pipeline --youtube-url "URL" --neighborhood "Loop"
+modal run -m modal_app.pipelines.parking::parking_ingester
 modal run -m modal_app.pipelines.worldpop::ingest_worldpop
 
 # Run data compression
@@ -141,6 +146,13 @@ modal volume ls alethia-data /processed/summaries/
 
 # Check GeoJSON output
 modal volume ls alethia-data /processed/geo/
+
+# Check parking analysis
+modal volume ls alethia-data /processed/parking/analysis/
+modal volume ls alethia-data /processed/parking/annotated/
+
+# Check vision analysis
+modal volume ls alethia-data /processed/vision/analysis/
 ```
 
 ## 8. Local Frontend Development
@@ -156,27 +168,31 @@ npm run dev
 ## Architecture Overview
 
 ```
-                    Modal Compute Layer (28+ functions)
+                    Modal Compute Layer (31+ functions)
 ┌──────────────────────────────────────────────────────────┐
 │                                                          │
-│  DATA PIPELINES (13)           GPU INFERENCE              │
+│  DATA PIPELINES (14)           GPU INFERENCE              │
 │  ├─ news (30min cron)          ├─ Qwen3 8B (H100)        │
 │  ├─ reddit (1hr cron)          ├─ DocClassifier (T4)      │
 │  ├─ public_data (daily)        ├─ SentimentAnalyzer (T4)  │
-│  ├─ politics (on-demand)       └─ CCTVDetector (T4)       │
-│  ├─ demographics (on-demand)                              │
-│  ├─ reviews (on-demand)        AGENT SWARM                │
-│  ├─ realestate (on-demand)     ├─ neighborhood_intel      │
-│  ├─ federal_register           ├─ regulatory_agent        │
-│  ├─ tiktok (on-demand)         └─ orchestrate_query       │
-│  ├─ traffic (on-demand)                                   │
-│  ├─ cctv (on-demand)           OBSERVABILITY              │
-│  ├─ vision (on-demand)         └─ Arize AX (OTel spans)   │
-│  └─ worldpop (on-demand)                                  │
+│  ├─ politics (on-demand)       ├─ CCTVDetector (T4)       │
+│  ├─ demographics (on-demand)   └─ ParkingAnalyzer (T4)    │
+│  ├─ reviews (on-demand)                                   │
+│  ├─ realestate (on-demand)     AGENT SWARM                │
+│  ├─ federal_register           ├─ neighborhood_intel      │
+│  ├─ tiktok (on-demand)         ├─ regulatory_agent        │
+│  ├─ traffic (on-demand)        └─ orchestrate_query       │
+│  ├─ cctv (on-demand)                                      │
+│  ├─ vision (on-demand)         OPENAI HYBRID (GPT-4o)     │
+│  ├─ parking (on-demand)        ├─ Deep Dive codegen       │
+│  └─ worldpop (on-demand)       ├─ Follow-up suggestions   │
+│                                ├─ Regulatory enrichment   │
+│  OBSERVABILITY                 └─ Vision assessment        │
+│  └─ Arize AX (OTel spans)                                │
 │                                                          │
 │  INFRASTRUCTURE                WEB API                    │
 │  ├─ modal.Queue (event bus)    └─ FastAPI @asgi_app       │
-│  ├─ modal.Dict (cost track)       17 endpoints live       │
+│  ├─ modal.Dict (cost track)       22+ endpoints live      │
 │  ├─ reconciler (5min cron)                                │
 │  └─ Supermemory sync                                      │
 │                                                          │

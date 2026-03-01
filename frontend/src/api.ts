@@ -1,4 +1,4 @@
-import type { DataSources, GeoJSON, NeighborhoodData, Document, CCTVTimeseries, StreetscapeData } from './types'
+import type { DataSources, GeoJSON, NeighborhoodData, Document, CCTVTimeseries, StreetscapeData, VisionAssessData, ParkingData } from './types'
 
 // Modal deployed endpoint — set via VITE_MODAL_URL, fallback to local proxy
 export const API_BASE = import.meta.env.VITE_MODAL_URL || '/api/data'
@@ -64,6 +64,7 @@ export interface StreamChatCallbacks {
   }) => void
   onMemory?: (data: MemoryInfo) => void
   onToken?: (token: string) => void
+  onSuggestions?: (questions: string[]) => void
   onDone?: () => void
   onError?: (error: string) => void
 }
@@ -133,6 +134,9 @@ export async function streamChat(
             break
           case 'token':
             callbacks.onToken?.(data.content)
+            break
+          case 'suggestions':
+            callbacks.onSuggestions?.(data.questions || [])
             break
           case 'done':
             callbacks.onDone?.()
@@ -325,6 +329,18 @@ export const api = {
 
   streetscape: (neighborhood: string) =>
     fetchJSON<StreetscapeData>(`/vision/streetscape/${encodeURIComponent(neighborhood)}`),
+
+  visionAssess: (neighborhood: string) =>
+    fetchJSON<VisionAssessData>(`/vision/assess/${encodeURIComponent(neighborhood)}`),
+
+  parkingLatest: () =>
+    fetchJSON<{ neighborhoods: ParkingData[]; count: number }>('/parking/latest'),
+
+  parking: (neighborhood: string) =>
+    fetchJSON<ParkingData>(`/parking/${encodeURIComponent(neighborhood)}`),
+
+  parkingAnnotatedUrl: (neighborhood: string) =>
+    `${API_BASE}/parking/annotated/${encodeURIComponent(neighborhood)}`,
 }
 
 export interface GraphNode {

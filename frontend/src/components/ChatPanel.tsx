@@ -42,9 +42,10 @@ interface Props {
   neighborhood?: string
   businessType?: string
   memoryInfo?: MemoryInfo | null
+  suggestions?: string[]
 }
 
-export default function ChatPanel({ messages, onSend, loading, isStreaming, agentInfo, agentActive, agentElapsedMs, statusMessage, processStage, chatQuestion, processLogs, neighborhood, businessType, memoryInfo }: Props) {
+export default function ChatPanel({ messages, onSend, loading, isStreaming, agentInfo, agentActive, agentElapsedMs, statusMessage, processStage, chatQuestion, processLogs, neighborhood, businessType, memoryInfo, suggestions }: Props) {
   const [input, setInput] = useState('')
   const [deepDives, setDeepDives] = useState<Record<number, DeepDiveState>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -232,6 +233,20 @@ export default function ChatPanel({ messages, onSend, loading, isStreaming, agen
             <div className="bg-white/[0.04] border border-white/[0.06] px-4 py-2.5 text-xs text-white/30 font-mono">
               processing...
             </div>
+          </div>
+        )}
+
+        {suggestions && suggestions.length > 0 && !isStreaming && !loading && (
+          <div className="flex flex-wrap gap-2 mt-2">
+            {suggestions.map(q => (
+              <button
+                key={q}
+                onClick={() => onSend(q)}
+                className="text-[10px] font-mono px-3 py-1.5 border border-white/10 text-white/40 hover:text-white/70 hover:border-white/25 bg-white/[0.02] hover:bg-white/[0.05] transition-colors cursor-pointer"
+              >
+                {q}
+              </button>
+            ))}
           </div>
         )}
 

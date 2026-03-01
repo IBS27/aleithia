@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import type { StreetscapeData } from '../types/index.ts'
+import type { StreetscapeData, VisionAssessData } from '../types/index.ts'
 import { api } from '../api.ts'
 
 interface Props {
@@ -17,9 +17,14 @@ const INDICATOR_COLORS: Record<string, string> = {
 export default function StreetscapeCard({ neighborhood }: Props) {
   const [data, setData] = useState<StreetscapeData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [assess, setAssess] = useState<VisionAssessData | null>(null)
+  const [assessLoading, setAssessLoading] = useState(false)
+  const [assessError, setAssessError] = useState<string | null>(null)
 
   useEffect(() => {
     setLoading(true)
+    setAssess(null)
+    setAssessError(null)
     api.streetscape(neighborhood)
       .then(d => setData(d.counts ? d as StreetscapeData : null))
       .catch(() => setData(null))
@@ -80,6 +85,58 @@ export default function StreetscapeCard({ neighborhood }: Props) {
           </div>
         ))}
       </div>
+
+      {/* AI Assessment */}
+      {!assess && (
+        <button
+          onClick={() => {
+            setAssessLoading(true)
+            setAssessError(null)
+            api.visionAssess(neighborhood)
+              .then(d => setAssess(d))
+              .catch(e => setAssessError(e instanceof Error ? e.message : 'Assessment failed'))
+              .finally(() => setAssessLoading(false))
+          }}
+          disabled={assessLoading}
+          className="mt-4 w-full text-[10px] font-mono uppercase tracking-wider border border-white/10 px-3 py-2 text-white/40 hover:text-white/70 hover:border-white/25 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
+        >
+          {assessLoading ? 'Analyzing...' : 'Get AI Assessment'}
+        </button>
+      )}
+      {assessError && (
+        <p className="mt-2 text-[10px] text-red-400/70 font-mono">{assessError}</p>
+      )}
+      {assess && (
+        <div className="mt-4 space-y-3 border-t border-white/[0.06] pt-4">
+          <div className="flex items-center justify-between">
+            <h4 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">AI Assessment</h4>
+            <span className="text-[9px] font-mono text-white/15">{assess.frame_count} frames • {assess.model}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="border border-white/[0.06] bg-white/[0.02] p-2.5">
+              <p className="text-[9px] font-mono uppercase tracking-wider text-white/30 mb-1">Storefront Viability</p>
+              <p className="text-sm font-bold text-white/80">{assess.assessment.storefront_viability.score}/10</p>
+              <p className="text-[10px] text-white/40 mt-0.5">{assess.assessment.storefront_viability.condition}</p>
+            </div>
+            <div className="border border-white/[0.06] bg-white/[0.02] p-2.5">
+              <p className="text-[9px] font-mono uppercase tracking-wider text-white/30 mb-1">Pedestrian Activity</p>
+              <p className="text-sm font-bold text-white/80 capitalize">{assess.assessment.pedestrian_activity.level}</p>
+              <p className="text-[10px] text-white/40 mt-0.5">{assess.assessment.pedestrian_activity.demographics}</p>
+            </div>
+          </div>
+          <div className="border border-white/[0.06] bg-white/[0.02] p-2.5">
+            <p className="text-[9px] font-mono uppercase tracking-wider text-white/30 mb-1">Infrastructure</p>
+            <div className="space-y-1 text-[10px] text-white/50">
+              <p>Transit: {assess.assessment.infrastructure.transit_access}</p>
+              <p>Parking: {assess.assessment.infrastructure.parking}</p>
+            </div>
+          </div>
+          <div className="border border-emerald-500/10 bg-emerald-500/[0.03] p-2.5">
+            <p className="text-[9px] font-mono uppercase tracking-wider text-emerald-300/50 mb-1">Recommendation</p>
+            <p className="text-[10px] text-white/60 leading-relaxed">{assess.assessment.overall_recommendation}</p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

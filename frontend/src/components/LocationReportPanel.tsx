@@ -451,39 +451,60 @@ function generatePdf(
   regulatory: RegulatorySummary,
   metrics: MetricItem[],
   sourcesData: { sources: SourceCount[]; total: number },
+  neighborhoodData: NeighborhoodData,
 ) {
   const doc = new jsPDF({ unit: 'pt', format: 'letter' })
-  const marginX = 44
-  const topMargin = 48
+  const marginX = 50
+  const topMargin = 60
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
   const contentWidth = pageWidth - marginX * 2
   let y = topMargin
+  const dateLabel = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+  const footerText = `Confidential — Prepared by Alethia | ${profile.neighborhood} | ${dateLabel}`
+
+  const addFooter = () => {
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7)
+    doc.setTextColor(140, 140, 140)
+    doc.text(footerText, pageWidth / 2, pageHeight - 24, { align: 'center' })
+    doc.setTextColor(0, 0, 0)
+  }
+
+  const newPage = () => {
+    doc.addPage()
+    y = topMargin
+    addFooter()
+  }
 
   const ensureSpace = (minHeight = 30) => {
-    if (y + minHeight > pageHeight - 44) {
-      doc.addPage()
-      y = topMargin
+    if (y + minHeight > pageHeight - 50) {
+      newPage()
     }
   }
 
-  const addHeading = (text: string) => {
-    ensureSpace(28)
+  const addSectionNumber = (num: number, text: string) => {
+    ensureSpace(32)
+    // Thin divider line
+    doc.setDrawColor(200, 200, 200)
+    doc.setLineWidth(0.5)
+    doc.line(marginX, y - 8, marginX + contentWidth, y - 8)
+    y += 2
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(14)
-    doc.text(text, marginX, y)
-    y += 18
+    doc.setFontSize(13)
+    doc.text(`${num}. ${text}`, marginX, y)
+    y += 20
   }
 
   const addSubheading = (text: string) => {
     ensureSpace(22)
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(11)
+    doc.setFontSize(10)
     doc.text(text, marginX, y)
-    y += 15
+    y += 14
   }
 
-  const addParagraph = (text: string, size = 10) => {
+  const addParagraph = (text: string, size = 9.5) => {
     const lines = doc.splitTextToSize(text, contentWidth)
     ensureSpace(lines.length * (size + 3) + 6)
     doc.setFont('helvetica', 'normal')
@@ -494,88 +515,256 @@ function generatePdf(
 
   const addBullet = (text: string) => {
     const wrapped = doc.splitTextToSize(text, contentWidth - 14)
-    ensureSpace(wrapped.length * 13 + 4)
+    ensureSpace(wrapped.length * 12 + 4)
     doc.setFont('helvetica', 'normal')
-    doc.setFontSize(10)
-    doc.text('•', marginX, y)
+    doc.setFontSize(9.5)
+    doc.text('\u2022', marginX, y)
     doc.text(wrapped, marginX + 12, y)
-    y += wrapped.length * 13 + 4
+    y += wrapped.length * 12 + 4
   }
 
-  // Title
-  const dateLabel = new Date().toLocaleString()
+  const addMetricRow = (label: string, value: string) => {
+    ensureSpace(14)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9.5)
+    doc.text(label, marginX + 12, y)
+    doc.setFont('helvetica', 'bold')
+    doc.text(value, marginX + contentWidth - 10, y, { align: 'right' })
+    y += 14
+  }
+
+  // ── Title Page ──
+  y = pageHeight * 0.3
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(18)
-  doc.text('Alethia Intelligence Brief', marginX, y)
-  y += 22
+  doc.setFontSize(24)
+  doc.text('Strategic Location Analysis', pageWidth / 2, y, { align: 'center' })
+  y += 36
   doc.setFont('helvetica', 'normal')
+  doc.setFontSize(14)
+  doc.text(`${profile.business_type} Opportunity — ${profile.neighborhood}, Chicago`, pageWidth / 2, y, { align: 'center' })
+  y += 28
   doc.setFontSize(10)
-  doc.text(`${profile.business_type} • ${profile.neighborhood}`, marginX, y)
-  y += 14
-  doc.text(`Generated: ${dateLabel}`, marginX, y)
-  y += 20
+  doc.setTextColor(100, 100, 100)
+  doc.text(`Prepared by Alethia Intelligence Platform`, pageWidth / 2, y, { align: 'center' })
+  y += 16
+  doc.text(dateLabel, pageWidth / 2, y, { align: 'center' })
+  doc.setTextColor(0, 0, 0)
 
-  // 1. Score Banner
-  addHeading('Business Intelligence Score')
-  addParagraph(`Overall: ${insights.overall}/100 (${insights.profile} profile, ${insights.coverageCount} of 6 categories scored)`)
+  // Score badge on title page
+  y += 40
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(36)
+  doc.text(`${insights.overall}`, pageWidth / 2, y, { align: 'center' })
+  y += 16
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9)
+  doc.setTextColor(100, 100, 100)
+  doc.text('Business Intelligence Score (0–100)', pageWidth / 2, y, { align: 'center' })
+  doc.setTextColor(0, 0, 0)
+  addFooter()
 
-  // 2. Executive Summary
-  addHeading('Executive Summary')
-  addParagraph(buildExecutiveSummary(insights))
+  // ── Section 1: Executive Summary ──
+  newPage()
+  addSectionNumber(1, 'Executive Summary')
 
-  // 3. Advantages
-  addHeading('Advantages')
+  const recommendation = insights.overall >= 65 ? 'We recommend' : insights.overall >= 40 ? 'We conditionally recommend' : 'We caution against'
+  const strongest = [...insights.categories].sort((a, b) => b.score - a.score)[0]
+  const summaryText = `${recommendation} ${profile.neighborhood} for a ${profile.business_type} operation. Overall Business Intelligence Score: ${insights.overall}/100 (${insights.profile} profile, ${insights.coverageCount} of 6 categories scored). ${strongest ? `The strongest signal is ${strongest.name} (${strongest.score}/100).` : ''}`
+  addParagraph(summaryText)
+
   if (advantages.length > 0) {
-    advantages.forEach(s => addBullet(`${s.title}: ${s.detail}`))
-  } else {
-    addBullet('No strong advantages detected at this time.')
+    y += 4
+    addSubheading('Key Advantages')
+    advantages.slice(0, 3).forEach(s => addBullet(`${s.title}: ${s.detail}`))
   }
-
-  // 4. Risks
-  addHeading('Risks')
   if (risks.length > 0) {
-    risks.forEach(s => addBullet(`${s.title}: ${s.detail}`))
-  } else {
-    addBullet('No dominant risks detected at this time.')
+    y += 4
+    addSubheading('Key Risks')
+    risks.slice(0, 3).forEach(s => addBullet(`${s.title}: ${s.detail}`))
   }
 
-  // 5. Competitive Landscape
-  addHeading('Competitive Landscape')
+  // ── Section 2: Labor Market Analytics ──
+  addSectionNumber(2, 'Labor Market Analytics')
+  const demo = neighborhoodData.demographics
+  if (demo) {
+    addSubheading('Talent Supply')
+    addMetricRow('Population within neighborhood', demo.total_population ? demo.total_population.toLocaleString() : 'N/A')
+    addMetricRow('Median age', demo.median_age ? `${demo.median_age} years` : 'N/A')
+    y += 6
+    addSubheading('Wage Indicator')
+    addMetricRow('Median household income', demo.median_household_income ? `$${Math.round(demo.median_household_income).toLocaleString()}` : 'N/A')
+    addMetricRow('Unemployment rate', demo.unemployment_rate != null ? `${(demo.unemployment_rate * 100).toFixed(1)}%` : 'N/A')
+    y += 6
+    addSubheading('Education Profile')
+    addMetricRow("Bachelor's degree holders", demo.bachelors_degree != null ? `${(demo.bachelors_degree * 100).toFixed(1)}%` : 'N/A')
+    addMetricRow("Master's degree holders", demo.masters_degree != null ? `${(demo.masters_degree * 100).toFixed(1)}%` : 'N/A')
+    y += 6
+    addSubheading('Competition for Talent')
+    addMetricRow('Active business licenses (labor competition proxy)', `${neighborhoodData.license_count}`)
+  } else {
+    addParagraph('Demographic data not available for this neighborhood.')
+  }
+
+  // ── Section 3: Competitive Landscape ──
+  addSectionNumber(3, 'Competitive Landscape')
+  const directCount = competitors.filter(c => c.isDirect).length
+  addMetricRow('Total business licenses in area', `${neighborhoodData.license_count}`)
+  addMetricRow('Direct competitors identified', `${directCount}`)
+  const reviews = neighborhoodData.reviews || []
+  const ratings = reviews.map(r => (r.metadata?.rating as number) || 0).filter(r => r > 0)
+  const avgRating = ratings.length > 0 ? (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1) : 'N/A'
+  addMetricRow('Average competitor review rating', avgRating !== 'N/A' ? `${avgRating}/5` : 'N/A')
+  y += 6
   if (competitors.length > 0) {
+    addSubheading('Notable Competitors')
     competitors.forEach(c => {
-      const tag = c.isDirect ? ' [DIRECT COMPETITOR]' : ''
+      const tag = c.isDirect ? ' [DIRECT]' : ''
       addBullet(`${c.name} — ${c.type}${tag}`)
     })
   } else {
-    addBullet('No competitor data available.')
+    addParagraph('No competitor data available.')
   }
 
-  // 6. Regulatory Checklist
-  addHeading('Regulatory Checklist')
-  addSubheading('Inspections')
-  addParagraph(`Pass rate: ${regulatory.passRate}% (${regulatory.passed} passed, ${regulatory.failed} failed, ${regulatory.total} total)`)
-  if (regulatory.recentInspections.length > 0) {
-    regulatory.recentInspections.forEach(i => addBullet(`${i.name}: ${i.result}`))
+  // ── Section 4: Operational Cost Modeling ──
+  addSectionNumber(4, 'Operational Cost Modeling')
+  if (demo) {
+    addSubheading('Real Estate Signal')
+    addMetricRow('Median gross rent', demo.median_gross_rent ? `$${Math.round(demo.median_gross_rent).toLocaleString()}/mo` : 'N/A')
+    addMetricRow('Median home value', demo.median_home_value ? `$${Math.round(demo.median_home_value).toLocaleString()}` : 'N/A')
+    y += 6
   }
+  addSubheading('Permit Investment')
+  const totalFees = neighborhoodData.permits.reduce((sum, p) => {
+    const raw = p.metadata?.raw_record as Record<string, unknown> | undefined
+    const fee = parseFloat(String(raw?.building_fee_paid || '0')) || 0
+    return sum + fee
+  }, 0)
+  addMetricRow('Total building fees paid (recent permits)', totalFees > 0 ? `$${Math.round(totalFees).toLocaleString()}` : 'N/A')
+  addMetricRow('Active permits', `${neighborhoodData.permit_count}`)
   if (regulatory.permitBreakdown.length > 0) {
+    y += 4
     addSubheading('Permits by Type')
-    regulatory.permitBreakdown.forEach(p => addBullet(`${p.type}: ${p.count}`))
+    regulatory.permitBreakdown.forEach(p => addMetricRow(p.type, `${p.count}`))
+  }
+
+  // ── Section 5: Risk Assessment ──
+  addSectionNumber(5, 'Risk Assessment')
+  if (risks.length > 0) {
+    risks.slice(0, 5).forEach(s => addBullet(`${s.title}: ${s.detail}`))
+  } else {
+    addParagraph('No dominant risks detected at this time.')
+  }
+  y += 6
+  addSubheading('Inspection Compliance')
+  addMetricRow('Inspection pass rate', `${regulatory.passRate}%`)
+  addMetricRow('Total inspections', `${regulatory.total}`)
+  addMetricRow('Failed inspections', `${regulatory.failed}`)
+  if (regulatory.recentInspections.length > 0) {
+    y += 4
+    addSubheading('Recent Inspection Results')
+    regulatory.recentInspections.forEach(i => addMetricRow(i.name, i.result))
   }
   if (regulatory.federalAlerts.length > 0) {
-    addSubheading('Federal Regulation Alerts')
+    y += 4
+    addSubheading('Federal Regulatory Alerts')
     regulatory.federalAlerts.forEach(a => addBullet(`${a.title} (${a.agency})`))
   }
+  // Flag BIS categories < 40
+  const weakCategories = insights.categories.filter(c => c.score < 40)
+  if (weakCategories.length > 0) {
+    y += 4
+    addSubheading('Low-Scoring Categories (< 40/100)')
+    weakCategories.forEach(c => addBullet(`${c.name}: ${c.score}/100 — ${c.claim}`))
+  }
 
-  // 7. Key Metrics
-  addHeading('Key Metrics')
-  metrics.forEach(m => addBullet(`${m.label}: ${m.value}`))
+  // ── Section 6: Incentive & Regulatory Environment ──
+  addSectionNumber(6, 'Incentive & Regulatory Environment')
+  addMetricRow('Inspection pass rate', `${regulatory.passRate}% (${regulatory.passed} pass / ${regulatory.total} total)`)
+  addMetricRow('Political/legislative activity', `${neighborhoodData.politics.length} items`)
+  addMetricRow('Federal register activity', `${(neighborhoodData.federal_register || []).length} regulations`)
+  addMetricRow('News mentions', `${neighborhoodData.news.length} articles`)
+  addMetricRow('Community signals (Reddit/TikTok)', `${(neighborhoodData.reddit?.length || 0) + (neighborhoodData.tiktok?.length || 0)} posts`)
 
-  // 8. Data Sources
-  addHeading('Data Sources')
-  sourcesData.sources.forEach(s => addBullet(`${s.name}: ${s.count} documents`))
-  addParagraph(`Total: ${sourcesData.total} documents across ${sourcesData.sources.length} pipelines`)
+  // ── Section 7: Accessibility & Transit ──
+  addSectionNumber(7, 'Accessibility & Transit')
+  const transit = neighborhoodData.transit
+  if (transit) {
+    addMetricRow('Transit score', `${transit.transit_score}/100`)
+    addMetricRow('CTA stations nearby', `${transit.stations_nearby}`)
+    addMetricRow('Total daily riders (nearby stations)', `${transit.total_daily_riders.toLocaleString()}`)
+    if (transit.station_names.length > 0) {
+      addBullet(`Stations: ${transit.station_names.join(', ')}`)
+    }
+  } else {
+    addParagraph('No CTA transit data available for this neighborhood.')
+  }
+  const cctvCams = neighborhoodData.cctv?.cameras || []
+  if (cctvCams.length > 0) {
+    y += 4
+    addSubheading('Highway Traffic Density')
+    const avgVeh = Math.round(cctvCams.reduce((s, c) => s + c.vehicles, 0) / cctvCams.length)
+    addMetricRow('Nearby cameras', `${cctvCams.length}`)
+    addMetricRow('Avg vehicles per camera', `${avgVeh}`)
+    addMetricRow('Density', neighborhoodData.cctv?.density || 'N/A')
+  }
 
-  const fileName = `alethia-brief-${profile.neighborhood.toLowerCase().replaceAll(' ', '-')}-${profile.business_type.toLowerCase().replaceAll(' ', '-')}.pdf`
+  // ── Section 8: Key Metrics Summary ──
+  addSectionNumber(8, 'Key Metrics Summary')
+  // 2x4 table
+  const colWidth = contentWidth / 2
+  for (let i = 0; i < metrics.length; i += 2) {
+    ensureSpace(28)
+    // Left cell
+    doc.setDrawColor(220, 220, 220)
+    doc.setLineWidth(0.5)
+    doc.rect(marginX, y - 10, colWidth - 4, 26)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8)
+    doc.setTextColor(120, 120, 120)
+    doc.text(metrics[i].label, marginX + 6, y - 1)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(11)
+    doc.setTextColor(0, 0, 0)
+    doc.text(metrics[i].value, marginX + 6, y + 12)
+    // Right cell
+    if (i + 1 < metrics.length) {
+      doc.rect(marginX + colWidth + 4, y - 10, colWidth - 4, 26)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(8)
+      doc.setTextColor(120, 120, 120)
+      doc.text(metrics[i + 1].label, marginX + colWidth + 10, y - 1)
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(11)
+      doc.setTextColor(0, 0, 0)
+      doc.text(metrics[i + 1].value, marginX + colWidth + 10, y + 12)
+    }
+    y += 32
+  }
+
+  // ── Section 9: Data Sources & Methodology ──
+  addSectionNumber(9, 'Data Sources & Methodology')
+  sourcesData.sources.forEach(s => addMetricRow(s.name, `${s.count} documents`))
+  y += 4
+  doc.setDrawColor(200, 200, 200)
+  doc.setLineWidth(0.5)
+  doc.line(marginX, y - 4, marginX + contentWidth, y - 4)
+  addMetricRow('Total documents analyzed', `${sourcesData.total}`)
+  y += 8
+  addParagraph(
+    'Business Intelligence Score (BIS) is computed by Alethia across 6 categories: Regulatory, Economic, Market, Demographic, Safety, and Community. ' +
+    'Each category is scored 0–100 based on sub-metrics derived from live pipeline data. The overall score is a weighted average using the selected risk profile. ' +
+    `This report was generated using the "${insights.profile}" risk profile with ${insights.coverageCount} of 6 categories scored.`,
+    8.5,
+  )
+
+  // Add footer to all pages
+  const totalPages = doc.getNumberOfPages()
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i)
+    addFooter()
+  }
+
+  const fileName = `alethia-proposal-${profile.neighborhood.toLowerCase().replaceAll(' ', '-')}-${profile.business_type.toLowerCase().replaceAll(' ', '-')}.pdf`
   doc.save(fileName)
 }
 
@@ -594,8 +783,8 @@ export default function LocationReportPanel({ profile, neighborhoodData, loading
   const sourcesData = neighborhoodData ? extractSources(neighborhoodData) : { sources: [], total: 0 }
 
   const handleDownloadPdf = () => {
-    if (loading || !insights) return
-    generatePdf(profile, insights, advantages, risks, competitors, regulatory!, metrics, sourcesData)
+    if (loading || !insights || !neighborhoodData) return
+    generatePdf(profile, insights, advantages, risks, competitors, regulatory!, metrics, sourcesData, neighborhoodData)
   }
 
   return (

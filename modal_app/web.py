@@ -762,6 +762,27 @@ async def chat(request: Request):
                 span.set_attribute("chat.agents_deployed", result.get("agents_deployed", 0))
                 span.set_attribute("chat.data_points", result.get("total_data_points", 0))
 
+            # Generate follow-up suggestions via GPT-4o (non-blocking, skip on failure)
+            try:
+                from modal_app.openai_utils import openai_available, get_openai_client
+                if openai_available():
+                    oai_client = get_openai_client()
+                    suggestion_resp = await oai_client.chat.completions.create(
+                        model="gpt-4o",
+                        messages=[
+                            {"role": "system", "content": "Generate 2-3 concise follow-up questions a small business owner would ask next. Return JSON: {\"questions\": [\"...\", \"...\"]}. Questions should be specific to the business type and neighborhood context provided. Keep each under 60 characters."},
+                            {"role": "user", "content": f"User asked: {question}\nResponse summary: {full_response[:2000]}\nBusiness: {business_type}, Neighborhood: {neighborhood}"},
+                        ],
+                        max_tokens=200,
+                        temperature=0.7,
+                        response_format={"type": "json_object"},
+                    )
+                    suggestions = json.loads(suggestion_resp.choices[0].message.content or "{}").get("questions", [])[:3]
+                    if suggestions:
+                        yield f"data: {json.dumps({'type': 'suggestions', 'questions': suggestions})}\n\n"
+            except Exception:
+                pass  # Silently skip suggestions on failure
+
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
             # Store conversation + seed profile in Supermemory (fire-and-forget)
@@ -1411,6 +1432,9 @@ async def neighborhood(name: str, business_type: str = ""):
         # CTA transit proximity score
         transit_data = _compute_transit_score(name)
 
+        # Parking analysis
+        parking_data = _load_parking_for_neighborhood(name)
+
         if span:
             span.set_attribute("output.value", json.dumps({
                 "inspections": len(inspections), "permits": len(permits),
@@ -1438,6 +1462,7 @@ async def neighborhood(name: str, business_type: str = ""):
             "traffic": traffic_docs[:10],
             "cctv": cctv_analysis,
             "transit": transit_data,
+            "parking": parking_data,
             "inspection_stats": {
                 "total": len(inspections),
                 "failed": failed,
@@ -1901,6 +1926,167 @@ async def vision_streetscape(neighborhood: str):
     }
 
 
+@web_app.get("/parking/latest")
+async def parking_latest():
+    """Latest parking analysis for all neighborhoods."""
+    volume.reload()
+    analysis_dir = Path(PROCESSED_DATA_PATH) / "parking" / "analysis"
+    if not analysis_dir.exists():
+        return {"neighborhoods": [], "count": 0}
+
+    latest_by_nb: dict[str, dict] = {}
+    for jf in sorted(analysis_dir.glob("*.json"), reverse=True)[:500]:
+        try:
+            data = json.loads(jf.read_text())
+            nb = data.get("neighborhood", "")
+            if nb and nb not in latest_by_nb:
+                latest_by_nb[nb] = data
+        except Exception:
+            continue
+
+    neighborhoods = list(latest_by_nb.values())
+    return {"neighborhoods": neighborhoods, "count": len(neighborhoods)}
+
+
+@web_app.get("/parking/{neighborhood}")
+async def parking_neighborhood(neighborhood: str):
+    """Latest parking analysis for a single neighborhood."""
+    data = _load_parking_for_neighborhood(neighborhood)
+    if not data:
+        return JSONResponse({"error": f"No parking data for {neighborhood}"}, status_code=404)
+    return data
+
+
+@web_app.get("/parking/annotated/{neighborhood}")
+async def parking_annotated(neighborhood: str):
+    """Serve annotated satellite JPEG with parking lot overlays."""
+    from fastapi.responses import Response
+
+    volume.reload()
+    slug = neighborhood.lower().replace(" ", "_")
+    ann_dir = Path(PROCESSED_DATA_PATH) / "parking" / "annotated"
+    ann_path = ann_dir / f"{slug}.jpg"
+
+    if not ann_path.exists():
+        return JSONResponse({"error": f"No annotated image for {neighborhood}"}, status_code=404)
+
+    return Response(content=ann_path.read_bytes(), media_type="image/jpeg")
+
+
+def _load_parking_for_neighborhood(name: str) -> dict | None:
+    """Load latest parking analysis JSON for a neighborhood."""
+    volume.reload()
+    analysis_dir = Path(PROCESSED_DATA_PATH) / "parking" / "analysis"
+    if not analysis_dir.exists():
+        return None
+
+    slug = name.lower().replace(" ", "_")
+    # Find latest analysis file for this neighborhood
+    candidates = sorted(analysis_dir.glob(f"{slug}_*.json"), reverse=True)
+    if not candidates:
+        return None
+
+    try:
+        return json.loads(candidates[0].read_text())
+    except Exception:
+        return None
+
+
+@web_app.get("/vision/assess/{neighborhood}")
+async def vision_assess(neighborhood: str):
+    """AI-powered street assessment using GPT-4o vision on collected frames."""
+    from modal_app.openai_utils import openai_available, get_openai_client
+
+    if not openai_available():
+        return JSONResponse(
+            {"error": "Vision assessment requires OpenAI API key", "fallback": "Use /vision/streetscape for YOLO-based analysis"},
+            status_code=503,
+        )
+
+    volume.reload()
+    slug = neighborhood.lower().replace(" ", "_")
+
+    # Collect frames from CCTV and vision pipeline
+    frame_paths: list[Path] = []
+
+    cctv_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "annotated"
+    if cctv_dir.exists():
+        for fp in sorted(cctv_dir.glob("*.jpg"), reverse=True)[:5]:
+            frame_paths.append(fp)
+
+    vision_dir = Path(RAW_DATA_PATH) / "vision" / "frames"
+    if vision_dir.exists():
+        for fp in sorted(vision_dir.glob(f"{slug}*.jpg"), reverse=True)[:5]:
+            frame_paths.append(fp)
+        if len(frame_paths) < 3:
+            for fp in sorted(vision_dir.glob("*.jpg"), reverse=True)[:5]:
+                if fp not in frame_paths:
+                    frame_paths.append(fp)
+
+    frame_paths = frame_paths[:3]
+
+    if not frame_paths:
+        return JSONResponse(
+            {"error": f"No frames available for {neighborhood}", "frame_count": 0},
+            status_code=404,
+        )
+
+    # Build vision messages with frames
+    client = get_openai_client()
+    image_content = []
+    for fp in frame_paths:
+        try:
+            img_bytes = fp.read_bytes()
+            b64 = base64.b64encode(img_bytes).decode("utf-8")
+            image_content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "low"},
+            })
+        except Exception:
+            continue
+
+    if not image_content:
+        return JSONResponse({"error": "Failed to read frame images"}, status_code=500)
+
+    try:
+        resp = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an urban commercial real estate analyst. Analyze street-level images and provide a structured assessment. "
+                        "Return JSON with this schema: {\"storefront_viability\": {\"score\": 1-10, \"available_spaces\": str, \"condition\": str}, "
+                        "\"competitor_presence\": {\"restaurants\": str, \"retail\": str, \"notable_businesses\": [str]}, "
+                        "\"pedestrian_activity\": {\"level\": \"high\"|\"medium\"|\"low\", \"demographics\": str, \"peak_indicators\": str}, "
+                        "\"infrastructure\": {\"transit_access\": str, \"parking\": str, \"road_condition\": str}, "
+                        "\"overall_recommendation\": str (2-3 sentences)}"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": f"Assess this area in {neighborhood}, Chicago for small business viability. Analyze the street scenes:"},
+                        *image_content,
+                    ],
+                },
+            ],
+            max_tokens=600,
+            temperature=0.3,
+            response_format={"type": "json_object"},
+        )
+
+        assessment = json.loads(resp.choices[0].message.content or "{}")
+        return {
+            "assessment": assessment,
+            "frame_count": len(image_content),
+            "neighborhood": neighborhood,
+            "model": "gpt-4o",
+        }
+    except Exception as e:
+        return JSONResponse({"error": f"Vision assessment failed: {e}"}, status_code=500)
+
+
 @web_app.get("/geo")
 async def geo():
     """GeoJSON FeatureCollection for map."""
@@ -2249,6 +2435,24 @@ Rules:
 - Always wrap file reads in try/except to handle missing or malformed files gracefully
 - Output only the Python code in a ```python``` fence. No explanation."""
 
+CODEGEN_SYSTEM_PROMPT_GPT4O = """You are a senior data analyst. Write a self-contained Python script that answers the user's question using real data files.
+
+Rules:
+- Read data from /data/raw/{source}/ and /data/processed/enriched/ (JSON files)
+- Write results to /output/result.json (required) and optionally /output/chart.png
+- result.json must have: {"title": str, "summary": str, "stats": {key: value}}
+- Only use: json, os, pathlib, glob, collections, datetime, pandas, numpy, matplotlib, seaborn
+- matplotlib.use("Agg") must be called before any plotting
+- Max 100 lines. No network calls, no subprocess, no sys.exit.
+- Create /output/ directory at the start: os.makedirs("/output", exist_ok=True)
+- Wrap ALL file reads in try/except — skip corrupted/missing files gracefully
+- Compute percentile rankings where applicable (e.g. "top 25% of neighborhoods")
+- Detect simple trends: compare recent vs older data when timestamps are available
+- For charts: use dark theme (plt.style.use('dark_background')), proper axis labels, tight_layout
+- Use seaborn color palettes for multi-series plots
+- Validate result.json schema before writing: title must be str, stats must be dict
+- Output only the Python code in a ```python``` fence. No explanation."""
+
 
 def _discover_data_files(neighborhood: str | None = None) -> dict:
     """Scan volume for available data files so the LLM knows what exists."""
@@ -2368,9 +2572,8 @@ async def analyze(payload: _AnalyzeRequest):
                 status_code=404,
             )
 
-        # 2. Generate analysis code via LLM
-        llm_cls = modal.Cls.from_name("alethia", "AlethiaLLM")
-        llm = llm_cls()
+        # 2. Generate analysis code via LLM (GPT-4o when available, Qwen3 fallback)
+        from modal_app.openai_utils import openai_available, get_openai_client
 
         prompt = _build_codegen_prompt(
             payload.question,
@@ -2379,11 +2582,33 @@ async def analyze(payload: _AnalyzeRequest):
             payload.business_type,
             available,
         )
-        messages = [
-            {"role": "system", "content": CODEGEN_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ]
-        response = await llm.generate.remote.aio(messages, max_tokens=2048, temperature=0.3)
+
+        async def _codegen_via_qwen(p: str) -> str:
+            llm_cls = modal.Cls.from_name("alethia", "AlethiaLLM")
+            llm = llm_cls()
+            msgs = [{"role": "system", "content": CODEGEN_SYSTEM_PROMPT}, {"role": "user", "content": p}]
+            return await llm.generate.remote.aio(msgs, max_tokens=2048, temperature=0.3)
+
+        model_used = "qwen3-8b"
+        if openai_available():
+            try:
+                client = get_openai_client()
+                oai_resp = await client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": CODEGEN_SYSTEM_PROMPT_GPT4O},
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=2048,
+                    temperature=0.3,
+                )
+                response = oai_resp.choices[0].message.content or ""
+                model_used = "gpt-4o"
+            except Exception as e:
+                print(f"GPT-4o codegen failed, falling back to Qwen3: {e}")
+                response = await _codegen_via_qwen(prompt)
+        else:
+            response = await _codegen_via_qwen(prompt)
 
         code = _extract_python_code(response)
         if not code:
@@ -2429,12 +2654,14 @@ async def analyze(payload: _AnalyzeRequest):
         if span:
             span.set_attribute("deep_dive.has_chart", chart_b64 is not None)
             span.set_attribute("deep_dive.code_lines", len(code.splitlines()))
+            span.set_attribute("deep_dive.model", model_used)
 
         return {
             "code": code,
             "result": result_data or {"title": "Analysis", "summary": "Script completed but produced no result.json", "stats": {}, "raw_output": stdout_text[:2000]},
             "chart": chart_b64,
             "stderr": stderr_text[:500] if stderr_text else None,
+            "model_used": model_used,
         }
 
     except Exception as e:

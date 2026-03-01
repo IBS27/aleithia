@@ -16,6 +16,7 @@ CACHE_PATH = f"{VOLUME_MOUNT}/cache"
 _arize_packages = [
     "arize-otel",
     "openinference-instrumentation",
+    "openinference-instrumentation-openai",
     "opentelemetry-api",
     "opentelemetry-sdk",
 ]
@@ -27,6 +28,7 @@ _base = (
         "httpx==0.27.0",
         "pydantic==2.9.0",
         "feedparser==6.0.11",
+        "openai==1.50.0",
         *_arize_packages,
     )
 )
@@ -101,7 +103,6 @@ label_image = (
         "httpx==0.27.0",
         "pillow==10.4.0",
         *_arize_packages,
-        "openinference-instrumentation-openai",
     )
     .add_local_python_source("modal_app", copy=True)
 )
@@ -110,6 +111,19 @@ yolo_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("libgl1-mesa-glx", "libglib2.0-0")
     .pip_install("ultralytics==8.3.40", "opencv-python-headless==4.9.0.80", "httpx==0.27.0", "pydantic==2.9.0")
+    .add_local_python_source("modal_app", copy=True)
+)
+
+# Parking detection: SegFormer + YOLOv8m + SAHI for satellite imagery analysis
+parking_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .apt_install("libgl1-mesa-glx", "libglib2.0-0")
+    .pip_install(
+        "transformers>=4.45.0", "torch>=2.4.0",
+        "ultralytics==8.3.40", "sahi>=0.11.0",
+        "opencv-python-headless==4.9.0.80", "Pillow>=10.4.0",
+        "httpx==0.27.0", "pydantic==2.9.0",
+    )
     .add_local_python_source("modal_app", copy=True)
 )
 

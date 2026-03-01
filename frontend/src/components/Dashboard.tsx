@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { SignedIn, SignedOut, SignInButton, SignUpButton, useClerk, useUser } from '@clerk/clerk-react'
-import type { UserProfile, NeighborhoodData, DataSources, RiskScore, CCTVData, Document } from '../types/index.ts'
+import type { UserProfile, NeighborhoodData, DataSources, RiskScore, CCTVData, Document, ParkingData } from '../types/index.ts'
 import { api, API_BASE, fetchTrends, type TrendData } from '../api.ts'
 import RiskCard from './RiskCard.tsx'
 import MapView from './MapView.tsx'
@@ -229,6 +229,7 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
     const processLogs = useRef<string[]>([])
     const userId = user?.id ?? `anon_${Date.now()}`
     const [memoryInfo, setMemoryInfo] = useState<import('../api.ts').MemoryInfo | null>(null)
+    const [suggestions, setSuggestions] = useState<string[]>([])
   */
 
   const refreshData = async () => {
@@ -354,6 +355,9 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
               }
               return updated
             })
+          },
+          onSuggestions: (questions) => {
+            setSuggestions(questions)
           },
           onDone: () => {
             setIsStreaming(false)
@@ -704,7 +708,7 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
               )}
 
               {activeTab === 'vision' && (
-                <VisionTab cctv={neighborhoodData?.cctv ?? null} traffic={neighborhoodData?.traffic ?? []} neighborhood={profile.neighborhood} />
+                <VisionTab cctv={neighborhoodData?.cctv ?? null} traffic={neighborhoodData?.traffic ?? []} parking={neighborhoodData?.parking ?? null} neighborhood={profile.neighborhood} />
               )}
 
               {activeTab === 'models' && (
@@ -731,7 +735,7 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
           {/*
             <ChatPanel
               messages={messages}
-              onSend={handleChat}
+              onSend={(msg) => { setSuggestions([]); handleChat(msg) }}
               loading={chatLoading}
               isStreaming={isStreaming}
               agentInfo={agentInfo}
@@ -742,6 +746,7 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
               chatQuestion={chatQuestion}
               processLogs={processLogs.current}
               memoryInfo={memoryInfo}
+              suggestions={suggestions}
             />
           */}
           <LocationReportPanel
@@ -781,7 +786,7 @@ const PIPELINE_STEPS = [
   { label: 'Scoring', sub: 'Density classification' },
 ] as const
 
-function VisionTab({ cctv, traffic, neighborhood }: { cctv: CCTVData | null; traffic: Document[]; neighborhood: string }) {
+function VisionTab({ cctv, traffic, parking, neighborhood }: { cctv: CCTVData | null; traffic: Document[]; parking: ParkingData | null; neighborhood: string }) {
   const [expandedCam, setExpandedCam] = useState<string | null>(null)
   const cameras = cctv?.cameras ?? []
 
@@ -829,6 +834,98 @@ function VisionTab({ cctv, traffic, neighborhood }: { cctv: CCTVData | null; tra
 
       {/* Streetscape Intelligence */}
       <StreetscapeCard neighborhood={neighborhood} />
+
+      {/* Satellite Parking Detection */}
+      {parking && parking.parking_lots.length > 0 && (
+        <>
+          <div className="border border-white/[0.06] bg-white/[0.02] p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">
+                Satellite Parking Detection
+              </h3>
+              <span className="text-[9px] font-mono px-2 py-0.5 border border-white/10 text-white/25">
+                SegFormer + YOLOv8m
+              </span>
+            </div>
+
+            {/* Stat grid */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+              <div className="border border-white/[0.06] bg-white/[0.02] p-3">
+                <div className="text-xl font-bold font-mono text-white">{parking.parking_lots.length}</div>
+                <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-1">Lots Detected</div>
+              </div>
+              <div className="border border-white/[0.06] bg-white/[0.02] p-3">
+                <div className="text-xl font-bold font-mono text-blue-400">{parking.total_capacity}</div>
+                <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-1">Total Capacity</div>
+              </div>
+              <div className="border border-white/[0.06] bg-white/[0.02] p-3">
+                <div className="text-xl font-bold font-mono text-green-400">{parking.total_vehicles}</div>
+                <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-1">Vehicles</div>
+              </div>
+              <div className="border border-white/[0.06] bg-white/[0.02] p-3">
+                <div className={`text-xl font-bold font-mono ${parking.overall_occupancy > 0.85 ? 'text-red-400' : parking.overall_occupancy > 0.6 ? 'text-amber-400' : 'text-green-400'}`}>
+                  {Math.round(parking.overall_occupancy * 100)}%
+                </div>
+                <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-1">Occupancy</div>
+              </div>
+            </div>
+
+            {/* Annotated satellite image */}
+            <div className="relative aspect-video bg-black/40 overflow-hidden mb-4">
+              <img
+                src={api.parkingAnnotatedUrl(neighborhood)}
+                alt={`Parking analysis — ${neighborhood}`}
+                className="w-full h-full object-contain"
+                onError={e => { e.currentTarget.style.display = 'none' }}
+              />
+            </div>
+
+            {/* Per-lot breakdown table */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-white/[0.04]">
+                    <th className="px-3 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">#</th>
+                    <th className="px-3 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Area</th>
+                    <th className="px-3 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Capacity</th>
+                    <th className="px-3 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Vehicles</th>
+                    <th className="px-3 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Occupancy</th>
+                    <th className="px-3 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Location</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {parking.parking_lots.map((lot, i) => (
+                    <tr key={i} className="border-b border-white/[0.03] hover:bg-white/[0.02]">
+                      <td className="px-3 py-2 text-xs font-mono text-white/30">{i + 1}</td>
+                      <td className="px-3 py-2 text-xs font-mono text-white/50">
+                        {lot.area_sqm > 1000 ? `${(lot.area_sqm / 1000).toFixed(1)}k` : Math.round(lot.area_sqm)} m²
+                      </td>
+                      <td className="px-3 py-2 text-xs font-mono text-white/50">{lot.estimated_capacity}</td>
+                      <td className="px-3 py-2 text-xs font-mono text-white/50">{lot.vehicles_detected}</td>
+                      <td className={`px-3 py-2 text-xs font-mono font-medium ${
+                        lot.occupancy_rate > 0.85 ? 'text-red-400' :
+                        lot.occupancy_rate > 0.6 ? 'text-amber-400' :
+                        'text-green-400'
+                      }`}>
+                        {Math.round(lot.occupancy_rate * 100)}%
+                      </td>
+                      <td className="px-3 py-2 text-[10px] font-mono text-white/30">
+                        {lot.center_lat.toFixed(4)}, {lot.center_lng.toFixed(4)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {parking.timestamp && (
+              <div className="mt-3 text-[9px] font-mono text-white/15 text-right">
+                Last analyzed: {new Date(parking.timestamp).toLocaleString()}
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Section B: Model Card */}
       <div className="border border-white/[0.06] bg-white/[0.02] p-5">

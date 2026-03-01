@@ -2,7 +2,7 @@
 
 Chicago-focused data source collectors, each running as Modal functions. All output is normalized into the common `Document` schema before writing to Modal Volume. Pipelines push documents to `modal.Queue` for GPU classification.
 
-**Live stats:** 1,889+ documents | 47 neighborhoods | 5 cron sources | 10 on-demand sources | 13 pipelines total
+**Live stats:** 1,889+ documents | 47 neighborhoods | 5 cron sources | 11 on-demand sources | 14 pipelines total
 
 ---
 
@@ -233,7 +233,44 @@ Chicago-focused data source collectors, each running as Modal functions. All out
 
 ---
 
-## 9. Population Demographics — `worldpop_ingester`
+## 9. Satellite Parking Detection — `parking_ingester`
+
+**File:** `modal_app/pipelines/parking.py`
+**Schedule:** On-demand
+**Pattern:** Mapbox satellite tile download → SegFormer-b5 semantic segmentation → YOLOv8m + SAHI vehicle detection → occupancy estimation
+
+**Sources:**
+- Mapbox Satellite API (requires `MAPBOX_TOKEN`)
+- Slippy map tiles at zoom level 19 (~0.3m/pixel resolution)
+
+**What we collect:**
+- 3x3 tile grid (768x768 composite) per neighborhood centroid
+- Parking lot detection via SegFormer-b5 Cityscapes segmentation (road + terrain surfaces)
+- Vehicle detection via YOLOv8m with SAHI slicing (640px tiles, 0.2 overlap) for car, motorcycle, bus, truck
+- Per-lot metrics: center lat/lng, area (sqm), estimated capacity (15 sqm/stall), vehicles detected, occupancy rate
+- Overall metrics: total lots, total capacity, total vehicles, overall occupancy, coverage area
+- Annotated satellite overlay JPEG with green lot contours + red vehicle bounding boxes
+
+**Processing pipeline:**
+1. CPU ingester downloads 3x3 Mapbox satellite tiles per neighborhood
+2. GPU analyzer (T4) stitches tiles into composite image
+3. SegFormer-b5 generates semantic segmentation mask (parking surfaces)
+4. Morphological cleanup → contour detection with filters (aspect ratio, solidity, area)
+5. YOLOv8m + SAHI detects vehicles, NMS deduplication
+6. Vehicles assigned to lot regions via mask lookup
+7. Results saved as JSON analysis + annotated JPEG overlay
+
+**Volume paths:**
+- Raw tiles: `/data/raw/parking/{neighborhood}_{timestamp}/`
+- Analysis JSON: `/data/processed/parking/analysis/{slug}_{timestamp}.json`
+- Annotated images: `/data/processed/parking/annotated/{slug}.jpg`
+
+**GPU:** T4 via `ParkingAnalyzer` class (SegFormer-b5 + YOLOv8m, `@modal.enter(snap=True)`)
+**Functions:** `parking_ingester`, `analyze_parking_batch`, `ParkingAnalyzer`
+
+---
+
+## 10. Population Demographics — `worldpop_ingester`
 
 **File:** `modal_app/pipelines/worldpop.py`
 **Schedule:** On-demand
@@ -284,4 +321,5 @@ Chicago-focused data source collectors, each running as Modal functions. All out
 | `traffic_ingester` | On-demand | — | Active (needs TOMTOM_API_KEY) |
 | `cctv_ingester` + `CCTVDetector` | On-demand | — | Active (public IDOT API) |
 | `vision` (5 functions) | On-demand | — | Active (needs OPENAI_API_KEY) |
+| `parking` (3 functions) | On-demand | — | Active (needs MAPBOX_TOKEN) |
 | `worldpop_ingester` | On-demand | — | Active (needs Earth Engine auth) |

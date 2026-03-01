@@ -183,6 +183,40 @@ export interface StreetscapeData {
   analysis_count: number
 }
 
+export interface VisionAssessment {
+  storefront_viability: { score: number; available_spaces: string; condition: string }
+  competitor_presence: { restaurants: string; retail: string; notable_businesses: string[] }
+  pedestrian_activity: { level: 'high' | 'medium' | 'low'; demographics: string; peak_indicators: string }
+  infrastructure: { transit_access: string; parking: string; road_condition: string }
+  overall_recommendation: string
+}
+
+export interface VisionAssessData {
+  assessment: VisionAssessment
+  frame_count: number
+  neighborhood: string
+  model: string
+}
+
+export interface ParkingLot {
+  center_lat: number
+  center_lng: number
+  area_sqm: number
+  estimated_capacity: number
+  vehicles_detected: number
+  occupancy_rate: number
+}
+
+export interface ParkingData {
+  neighborhood: string
+  parking_lots: ParkingLot[]
+  total_capacity: number
+  total_vehicles: number
+  overall_occupancy: number
+  coverage_area_sqm: number
+  timestamp: string
+}
+
 export interface NeighborhoodData {
   neighborhood: string
   metrics: NeighborhoodMetrics
@@ -207,6 +241,7 @@ export interface NeighborhoodData {
   license_count: number
   cctv?: CCTVData
   transit?: TransitData
+  parking?: ParkingData
 }
 
 export interface TransitData {
