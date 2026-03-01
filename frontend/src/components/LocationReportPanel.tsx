@@ -26,8 +26,6 @@ type Signal = {
   detail: string
 }
 
-type ScoredSignal = Signal & { priority: number }
-
 const CATEGORY_TITLES: Record<string, string> = {
   regulatory: 'Regulatory environment',
   economic: 'Economic momentum',
@@ -37,113 +35,202 @@ const CATEGORY_TITLES: Record<string, string> = {
   community: 'Community momentum',
 }
 
-const CRITICAL_MISSING_DATA_CHECKS: Array<{
-  key: string
-  title: string
-  detail: string
-  isMissing: (data: NeighborhoodData) => boolean
-}> = [
-  {
-    key: 'regulatory',
-    title: 'Missing compliance baseline data',
-    detail: 'No food inspection coverage is available, which makes licensing/compliance risk harder to quantify before launch.',
-    isMissing: (data) => (data.inspection_stats.total ?? 0) === 0 && data.inspections.length === 0,
-  },
-  {
-    key: 'market',
-    title: 'Missing customer demand signal',
-    detail: 'No review data is available, reducing confidence in pricing power and product-market fit assumptions.',
-    isMissing: (data) => (data.reviews?.length || 0) === 0,
-  },
-  {
-    key: 'safety',
-    title: 'Missing foot-traffic visibility',
-    detail: 'Limited CCTV/traffic observations create uncertainty in pedestrian flow and delivery accessibility forecasts.',
-    isMissing: (data) => !data.cctv || data.cctv.cameras.length === 0 || (data.traffic?.length || 0) === 0,
-  },
-  {
-    key: 'demographic',
-    title: 'Missing demographic depth',
-    detail: 'Demographic baselines are incomplete, making purchasing-power and audience-fit estimates less reliable.',
-    isMissing: (data) => !data.demographics,
-  },
-]
+// Extract granular, business-specific advantages from raw data
+function extractGranularAdvantage(data: NeighborhoodData, profile: UserProfile): Signal | null {
+  const isServiceBusiness = ['Salon', 'Barbershop', 'Gym'].includes(profile.business_type)
+  const isFoodBusiness = ['Restaurant', 'Coffee Shop', 'Bar', 'Cafe'].includes(profile.business_type)
+
+  // Service businesses: check for good population base
+  if (isServiceBusiness && data.demographics) {
+    const d = data.demographics
+    if (d.total_population && d.total_population > 5000) {
+      return {
+        title: 'Strong resident base supports repeat customer potential',
+        detail: `Neighborhood has ~${Math.round(d.total_population / 1000)}K residents, creating a stable foundation for walk-in and repeat service business.`,
+      }
+    }
+  }
+
+  // Check for recent real estate activity (indicates neighborhood momentum)
+  const realestate = (data.realestate?.length || 0)
+  if (realestate > 3) {
+    return {
+      title: 'Recent real estate activity signals neighborhood growth',
+      detail: `${realestate} active real estate listings indicate ongoing residential or commercial interest in the area.`,
+    }
+  }
+
+  // Food/beverage: check for social/news visibility
+  if (isFoodBusiness) {
+    const newsCount = (data.news?.length || 0)
+    if (newsCount > 5) {
+      return {
+        title: 'Neighborhood has visible media presence',
+        detail: `${newsCount} recent local news mentions indicate visitor traffic potential and community awareness.`,
+      }
+    }
+  }
+
+  // Check for diverse license ecosystem (indicates commercial vitality)
+  const uniqueLicenseTypes = new Set(
+    data.licenses.map(l => (l.metadata?.raw_record as Record<string, unknown>)?.license_description || '').filter(Boolean)
+  )
+  if (uniqueLicenseTypes.size > 15) {
+    return {
+      title: 'Diverse business ecosystem suggests commercial stability',
+      detail: `${uniqueLicenseTypes.size} different business types operate in the neighborhood, indicating established commercial infrastructure.`,
+    }
+  }
+
+  return null
+}
+
+// Extract granular, business-specific risks from raw data
+function extractGranularRisk(data: NeighborhoodData, profile: UserProfile): Signal | null {
+  const isServiceBusiness = ['Salon', 'Barbershop', 'Gym'].includes(profile.business_type)
+  const isFoodBusiness = ['Restaurant', 'Coffee Shop', 'Bar', 'Cafe'].includes(profile.business_type)
+
+  // Service businesses: check for low foot traffic
+  if (isServiceBusiness && data.cctv) {
+    const cameras = data.cctv.cameras || []
+    const avgPeds = data.cctv.avg_pedestrians || 0
+    
+    if (cameras.length > 0 && avgPeds < 5) {
+      return {
+        title: 'Observed foot traffic too low for walk-in service business',
+        detail: `Average pedestrian count ~${Math.round(avgPeds)}/observation across ${cameras.length} cameras; service businesses typically need 10+ for sustainable walk-in volume.`,
+      }
+    }
+  }
+
+  // Service businesses: check for income mismatch
+  if (isServiceBusiness && data.demographics && data.demographics.median_household_income) {
+    const income = data.demographics.median_household_income
+    if (income < 30000) {
+      return {
+        title: 'Local income levels may limit premium service demand',
+        detail: `Median household income ~$${Math.round(income / 1000)}K suggests predominantly price-sensitive customer base; premium services may struggle.`,
+      }
+    }
+  }
+
+  // Food businesses: check for stale/declining review activity
+  if (isFoodBusiness && data.reviews && data.reviews.length > 0) {
+    const recentReviews = data.reviews.filter(r => {
+      const metadata = r.metadata as Record<string, unknown>
+      const raw = metadata?.raw_record as Record<string, unknown>
+      const reviewDate = raw?.review_date || raw?.date
+      if (!reviewDate) return false
+      const daysSince = (Date.now() - new Date(reviewDate as string).getTime()) / (1000 * 60 * 60 * 24)
+      return daysSince < 90
+    }).length
+
+    const totalReviews = data.reviews.length
+    const recentPct = (recentReviews / totalReviews) * 100
+    
+    if (recentPct < 25 && totalReviews > 5) {
+      return {
+        title: 'Review activity declining; weak market engagement signal',
+        detail: `Only ${recentReviews} of ${totalReviews} reviews are recent (< 90 days); suggests weakening customer interest or market presence.`,
+      }
+    }
+  }
+
+  // Generic: check for extreme competitor density
+  const competitors = data.licenses.length
+  if (competitors > 30) {
+    return {
+      title: 'Very high competitor density may compress profit margins',
+      detail: `${competitors} active business licenses suggest intense local competition; differentiation becomes critical for viability.`,
+    }
+  }
+
+  // Check for very low inspection pass rate (food safety risk)
+  if (isFoodBusiness && data.inspection_stats.total > 0) {
+    const passRate = data.inspection_stats.passed / data.inspection_stats.total
+    if (passRate < 0.6) {
+      return {
+        title: 'Area shows low food safety compliance baseline',
+        detail: `Only ${Math.round(passRate * 100)}% of ${data.inspection_stats.total} inspections passed; suggests regulatory compliance challenges in the market.`,
+      }
+    }
+  }
+
+  return null
+}
 
 function buildAdvantages(data: NeighborhoodData | null, profile: UserProfile): Signal[] {
   if (!data) return []
 
+  // Try to extract a granular, data-driven advantage first
+  const granularAdvantage = extractGranularAdvantage(data, profile)
+  if (granularAdvantage) {
+    return [granularAdvantage]
+  }
+
+  // Fall back to BIS-driven advantage
   const insights = computeInsights(data, profile, 'conservative')
   const positive = insights.categories
     .filter(cat => cat.signal !== 'negative')
     .sort((a, b) => b.score - a.score)
-    .map<ScoredSignal>((cat) => ({
-      priority: cat.score,
-      title: CATEGORY_TITLES[cat.id] ?? cat.name,
-      detail: `${cat.claim} (Business Intelligence Score: ${cat.score}/100).`,
-    }))
 
-  if (positive.length === 0 && insights.categories.length > 0) {
-    const strongest = [...insights.categories].sort((a, b) => b.score - a.score)[0]
+  if (positive.length > 0) {
+    const strongest = positive[0]
     return [{
       title: CATEGORY_TITLES[strongest.id] ?? strongest.name,
       detail: `${strongest.claim} (Business Intelligence Score: ${strongest.score}/100).`,
     }]
   }
 
-  if (positive.length === 0) {
-    return [{
-      title: 'Limited favorable evidence',
-      detail: 'Not enough scored categories show a strong upside signal yet; collect more ground-truth data before scaling.',
-    }]
-  }
-
-  return positive.slice(0, 2)
+  return [{
+    title: 'Limited favorable evidence',
+    detail: 'Not enough scored categories show a strong upside signal yet; collect more ground-truth data before scaling.',
+  }]
 }
 
 function buildRisks(data: NeighborhoodData | null, profile: UserProfile): Signal[] {
   if (!data) return []
 
+  // Try to extract a granular, data-driven risk first
+  const granularRisk = extractGranularRisk(data, profile)
+  
   const insights = computeInsights(data, profile, 'conservative')
+  
+  // High-severity score-driven risks (actual negative/concerning scores)
   const scoreDrivenRisks = insights.categories
     .filter(cat => cat.signal === 'negative' || cat.score < 40)
     .sort((a, b) => a.score - b.score)
-    .map<ScoredSignal>((cat) => ({
-      priority: 100 - cat.score,
-      title: CATEGORY_TITLES[cat.id] ?? cat.name,
-      detail: `${cat.claim} (Business Intelligence Score: ${cat.score}/100).`,
-    }))
 
-  const missingDataRisks = CRITICAL_MISSING_DATA_CHECKS
-    .filter(check => check.isMissing(data))
-    .map<ScoredSignal>((check) => ({
-      priority: 90,
-      title: check.title,
-      detail: check.detail,
-    }))
-
-  const combined = [...scoreDrivenRisks, ...missingDataRisks]
-    .sort((a, b) => b.priority - a.priority)
-
-  if (combined.length === 0) {
-    const weakerSignals = insights.categories
-      .filter(cat => cat.signal === 'neutral')
-      .sort((a, b) => a.score - b.score)
-      .slice(0, 1)
-      .map<ScoredSignal>((cat) => ({
-        priority: 45,
-        title: `${CATEGORY_TITLES[cat.id] ?? cat.name} requires validation`,
-        detail: `${cat.claim} (Business Intelligence Score: ${cat.score}/100).`,
-      }))
-
-    if (weakerSignals.length > 0) return weakerSignals
-
+  // If we found a granular risk AND there are significant score-driven concerns, 
+  // prioritize the score-driven one (real data > inference)
+  if (scoreDrivenRisks.length > 0) {
     return [{
-      title: 'No dominant risk detected',
-      detail: 'No high-severity downside signal is currently dominant, but continue monitoring for data drift and execution risk.',
+      title: CATEGORY_TITLES[scoreDrivenRisks[0].id] ?? scoreDrivenRisks[0].name,
+      detail: `${scoreDrivenRisks[0].claim} (Business Intelligence Score: ${scoreDrivenRisks[0].score}/100).`,
     }]
   }
 
-  return combined.slice(0, 2)
+  // If no score-driven risks but granular risk found, use it
+  if (granularRisk) {
+    return [granularRisk]
+  }
+
+  // Fall back to neutral/monitoring signal
+  const weakerSignals = insights.categories
+    .filter(cat => cat.signal === 'neutral')
+    .sort((a, b) => a.score - b.score)
+
+  if (weakerSignals.length > 0) {
+    return [{
+      title: `${CATEGORY_TITLES[weakerSignals[0].id] ?? weakerSignals[0].name} requires validation`,
+      detail: `${weakerSignals[0].claim} (Business Intelligence Score: ${weakerSignals[0].score}/100).`,
+    }]
+  }
+
+  return [{
+    title: 'No dominant risk detected',
+    detail: 'No high-severity downside signal is currently dominant, but continue monitoring for data drift and execution risk.',
+  }]
 }
 
 function safeNumber(value: number | undefined): string {
