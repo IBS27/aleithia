@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { fetchPipelineStatus, type PipelineStatus } from '../api.ts'
+import { fetchPipelineStatus, fetchGpuMetrics, type PipelineStatus, type GpuMetrics, type GpuMetricsEntry } from '../api.ts'
 
 interface ModelCard {
   name: string
@@ -9,18 +9,18 @@ interface ModelCard {
   params: string
   maxBatch?: number
   contextLen?: number
-  status: 'online' | 'offline' | 'loading'
+  gpuKey: string
 }
 
 const MODELS: ModelCard[] = [
   {
-    name: 'Qwen3-8B',
+    name: 'Qwen3-8B-AWQ',
     provider: 'Qwen / Alibaba',
     gpu: 'H100',
     task: 'LLM — Chat & Reasoning',
-    params: '8B',
+    params: '8B (INT4)',
     contextLen: 8192,
-    status: 'online',
+    gpuKey: 'h100_llm',
   },
   {
     name: 'BART-large-MNLI',
@@ -29,7 +29,7 @@ const MODELS: ModelCard[] = [
     task: 'Zero-shot Classification',
     params: '407M',
     maxBatch: 32,
-    status: 'online',
+    gpuKey: 't4_classifier',
   },
   {
     name: 'twitter-roberta-base-sentiment',
@@ -38,7 +38,7 @@ const MODELS: ModelCard[] = [
     task: 'Sentiment Analysis',
     params: '125M',
     maxBatch: 32,
-    status: 'online',
+    gpuKey: 't4_sentiment',
   },
   {
     name: 'YOLOv8n',
@@ -47,21 +47,76 @@ const MODELS: ModelCard[] = [
     task: 'CCTV Object Detection',
     params: '3.2M',
     maxBatch: 1,
-    status: 'online',
+    gpuKey: 't4_cctv',
   },
 ]
 
 const TRAINING_DATA = {
   script: 'generate_training_data.py',
-  model: 'Qwen3-8B-FP8',
+  model: 'Qwen3-8B-AWQ',
   gpu: 'H100',
   sourceDocsTarget: 300,
   outputPath: '/data/training_pairs.jsonl',
   format: 'Instruction-tuning JSONL',
 }
 
+function GpuBar({ label, value, max, unit, color }: { label: string; value: number; max: number; unit: string; color: string }) {
+  const pct = Math.min(100, Math.round((value / max) * 100))
+  return (
+    <div className="flex items-center gap-2 text-[10px] font-mono">
+      <span className="text-white/25 w-10 shrink-0">{label}</span>
+      <div className="flex-1 h-1.5 bg-white/[0.04] rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-white/40 w-16 text-right tabular-nums">{value}{unit}</span>
+    </div>
+  )
+}
+
+function GpuCard({ gpuKey, entry, taskName }: { gpuKey: string; entry: GpuMetricsEntry; taskName: string }) {
+  const gpuLabel = gpuKey.startsWith('h100') ? 'H100' : 'T4'
+  const isActive = entry.status === 'active'
+
+  if (!isActive) {
+    return (
+      <div className="px-4 py-3">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-1.5 h-1.5 rounded-full bg-white/15" />
+          <span className="text-xs font-mono font-medium text-white/70">{gpuLabel}</span>
+        </div>
+        <div className="text-[10px] font-mono text-white/25">{taskName}</div>
+        <div className="text-[10px] font-mono mt-1 text-white/15">
+          {entry.status === 'cold' ? 'standby' : 'error'}
+        </div>
+      </div>
+    )
+  }
+
+  const utilColor = (entry.gpu_utilization ?? 0) > 80 ? 'bg-red-400' : (entry.gpu_utilization ?? 0) > 40 ? 'bg-amber-400' : 'bg-emerald-400'
+  const memColor = (entry.memory_utilization ?? 0) > 80 ? 'bg-red-400' : 'bg-sky-400'
+
+  return (
+    <div className="px-4 py-3">
+      <div className="flex items-center gap-2 mb-2">
+        <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+        <span className="text-xs font-mono font-medium text-white/70">{entry.gpu_name ?? gpuLabel}</span>
+      </div>
+      <div className="text-[10px] font-mono text-white/25 mb-2">{taskName}</div>
+      <div className="space-y-1.5">
+        <GpuBar label="GPU" value={entry.gpu_utilization ?? 0} max={100} unit="%" color={utilColor} />
+        <GpuBar label="MEM" value={entry.memory_used_mb ?? 0} max={entry.memory_total_mb ?? 1} unit="MB" color={memColor} />
+        <div className="flex items-center justify-between text-[10px] font-mono text-white/20 mt-1">
+          <span>{entry.temperature_c ?? 0}&deg;C</span>
+          <span>{entry.power_draw_w ?? 0}W / {entry.power_limit_w ?? 0}W</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function MLMonitor() {
   const [status, setStatus] = useState<PipelineStatus | null>(null)
+  const [gpuMetrics, setGpuMetrics] = useState<GpuMetrics | null>(null)
   const [error, setError] = useState(false)
 
   useEffect(() => {
@@ -82,12 +137,20 @@ export default function MLMonitor() {
     return () => { cancelled = true; clearInterval(interval) }
   }, [])
 
-  const gpuMap: Record<string, string> = {
-    h100_llm: 'H100',
-    t4_classifier: 'T4',
-    t4_sentiment: 'T4',
-    t4_cctv: 'T4',
-  }
+  useEffect(() => {
+    let cancelled = false
+    async function pollGpu() {
+      try {
+        const data = await fetchGpuMetrics()
+        if (!cancelled) setGpuMetrics(data)
+      } catch {
+        // GPU metrics are best-effort
+      }
+    }
+    pollGpu()
+    const interval = setInterval(pollGpu, 10000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [])
 
   const gpuTaskMap: Record<string, string> = {
     h100_llm: 'Qwen3-8B LLM',
@@ -96,35 +159,29 @@ export default function MLMonitor() {
     t4_cctv: 'CCTV Detector',
   }
 
+  const defaultEntry: GpuMetricsEntry = { status: 'cold' }
+
   return (
     <div className="space-y-4">
-      {/* GPU Fleet */}
+      {/* GPU Fleet — live metrics */}
       <div className="border border-white/[0.06] bg-white/[0.01]">
         <div className="px-4 py-3 border-b border-white/[0.06] flex items-center justify-between">
-          <h3 className="text-[10px] font-mono uppercase tracking-wider text-white/40">GPU Fleet</h3>
-          {status && (
+          <h3 className="text-[10px] font-mono uppercase tracking-wider text-white/40">GPU Fleet — Live</h3>
+          {gpuMetrics && (
             <span className="text-[10px] font-mono text-white/20">
-              {Object.values(status.gpu_status).filter(s => s === 'available').length}/{Object.keys(status.gpu_status).length} online
+              {Object.values(gpuMetrics).filter(m => m.status === 'active').length}/4 active
             </span>
           )}
         </div>
         <div className="grid grid-cols-4 divide-x divide-white/[0.06]">
-          {status ? Object.entries(status.gpu_status).map(([key, state]) => (
-            <div key={key} className="px-4 py-3">
-              <div className="flex items-center gap-2 mb-2">
-                <div className={`w-1.5 h-1.5 rounded-full ${state === 'available' ? 'bg-emerald-400' : 'bg-red-400'}`} />
-                <span className="text-xs font-mono font-medium text-white/70">{gpuMap[key] || key}</span>
-              </div>
-              <div className="text-[10px] font-mono text-white/25">{gpuTaskMap[key] || key}</div>
-              <div className={`text-[10px] font-mono mt-1 ${state === 'available' ? 'text-emerald-400/60' : 'text-red-400/60'}`}>
-                {state === 'available' ? 'ready' : state}
-              </div>
-            </div>
-          )) : (
-            <div className="col-span-4 px-4 py-6 text-center">
-              <span className="text-[10px] font-mono text-white/20">{error ? 'Failed to connect' : 'Loading...'}</span>
-            </div>
-          )}
+          {['h100_llm', 't4_classifier', 't4_sentiment', 't4_cctv'].map(key => (
+            <GpuCard
+              key={key}
+              gpuKey={key}
+              entry={gpuMetrics?.[key] ?? defaultEntry}
+              taskName={gpuTaskMap[key]}
+            />
+          ))}
         </div>
       </div>
 
@@ -135,10 +192,9 @@ export default function MLMonitor() {
         </div>
         <div className="divide-y divide-white/[0.06]">
           {MODELS.map((model) => {
-            const gpuKey = model.gpu === 'H100' ? 'h100_llm' : model.task.includes('Classification') ? 't4_classifier' : model.task.includes('CCTV') ? 't4_cctv' : 't4_sentiment'
-            const liveStatus = status?.gpu_status[gpuKey]
-            const isOnline = liveStatus === 'available'
-            const isLoading = status === null && !error
+            const liveEntry = gpuMetrics?.[model.gpuKey]
+            const isOnline = liveEntry?.status === 'active'
+            const isLoading = !gpuMetrics && !error
 
             return (
               <div key={model.name} className="px-4 py-3 flex items-center justify-between">
@@ -149,6 +205,15 @@ export default function MLMonitor() {
                     }`} />
                     <span className="text-xs font-medium text-white/80 truncate">{model.name}</span>
                     <span className="text-[10px] font-mono text-white/15 border border-white/[0.06] px-1.5 py-0.5">{model.gpu}</span>
+                    {isOnline && liveEntry?.gpu_utilization != null && (
+                      <span className={`text-[10px] font-mono px-1.5 py-0.5 border ${
+                        liveEntry.gpu_utilization > 80 ? 'text-red-400/70 border-red-400/20' :
+                        liveEntry.gpu_utilization > 40 ? 'text-amber-400/70 border-amber-400/20' :
+                        'text-emerald-400/70 border-emerald-400/20'
+                      }`}>
+                        {liveEntry.gpu_utilization}%
+                      </span>
+                    )}
                   </div>
                   <div className="text-[10px] font-mono text-white/25 mt-1 pl-3.5">{model.task}</div>
                 </div>
@@ -166,7 +231,7 @@ export default function MLMonitor() {
                     </span>
                   ) : (
                     <span className={`text-[10px] font-mono ${isOnline ? 'text-emerald-400/60' : 'text-white/15'}`}>
-                      {isOnline ? 'online' : 'offline'}
+                      {isOnline ? 'online' : 'standby'}
                     </span>
                   )}
                 </div>
@@ -285,8 +350,8 @@ export default function MLMonitor() {
               ['modal.Retries', 'Pipeline resilience'],
               ['gpu="H100"', 'LLM inference'],
               ['gpu="T4"', 'Classification x2 + CCTV'],
-              ['Image.pip_install', '10 custom images'],
-              ['modal.web_endpoint', 'SSE streaming'],
+              ['enable_memory_snapshot', 'GPU snapshots'],
+              ['experimental_options', 'GPU cold start 10x'],
             ].map(([feature, usage]) => (
               <div key={feature} className="flex justify-between">
                 <span className="text-white/40">{feature}</span>
@@ -296,7 +361,7 @@ export default function MLMonitor() {
           </div>
           <div className="mt-3 pt-2 border-t border-white/[0.06] flex items-center justify-between">
             <span className="text-[10px] font-mono text-white/25">Total Modal features</span>
-            <span className="text-xs font-mono font-bold text-white/60">18</span>
+            <span className="text-xs font-mono font-bold text-white/60">20</span>
           </div>
         </div>
       </div>

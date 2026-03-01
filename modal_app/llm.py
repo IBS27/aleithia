@@ -10,8 +10,8 @@ import modal
 
 from modal_app.volume import app, volume, weights_volume, vllm_image, VOLUME_MOUNT, WEIGHTS_MOUNT
 
-MODEL_NAME = "Qwen/Qwen3-8B-FP8"
-MODEL_DIR = f"{WEIGHTS_MOUNT}/Qwen3-8B-FP8"
+MODEL_NAME = "Qwen/Qwen3-8B-AWQ"
+MODEL_DIR = f"{WEIGHTS_MOUNT}/Qwen3-8B-AWQ"
 
 SYSTEM_PROMPT = """You are Alethia, an AI-powered Chicago business intelligence analyst.
 You analyze real-time data from 7+ pipelines covering permits, inspections, licenses,
@@ -32,6 +32,7 @@ When answering questions:
     secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     scaledown_window=300,
     timeout=600,
+    min_containers=1,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
 )
@@ -136,6 +137,35 @@ class AlethiaLLM:
         finally:
             if span_ctx:
                 span_ctx.__exit__(None, None, None)
+
+    @modal.method()
+    def gpu_metrics(self) -> dict:
+        """Live GPU metrics via nvidia-smi."""
+        import subprocess
+        from datetime import datetime, timezone
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu,power.draw,power.limit,name",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode != 0:
+                return {"status": "error"}
+            vals = [v.strip() for v in result.stdout.strip().split(",")]
+            return {
+                "status": "active",
+                "gpu_utilization": int(vals[0]),
+                "memory_utilization": int(vals[1]),
+                "memory_used_mb": int(vals[2]),
+                "memory_total_mb": int(vals[3]),
+                "temperature_c": int(vals[4]),
+                "power_draw_w": int(float(vals[5])),
+                "power_limit_w": int(float(vals[6])),
+                "gpu_name": vals[7],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
 
     def _build_prompt(self, messages: list[dict]) -> str:
         """Build a chat-format prompt from message list."""

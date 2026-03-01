@@ -141,6 +141,25 @@ export async function fetchMetrics(): Promise<Record<string, number>> {
   return fetchJSON<Record<string, number>>('/metrics')
 }
 
+export interface GpuMetricsEntry {
+  status: 'active' | 'cold' | 'error'
+  gpu_utilization?: number
+  memory_utilization?: number
+  memory_used_mb?: number
+  memory_total_mb?: number
+  temperature_c?: number
+  power_draw_w?: number
+  power_limit_w?: number
+  gpu_name?: string
+  timestamp?: string
+}
+
+export type GpuMetrics = Record<string, GpuMetricsEntry>
+
+export async function fetchGpuMetrics(): Promise<GpuMetrics> {
+  return fetchJSON<GpuMetrics>('/gpu-metrics')
+}
+
 export const api = {
   sources: () => fetchJSON<DataSources>('/sources'),
   geo: () => fetchJSON<GeoJSON>('/geo'),
