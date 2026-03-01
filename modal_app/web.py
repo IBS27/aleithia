@@ -731,6 +731,18 @@ async def chat(request: Request):
                 span.set_attribute("chat.has_profile", has_profile)
             # Phase 1: Agent gathering (returns synthesis_messages, NOT response text)
             from modal_app.instrumentation import inject_context
+
+            # Pre-compute query embedding for VectorAI DB (shared across all agents)
+            query_embedding = None
+            try:
+                from modal_app.vectordb import vectordb_available
+                if vectordb_available():
+                    vdb_cls = modal.Cls.from_name("alethia", "VectorDBService")
+                    vdb = vdb_cls()
+                    query_embedding = await vdb.embed_text.remote.aio(question)
+            except Exception as e:
+                print(f"Chat query embedding failed (non-critical): {e}")
+
             orchestrate_query = modal.Function.from_name("alethia", "orchestrate_query")
             result = await orchestrate_query.remote.aio(
                 user_id=user_id,
@@ -738,6 +750,7 @@ async def chat(request: Request):
                 business_type=business_type,
                 target_neighborhood=neighborhood,
                 trace_context=inject_context(),
+                query_embedding=query_embedding,
             )
 
             # Build per-agent summaries for frontend
