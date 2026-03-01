@@ -16,6 +16,7 @@ export interface SavedSettings {
   clerk_user_id: string
   business_type: string | null
   neighborhood: string | null
+  risk_tolerance: string
   created_at: string
   updated_at: string
 }
@@ -177,7 +178,7 @@ export const api = {
     },
   }),
   
-  updateUserProfile: (token: string, businessType: string, neighborhood: string) =>
+  updateUserProfile: (token: string, businessType: string, neighborhood: string, riskTolerance?: string) =>
     fetchJSON<SavedSettings>('/user/profile', {
       method: 'PUT',
       headers: {
@@ -187,6 +188,7 @@ export const api = {
       body: JSON.stringify({
         business_type: businessType,
         neighborhood,
+        risk_tolerance: riskTolerance,
       }),
     }),
 

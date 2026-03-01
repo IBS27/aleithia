@@ -24,6 +24,7 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 class UserProfileSchema(BaseModel):
     business_type: Optional[str] = None
     neighborhood: Optional[str] = None
+    risk_tolerance: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -112,6 +113,7 @@ async def get_user_profile(
         "clerk_user_id": profile.clerk_user_id,
         "business_type": profile.business_type,
         "neighborhood": profile.neighborhood,
+        "risk_tolerance": profile.risk_tolerance,
         "created_at": profile.created_at.isoformat(),
         "updated_at": profile.updated_at.isoformat(),
     }
@@ -133,6 +135,8 @@ async def update_user_profile(
         profile.business_type = payload.business_type
     if payload.neighborhood is not None:
         profile.neighborhood = payload.neighborhood
+    if payload.risk_tolerance is not None:
+        profile.risk_tolerance = payload.risk_tolerance
     
     db.commit()
     db.refresh(profile)
@@ -141,6 +145,7 @@ async def update_user_profile(
         "clerk_user_id": profile.clerk_user_id,
         "business_type": profile.business_type,
         "neighborhood": profile.neighborhood,
+        "risk_tolerance": profile.risk_tolerance,
         "created_at": profile.created_at.isoformat(),
         "updated_at": profile.updated_at.isoformat(),
     }

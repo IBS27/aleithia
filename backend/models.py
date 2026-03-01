@@ -13,6 +13,7 @@ class UserProfile(Base):
     clerk_user_id = Column(String(255), primary_key=True, index=True)
     business_type = Column(String(255), nullable=True)
     neighborhood = Column(String(255), nullable=True)
+    risk_tolerance = Column(String(50), default="medium", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -29,6 +29,7 @@ export default function ProfilePage({ onClose, token, onProfileUpdate }: Props) 
   const { getToken } = useAuth()
   const [businessType, setBusinessType] = useState('')
   const [neighborhood, setNeighborhood] = useState('')
+  const [riskTolerance, setRiskTolerance] = useState('medium')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
@@ -50,12 +51,13 @@ export default function ProfilePage({ onClose, token, onProfileUpdate }: Props) 
 
         const [profileResult, queryResult] = await Promise.allSettled([
           api.getUserProfile(sessionToken),
-          api.getUserQueries(sessionToken, 10),
+          api.getUserQueries(sessionToken, 5),
         ])
 
         if (profileResult.status === 'fulfilled') {
           setBusinessType(profileResult.value.business_type || '')
           setNeighborhood(profileResult.value.neighborhood || '')
+          setRiskTolerance(profileResult.value.risk_tolerance || 'medium')
         } else {
           const msg = String(profileResult.reason)
           if (!msg.includes('API error 404')) {
@@ -88,11 +90,11 @@ export default function ProfilePage({ onClose, token, onProfileUpdate }: Props) 
       const sessionToken = token || await getToken()
       if (!sessionToken) throw new Error('No session token')
       
-      await api.updateUserProfile(sessionToken, businessType, neighborhood)
+      await api.updateUserProfile(sessionToken, businessType, neighborhood, riskTolerance)
       setMessage('Profile updated successfully!')
       onProfileUpdate?.()
 
-      const refreshedQueries = await api.getUserQueries(sessionToken, 10)
+      const refreshedQueries = await api.getUserQueries(sessionToken, 5)
       setRecentQueries(refreshedQueries)
 
       setTimeout(() => setMessage(''), 3000)
@@ -171,6 +173,21 @@ export default function ProfilePage({ onClose, token, onProfileUpdate }: Props) 
                       {n}
                     </option>
                   ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold mb-2 text-white/80">
+                  Risk Tolerance
+                </label>
+                <select
+                  value={riskTolerance}
+                  onChange={(e) => setRiskTolerance(e.target.value)}
+                  className="w-full bg-white/[0.03] border border-white/[0.08] px-4 py-3 text-sm text-white focus:outline-none focus:border-white/30 transition-colors appearance-none cursor-pointer"
+                >
+                  <option value="low" className="bg-[#0a0c12]">Low</option>
+                  <option value="medium" className="bg-[#0a0c12]">Medium (Default)</option>
+                  <option value="high" className="bg-[#0a0c12]">High</option>
                 </select>
               </div>
 
