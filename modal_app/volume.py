@@ -101,7 +101,7 @@ label_image = (
 yolo_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("libgl1-mesa-glx", "libglib2.0-0")
-    .pip_install("ultralytics==8.2.0", "opencv-python-headless==4.9.0.80", "httpx==0.27.0", "pydantic==2.9.0")
+    .pip_install("ultralytics==8.3.40", "opencv-python-headless==4.9.0.80", "httpx==0.27.0", "pydantic==2.9.0")
     .add_local_python_source("modal_app", copy=True)
 )
 
