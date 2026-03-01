@@ -190,6 +190,16 @@ async def process_queue_batch():
         await volume.commit.aio()
         print(f"Classified {len(docs)} documents: saved to {enriched_dir}")
 
+        # Push high-confidence docs to impact queue for Lead Analyst
+        try:
+            impact_queue = modal.Queue.from_name("impact-docs", create_if_missing=True)
+            for doc in docs:
+                top_score = doc.get("classification", {}).get("scores", [0])
+                if isinstance(top_score, list) and top_score and top_score[0] > 0.5:
+                    await impact_queue.put.aio(doc)
+        except Exception as e:
+            print(f"Impact queue push failed (non-critical): {e}")
+
         if span:
             span.set_attribute("pipeline.docs_classified", len(docs))
         return len(docs)

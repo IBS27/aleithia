@@ -88,6 +88,12 @@ sandbox_image = (
     .pip_install("pandas==2.2.0", "matplotlib==3.9.0", "numpy==1.26.0", "seaborn==0.13.0")
 )
 
+# Lead Analyst: recursive agent architecture with E2B sandbox workers
+lead_analyst_image = (
+    _base.pip_install("e2b-code-interpreter>=1.0.0")
+    .add_local_python_source("modal_app", copy=True)
+)
+
 # Vision pipeline images
 video_image = (
     modal.Image.debian_slim(python_version="3.11")
