@@ -14,8 +14,10 @@ import os
 import re as _re
 import subprocess
 import tempfile
+import time
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import quote_plus
 
 import modal
 
@@ -92,6 +94,119 @@ def build_profile_tiktok_queries(business_type: str, neighborhood: str) -> list[
 # Scraper function (runs on cloud browser via Kernel.sh)
 # ---------------------------------------------------------------------------
 
+async def _dismiss_tiktok_ui_blockers(page) -> None:
+    """Best-effort dismissal of cookie/login overlays that block interaction."""
+    selectors = [
+        # Cookie banners
+        "button:has-text('Accept all')",
+        "button:has-text('Accept')",
+        "[data-testid='cookie-banner-accept']",
+        # Login and generic modal close buttons
+        "[data-e2e='modal-close-inner-button']",
+        "button[aria-label='Close']",
+        "button[aria-label='close']",
+        "div[role='button'][aria-label='Close']",
+        "div[role='button'][aria-label='close']",
+        ".close-button",
+        "button:has-text('Not now')",
+    ]
+    for selector in selectors:
+        try:
+            btn = page.locator(selector).first
+            if await btn.is_visible(timeout=1_000):
+                await btn.click(timeout=1_500)
+                await page.wait_for_timeout(250)
+        except Exception:
+            continue
+    try:
+        await page.keyboard.press("Escape")
+    except Exception:
+        pass
+
+
+async def _apply_tiktok_cookie_header(context) -> bool:
+    """Optionally load authenticated TikTok cookies from env for gated searches."""
+    cookie_header = os.environ.get("TIKTOK_COOKIE_HEADER", "").strip()
+    if not cookie_header:
+        return False
+
+    cookie_attr_names = {
+        "path",
+        "domain",
+        "expires",
+        "max-age",
+        "secure",
+        "httponly",
+        "samesite",
+        "priority",
+    }
+
+    cookies = []
+    for part in cookie_header.split(";"):
+        if "=" not in part:
+            continue
+        name, value = part.split("=", 1)
+        name = name.strip()
+        value = value.strip()
+        if name.lower() in cookie_attr_names:
+            continue
+        if not name or not value:
+            continue
+        cookies.append(
+            {
+                "name": name,
+                "value": value,
+                "domain": ".tiktok.com",
+                "path": "/",
+                "httpOnly": False,
+                "secure": True,
+            }
+        )
+
+    if not cookies:
+        return False
+
+    try:
+        await context.add_cookies(cookies)
+        logger.info("Loaded %d TikTok cookies from TIKTOK_COOKIE_HEADER", len(cookies))
+        return True
+    except Exception as exc:
+        logger.warning("Failed to apply TIKTOK_COOKIE_HEADER: %s", exc)
+        return False
+
+
+async def _has_tiktok_login_gate(page) -> bool:
+    """Detect common login-gate copy shown over anonymous search pages."""
+    try:
+        body_text = (await page.locator("body").inner_text(timeout=2_000)).lower()
+    except Exception:
+        return False
+    markers = [
+        "log in to search for popular content",
+        "continue with google",
+        "continue with apple",
+        "use qr code",
+    ]
+    return any(marker in body_text for marker in markers)
+
+
+async def _wait_for_video_links(page, timeout_ms: int = 12_000) -> bool:
+    """Wait until actual TikTok video links exist on the page."""
+    deadline = time.monotonic() + (timeout_ms / 1000)
+    while time.monotonic() < deadline:
+        try:
+            if await page.locator("a[href*='/video/']").count() > 0:
+                return True
+        except Exception:
+            pass
+        try:
+            await page.mouse.wheel(0, 1500)
+        except Exception:
+            pass
+        await page.wait_for_timeout(900)
+    return False
+
+
 async def _scrape_async(search_query: str, max_videos: int) -> list[dict]:
     """Scrape TikTok search results using Kernel cloud browser + Playwright."""
     from kernel import Kernel
@@ -112,68 +227,45 @@ async def _scrape_async(search_query: str, max_videos: int) -> list[dict]:
     async with async_playwright() as pw:
         browser = await pw.chromium.connect_over_cdp(kernel_browser.cdp_ws_url)
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
+        await _apply_tiktok_cookie_header(context)
         page = context.pages[0] if context.pages else await context.new_page()
 
         try:
-            encoded_query = search_query.replace(" ", "+")
-            url = f"https://www.tiktok.com/search?q={encoded_query}"
-            logger.info("Navigating to %s", url)
-            await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-            await page.wait_for_timeout(3000)
-
-            # Dismiss cookie banner
-            for selector in [
-                "button:has-text('Accept all')",
-                "button:has-text('Accept')",
-                "[data-testid='cookie-banner-accept']",
-            ]:
-                try:
-                    btn = page.locator(selector).first
-                    if await btn.is_visible(timeout=2000):
-                        await btn.click()
-                        break
-                except Exception:
-                    continue
-
-            # Dismiss login prompt
-            for selector in [
-                "[data-e2e='modal-close-inner-button']",
-                "button[aria-label='Close']",
-                ".close-button",
-            ]:
-                try:
-                    btn = page.locator(selector).first
-                    if await btn.is_visible(timeout=2000):
-                        await btn.click()
-                        break
-                except Exception:
-                    continue
-
-            # Wait for video cards
-            card_selectors = [
-                "[data-e2e='search_top-item']",
-                "[data-e2e='search-card-desc']",
-                "[data-e2e='search_video-item']",
-                "[class*='DivItemContainerV2']",
-                "[class*='VideoListContainer'] a",
+            encoded_query = quote_plus(search_query)
+            candidate_urls = [
+                f"https://www.tiktok.com/search/video?q={encoded_query}",
+                f"https://www.tiktok.com/search?q={encoded_query}",
             ]
-            found_selector = None
-            for sel in card_selectors:
-                try:
-                    await page.wait_for_selector(sel, timeout=5_000)
-                    found_selector = sel
+
+            links_ready = False
+            login_gate_detected = False
+            for url in candidate_urls:
+                logger.info("Navigating to %s", url)
+                await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                await page.wait_for_timeout(2_500)
+
+                await _dismiss_tiktok_ui_blockers(page)
+                await page.wait_for_timeout(500)
+                await _dismiss_tiktok_ui_blockers(page)
+
+                if await _has_tiktok_login_gate(page):
+                    login_gate_detected = True
+                    logger.warning("TikTok login gate detected for query '%s'", search_query)
+
+                if await _wait_for_video_links(page, timeout_ms=9_000):
+                    links_ready = True
                     break
-                except Exception:
-                    continue
 
-            if not found_selector:
-                logger.error("No video cards found for query '%s'", search_query)
+            if not links_ready:
+                if login_gate_detected:
+                    logger.error(
+                        "Blocked by TikTok login gate for query '%s'; "
+                        "use authenticated session cookies/profile.",
+                        search_query,
+                    )
+                else:
+                    logger.error("No video links found for query '%s'", search_query)
                 return []
-
-            # Scroll to load more
-            for _ in range(3):
-                await page.mouse.wheel(0, 1500)
-                await page.wait_for_timeout(1500)
 
             # Extract video data
             videos_raw = await page.evaluate(

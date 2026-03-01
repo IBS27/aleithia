@@ -35,6 +35,16 @@ modal secret create arize-secrets \
   ARIZE_API_KEY=your_api_key
 ```
 
+Create TikTok scraper secrets separately (used by `modal_app/pipelines/tiktok.py`):
+
+```bash
+modal secret create tiktok-scraper-secrets \
+  KERNEL_API_KEY=your_kernel_key \
+  TIKTOK_COOKIE_HEADER='sessionid=...; sid_tt=...'
+```
+
+`TIKTOK_COOKIE_HEADER` is optional but recommended when TikTok serves an auth gate on search pages.
+
 **Note:** Most pipelines work without API keys (using public endpoints or fallback data), but keys improve rate limits and data quality. Arize secrets are optional — tracing is disabled gracefully without them.
 
 ## 3. API Key Sources
