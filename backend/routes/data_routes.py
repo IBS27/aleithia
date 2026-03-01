@@ -8,47 +8,49 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
+from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
+
+from database import get_db
+from models import UserProfile, QueryResult
+from auth import extract_user_id
 
 router = APIRouter()
 
 DATA_DIR = Path(__file__).parent.parent / "data"
-SETTINGS_FILE = Path(__file__).parent.parent / "user_settings.json"
 
 
-class UserSettings(BaseModel):
-    location_type: str = Field(..., min_length=1)
-    neighborhood: str = Field(..., min_length=1)
+class UserProfileSchema(BaseModel):
+    business_type: Optional[str] = None
+    neighborhood: Optional[str] = None
+
+    class Config:
+        from_attributes = True
 
 
-class UserSettingsResponse(UserSettings):
-    user_id: str
+class UserProfileResponse(UserProfileSchema):
+    clerk_user_id: str
+    created_at: str
+    updated_at: str
 
 
-def _read_settings_store() -> dict[str, dict[str, str]]:
-    if not SETTINGS_FILE.exists():
-        return {}
-    try:
-        with open(SETTINGS_FILE) as fh:
-            payload = json.load(fh)
-            if isinstance(payload, dict):
-                return payload
-            return {}
-    except (json.JSONDecodeError, OSError):
-        return {}
+class UserQueryCreateSchema(BaseModel):
+    query_text: str = Field(..., min_length=1, max_length=1000)
+    business_type: str = Field(..., min_length=1, max_length=255)
+    neighborhood: str = Field(..., min_length=1, max_length=255)
 
 
-def _write_settings_store(data: dict[str, dict[str, str]]) -> None:
-    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(SETTINGS_FILE, "w") as fh:
-        json.dump(data, fh, indent=2)
+class UserQueryResponse(BaseModel):
+    id: int
+    clerk_user_id: str
+    query_text: str
+    business_type: str
+    neighborhood: str
+    created_at: str
 
-
-def _require_user_id(x_user_id: Optional[str]) -> str:
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="Missing x-user-id header")
-    return x_user_id
+    class Config:
+        from_attributes = True
 
 
 def _load_all(source: str) -> list[dict]:
@@ -97,36 +99,127 @@ def _filter_by_type(docs: list[dict], dataset: str) -> list[dict]:
     ]
 
 
-@router.get("/user/settings", response_model=UserSettingsResponse)
-async def get_user_settings(x_user_id: Optional[str] = Header(default=None)):
-    """Get saved query settings for a user."""
-    user_id = _require_user_id(x_user_id)
-    store = _read_settings_store()
-    entry = store.get(user_id)
-    if not entry:
-        raise HTTPException(status_code=404, detail="No settings found for user")
+@router.get("/user/profile", response_model=UserProfileResponse)
+async def get_user_profile(
+    db: Session = Depends(get_db),
+    user_id: str = Depends(extract_user_id),
+):
+    """Get user's saved profile settings."""
+    profile = db.query(UserProfile).filter(UserProfile.clerk_user_id == user_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="No profile found for user")
     return {
-        "user_id": user_id,
-        "location_type": entry.get("location_type", ""),
-        "neighborhood": entry.get("neighborhood", ""),
+        "clerk_user_id": profile.clerk_user_id,
+        "business_type": profile.business_type,
+        "neighborhood": profile.neighborhood,
+        "created_at": profile.created_at.isoformat(),
+        "updated_at": profile.updated_at.isoformat(),
     }
 
 
-@router.put("/user/settings", response_model=UserSettingsResponse)
-async def put_user_settings(payload: UserSettings, x_user_id: Optional[str] = Header(default=None)):
-    """Save last queried settings for a user."""
-    user_id = _require_user_id(x_user_id)
-    store = _read_settings_store()
-    store[user_id] = {
-        "location_type": payload.location_type,
-        "neighborhood": payload.neighborhood,
-    }
-    _write_settings_store(store)
+@router.put("/user/profile", response_model=UserProfileResponse)
+async def update_user_profile(
+    payload: UserProfileSchema,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(extract_user_id),
+):
+    """Save or update user's profile settings."""
+    profile = db.query(UserProfile).filter(UserProfile.clerk_user_id == user_id).first()
+    if not profile:
+        profile = UserProfile(clerk_user_id=user_id)
+        db.add(profile)
+    
+    if payload.business_type is not None:
+        profile.business_type = payload.business_type
+    if payload.neighborhood is not None:
+        profile.neighborhood = payload.neighborhood
+    
+    db.commit()
+    db.refresh(profile)
+    
     return {
-        "user_id": user_id,
-        "location_type": payload.location_type,
-        "neighborhood": payload.neighborhood,
+        "clerk_user_id": profile.clerk_user_id,
+        "business_type": profile.business_type,
+        "neighborhood": profile.neighborhood,
+        "created_at": profile.created_at.isoformat(),
+        "updated_at": profile.updated_at.isoformat(),
     }
+
+
+@router.post("/user/queries", response_model=UserQueryResponse)
+async def create_user_query(
+    payload: UserQueryCreateSchema,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(extract_user_id),
+):
+    """Persist a user's query to query history."""
+    query = QueryResult(
+        clerk_user_id=user_id,
+        query_text=payload.query_text,
+        business_type=payload.business_type,
+        neighborhood=payload.neighborhood,
+        result_summary=None,
+    )
+    db.add(query)
+    db.commit()
+    db.refresh(query)
+
+    return {
+        "id": query.id,
+        "clerk_user_id": query.clerk_user_id,
+        "query_text": query.query_text,
+        "business_type": query.business_type,
+        "neighborhood": query.neighborhood,
+        "created_at": query.created_at.isoformat(),
+    }
+
+
+@router.get("/user/queries", response_model=list[UserQueryResponse])
+async def get_user_queries(
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    user_id: str = Depends(extract_user_id),
+):
+    """Get most recent queries for a user."""
+    queries = (
+        db.query(QueryResult)
+        .filter(QueryResult.clerk_user_id == user_id)
+        .order_by(QueryResult.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        {
+            "id": query.id,
+            "clerk_user_id": query.clerk_user_id,
+            "query_text": query.query_text,
+            "business_type": query.business_type,
+            "neighborhood": query.neighborhood,
+            "created_at": query.created_at.isoformat(),
+        }
+        for query in queries
+    ]
+
+
+# Legacy endpoints for backward compatibility
+@router.get("/user/settings", response_model=UserProfileResponse)
+async def get_user_settings(
+    db: Session = Depends(get_db),
+    user_id: str = Depends(extract_user_id),
+):
+    """Get saved query settings for a user (legacy, use /user/profile)."""
+    return await get_user_profile(db, user_id)
+
+
+@router.put("/user/settings", response_model=UserProfileResponse)
+async def put_user_settings(
+    payload: UserProfileSchema,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(extract_user_id),
+):
+    """Save last queried settings for a user (legacy, use /user/profile)."""
+    return await update_user_profile(payload, db, user_id)
 
 
 @router.get("/sources")

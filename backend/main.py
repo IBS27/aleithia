@@ -1,13 +1,13 @@
-from pathlib import Path
-from dotenv import load_dotenv
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from routes import modal_router, data_router
+from database import init_db
 
 app = FastAPI(title="HackIllinois 2026 API")
+
+# Initialize database tables
+init_db()
 
 app.add_middleware(
     CORSMiddleware,
