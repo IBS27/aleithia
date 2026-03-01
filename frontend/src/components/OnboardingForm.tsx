@@ -100,7 +100,7 @@ export default function OnboardingForm({ onSubmit, onCancel, initialProfile, emb
           onClick={() => onCancel?.()}
           className="text-lg font-semibold tracking-tight text-white uppercase hover:text-white/80 transition-colors cursor-pointer"
         >
-          Alethia
+          Aleithia
         </button>
         {onCancel && (
           <button

@@ -469,7 +469,7 @@ function generatePdf(
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(7)
     doc.setTextColor(140, 140, 140)
-    doc.text('Confidential \u2014 Prepared by Alethia Intelligence Platform', marginX, pageHeight - 28)
+    doc.text('Confidential \u2014 Prepared by Aleithia Intelligence Platform', marginX, pageHeight - 28)
     doc.text(`Page ${page} of ${total}`, pageWidth - marginX, pageHeight - 28, { align: 'right' })
     doc.setTextColor(0, 0, 0)
   }
@@ -696,7 +696,7 @@ function generatePdf(
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(10)
   doc.setTextColor(40, 40, 40)
-  doc.text('Alethia Intelligence Platform', leftCol, y)
+  doc.text('Aleithia Intelligence Platform', leftCol, y)
   doc.text(dateLabel, rightCol, y)
   y += 24
   doc.setFont('helvetica', 'normal')
@@ -942,7 +942,7 @@ function generatePdf(
 
   y += 4
   addParagraph(
-    'Business Intelligence Score (BIS) is computed by Alethia across 6 categories: Regulatory, Economic, Market, Demographic, Safety, and Community. ' +
+    'Business Intelligence Score (BIS) is computed by Aleithia across 6 categories: Regulatory, Economic, Market, Demographic, Safety, and Community. ' +
     'Each category is scored 0\u2013100 based on sub-metrics derived from live pipeline data. The overall score is a weighted average using the selected risk profile. ' +
     `This report was generated using the "${insights.profile}" risk profile with ${insights.coverageCount} of 6 categories scored.`,
     8.5,
@@ -964,7 +964,7 @@ function generatePdf(
   const disclaimerText =
     'This report is provided for informational purposes only and does not constitute legal, financial, or investment advice. ' +
     'The data and analysis contained herein have been derived from publicly available sources believed to be reliable; however, ' +
-    'Alethia Intelligence Platform makes no representations or warranties, express or implied, as to the accuracy, completeness, ' +
+    'Aleithia Intelligence Platform makes no representations or warranties, express or implied, as to the accuracy, completeness, ' +
     'or timeliness of the information. Recipients of this report should conduct their own independent due diligence and seek ' +
     'professional counsel before making any business, investment, or legal decisions based on the information provided. ' +
     'This document is confidential and intended solely for the use of the addressee. Any unauthorized distribution, reproduction, ' +
@@ -991,7 +991,7 @@ function generatePdf(
     addFooterFinal(i, totalPages)
   }
 
-  const fileName = `alethia-proposal-${profile.neighborhood.toLowerCase().replaceAll(' ', '-')}-${profile.business_type.toLowerCase().replaceAll(' ', '-')}.pdf`
+  const fileName = `aleithia-proposal-${profile.neighborhood.toLowerCase().replaceAll(' ', '-')}-${profile.business_type.toLowerCase().replaceAll(' ', '-')}.pdf`
   doc.save(fileName)
 }
 
