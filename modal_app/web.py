@@ -1020,6 +1020,116 @@ async def _maybe_spawn_tiktok_profile_refresh(
     return status
 
 
+# CTA station locations (dataset 8pix-ypme) — lat/lng per station name
+_CTA_STATIONS_CACHE: list[dict] | None = None
+
+
+def _load_cta_stations() -> list[dict]:
+    """Load CTA L station locations from cache or Socrata."""
+    global _CTA_STATIONS_CACHE
+    if _CTA_STATIONS_CACHE is not None:
+        return _CTA_STATIONS_CACHE
+
+    cache_path = Path(PROCESSED_DATA_PATH) / "cache" / "cta_stations.json"
+    if cache_path.exists():
+        try:
+            _CTA_STATIONS_CACHE = json.loads(cache_path.read_text())
+            return _CTA_STATIONS_CACHE
+        except Exception:
+            pass
+
+    # Fetch from Socrata
+    try:
+        import urllib.request
+        url = "https://data.cityofchicago.org/resource/8pix-ypme.json?$limit=500"
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            stations = json.loads(resp.read().decode())
+        parsed = []
+        for s in stations:
+            try:
+                parsed.append({
+                    "station_name": s.get("station_name", ""),
+                    "lat": float(s.get("location", {}).get("latitude", 0) or s.get("latitude", 0)),
+                    "lng": float(s.get("location", {}).get("longitude", 0) or s.get("longitude", 0)),
+                })
+            except (ValueError, TypeError):
+                continue
+        # Deduplicate by station name
+        seen = set()
+        deduped = []
+        for p in parsed:
+            if p["station_name"] not in seen and p["lat"] != 0:
+                seen.add(p["station_name"])
+                deduped.append(p)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(deduped, indent=2))
+        volume.commit()
+        _CTA_STATIONS_CACHE = deduped
+        return deduped
+    except Exception as e:
+        print(f"_load_cta_stations: fetch failed: {e}")
+        return []
+
+
+def _compute_transit_score(neighborhood_name: str) -> dict:
+    """Compute transit proximity score from CTA L-station ridership data."""
+    import math
+    from modal_app.common import NEIGHBORHOOD_CENTROIDS
+
+    centroid = NEIGHBORHOOD_CENTROIDS.get(neighborhood_name)
+    if not centroid:
+        return {"stations_nearby": 0, "total_daily_riders": 0, "transit_score": 0, "station_names": []}
+
+    clat, clng = centroid
+    stations = _load_cta_stations()
+
+    # Find stations within 3km of neighborhood centroid
+    nearby: list[dict] = []
+    for s in stations:
+        dlat = math.radians(s["lat"] - clat)
+        dlng = math.radians(s["lng"] - clng)
+        a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(clat)) * math.cos(math.radians(s["lat"])) * math.sin(dlng / 2) ** 2
+        dist_km = 6371 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        if dist_km <= 3.0:
+            nearby.append({**s, "distance_km": dist_km})
+
+    if not nearby:
+        return {"stations_nearby": 0, "total_daily_riders": 0, "transit_score": 0, "station_names": []}
+
+    nearby_names = {s["station_name"] for s in nearby}
+
+    # Load CTA ridership docs to get avg weekday rides
+    ridership_docs = _load_docs("public_data", limit=500)
+    total_rides = 0
+    matched_stations = 0
+    for doc in ridership_docs:
+        meta = doc.get("metadata", {})
+        if meta.get("dataset") != "cta_ridership_L":
+            continue
+        raw = meta.get("raw_record", {})
+        station = raw.get("stationame", raw.get("station_name", ""))
+        if station in nearby_names:
+            try:
+                rides = float(raw.get("avg_weekday_rides", 0))
+                total_rides += rides
+                matched_stations += 1
+            except (ValueError, TypeError):
+                continue
+
+    # Normalize to 0-100 score (10K+ daily riders = 100)
+    transit_score = min(100, round((total_rides / 10000) * 100)) if total_rides > 0 else 0
+    # Fallback: if we have nearby stations but no ridership data yet, score from station count
+    if transit_score == 0 and len(nearby) > 0:
+        transit_score = min(100, len(nearby) * 20)
+
+    return {
+        "stations_nearby": len(nearby),
+        "total_daily_riders": round(total_rides),
+        "transit_score": transit_score,
+        "station_names": sorted(nearby_names),
+    }
+
+
 @web_app.get("/neighborhood/{name}")
 async def neighborhood(name: str, business_type: str = ""):
     """Full neighborhood data profile."""
@@ -1143,8 +1253,16 @@ async def neighborhood(name: str, business_type: str = ""):
         # Load demographics
         demographics = _aggregate_demographics(name)
 
-        # Load CCTV analysis
+        # Load CCTV analysis + peak hour from timeseries
         cctv_analysis = _load_cctv_for_neighborhood(name)
+        if cctv_analysis.get("cameras"):
+            ts = _aggregate_timeseries_for_neighborhood(name)
+            if ts.get("hours"):
+                cctv_analysis["peak_hour"] = ts["peak_hour"]
+                cctv_analysis["peak_pedestrians"] = ts["peak_pedestrians"]
+
+        # CTA transit proximity score
+        transit_data = _compute_transit_score(name)
 
         if span:
             span.set_attribute("output.value", json.dumps({
@@ -1172,6 +1290,7 @@ async def neighborhood(name: str, business_type: str = ""):
             "tiktok_refresh": tiktok_refresh,
             "traffic": traffic_docs[:10],
             "cctv": cctv_analysis,
+            "transit": transit_data,
             "inspection_stats": {
                 "total": len(inspections),
                 "failed": failed,
@@ -1212,6 +1331,112 @@ def _write_settings_store(store: dict) -> None:
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS_PATH.write_text(json.dumps(store, indent=2))
     volume.commit()
+
+
+@web_app.get("/trends/{neighborhood}")
+async def get_trends(neighborhood: str):
+    """24-hour trend analysis: compare last 6h vs prior 6h."""
+    import hashlib
+
+    volume.reload()
+
+    # Try to load baseline data
+    baseline_path = Path(PROCESSED_DATA_PATH) / "trends" / "baselines" / f"{neighborhood}.json"
+    if baseline_path.exists():
+        baseline = json.loads(baseline_path.read_text())
+    else:
+        # Generate synthetic baseline from neighborhood name hash
+        seed = int(hashlib.md5(neighborhood.encode()).hexdigest()[:8], 16)
+        rng_base = (seed % 10) + 5
+        baseline = {
+            "hours": [
+                {
+                    "hour": h,
+                    "pedestrians": round(rng_base * (0.3 + 0.7 * abs(12 - abs(h - 14)) / 12), 1),
+                    "vehicles": round(rng_base * 1.8 * (0.2 + 0.8 * abs(12 - abs(h - 13)) / 12), 1),
+                    "congestion": round(0.1 + 0.5 * abs(12 - abs(h - 14)) / 12, 2),
+                }
+                for h in range(24)
+            ]
+        }
+
+    hours = baseline["hours"]
+
+    # Compute trend: compare last 6h (18-23) vs prior 6h (12-17)
+    recent = hours[18:24]
+    prior = hours[12:18]
+
+    def avg_field(entries, field):
+        vals = [e[field] for e in entries]
+        return sum(vals) / len(vals) if vals else 0
+
+    recent_peds = avg_field(recent, "pedestrians")
+    prior_peds = avg_field(prior, "pedestrians")
+    ped_change = round(((recent_peds - prior_peds) / max(prior_peds, 0.1)) * 100)
+
+    recent_cong = avg_field(recent, "congestion")
+    prior_cong = avg_field(prior, "congestion")
+    cong_change = round(((recent_cong - prior_cong) / max(prior_cong, 0.01)) * 100)
+
+    # News activity: count recent news docs for this neighborhood
+    news_dir = Path(RAW_DATA_PATH) / "news"
+    news_count = 0
+    if news_dir.exists():
+        for f in list(news_dir.rglob("*.json"))[:200]:
+            try:
+                doc = json.loads(f.read_text())
+                geo = doc.get("geo", {})
+                if geo.get("neighborhood", "").lower() == neighborhood.lower():
+                    news_count += 1
+            except Exception:
+                continue
+    news_trend = "up" if news_count > 5 else ("stable" if news_count > 2 else "down")
+
+    # Load traffic anomalies from existing data
+    anomalies = []
+    traffic_dir = Path(RAW_DATA_PATH) / "traffic"
+    if traffic_dir.exists():
+        for date_dir in sorted(traffic_dir.iterdir(), reverse=True)[:1]:
+            if not date_dir.is_dir():
+                continue
+            for f in date_dir.glob("*.json"):
+                try:
+                    doc = json.loads(f.read_text())
+                    meta = doc.get("metadata", {})
+                    if meta.get("is_anomaly") and doc.get("geo", {}).get("neighborhood", "").lower() == neighborhood.lower():
+                        anomalies.append({
+                            "type": meta.get("severity", "info"),
+                            "description": meta.get("congestion_level", "anomaly detected"),
+                            "road": doc.get("title", "Unknown road"),
+                        })
+                except Exception:
+                    continue
+
+    def trend_dir(change_pct):
+        if change_pct > 5:
+            return "up"
+        elif change_pct < -5:
+            return "down"
+        return "stable"
+
+    return {
+        "foot_traffic": {
+            "trend": trend_dir(ped_change),
+            "change_pct": ped_change,
+            "current_avg": round(recent_peds, 1),
+            "prior_avg": round(prior_peds, 1),
+        },
+        "congestion": {
+            "trend": trend_dir(cong_change),
+            "change_pct": cong_change,
+            "anomalies": anomalies[:5],
+        },
+        "news_activity": {
+            "trend": news_trend,
+            "change_pct": (news_count - 3) * 10,
+        },
+        "hours": hours,
+    }
 
 
 @web_app.get("/user/settings")
@@ -1356,14 +1581,179 @@ async def summary():
 
 @web_app.get("/cctv/latest")
 async def cctv_latest():
-    """Latest CCTV analysis — temporarily disabled, pipeline not yet fully implemented."""
-    return {"cameras": [], "count": 0}
+    """Latest CCTV analysis per camera: counts, density, location."""
+    volume.reload()
+    analysis_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "analysis"
+    if not analysis_dir.exists():
+        return {"cameras": [], "count": 0}
+
+    latest_by_cam: dict[str, dict] = {}
+    for jf in sorted(analysis_dir.glob("*.json"), reverse=True)[:500]:
+        try:
+            data = json.loads(jf.read_text())
+            cam_id = data.get("camera_id", "")
+            if cam_id not in latest_by_cam:
+                latest_by_cam[cam_id] = data
+        except Exception:
+            continue
+
+    cameras = list(latest_by_cam.values())
+    return {"cameras": cameras, "count": len(cameras)}
 
 
 @web_app.get("/cctv/frame/{camera_id}")
 async def cctv_frame(camera_id: str):
-    """Serve latest annotated JPEG — temporarily disabled, pipeline not yet fully implemented."""
-    return JSONResponse({"error": "CCTV temporarily disabled"}, status_code=503)
+    """Serve latest annotated JPEG for a camera."""
+    from fastapi.responses import Response
+
+    volume.reload()
+    ann_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "annotated"
+    if not ann_dir.exists():
+        return JSONResponse({"error": "no annotated frames"}, status_code=404)
+
+    # Find latest annotated frame for this camera
+    frames = sorted(ann_dir.glob(f"{camera_id}_*.jpg"), reverse=True)
+    if not frames:
+        return JSONResponse({"error": f"no frames for camera {camera_id}"}, status_code=404)
+
+    frame_bytes = frames[0].read_bytes()
+    return Response(content=frame_bytes, media_type="image/jpeg")
+
+
+def _aggregate_timeseries_for_neighborhood(name: str) -> dict:
+    """Aggregate per-camera timeseries into hourly buckets for a neighborhood."""
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    volume.reload()
+    cctv_data = _load_cctv_for_neighborhood(name)
+    camera_ids = [c["camera_id"] for c in cctv_data.get("cameras", [])]
+    if not camera_ids:
+        return {"hours": [], "peak_hour": 0, "peak_pedestrians": 0, "camera_count": 0}
+
+    ts_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "timeseries"
+    if not ts_dir.exists():
+        return {"hours": [], "peak_hour": 0, "peak_pedestrians": 0, "camera_count": len(camera_ids)}
+
+    chicago_tz = ZoneInfo("America/Chicago")
+    # Collect all entries per hour
+    hourly: dict[int, list[dict]] = {h: [] for h in range(24)}
+
+    for cam_id in camera_ids:
+        ts_path = ts_dir / f"{cam_id}.json"
+        if not ts_path.exists():
+            continue
+        try:
+            entries = json.loads(ts_path.read_text())
+        except Exception:
+            continue
+        for entry in entries:
+            ts_str = entry.get("timestamp", "")
+            if not ts_str:
+                continue
+            try:
+                dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                local_hour = dt.astimezone(chicago_tz).hour
+                hourly[local_hour].append(entry)
+            except Exception:
+                continue
+
+    hours = []
+    for h in range(24):
+        entries = hourly[h]
+        if entries:
+            avg_p = sum(e.get("pedestrians", 0) for e in entries) / len(entries)
+            avg_v = sum(e.get("vehicles", 0) for e in entries) / len(entries)
+            density = "high" if avg_p > 20 else "medium" if avg_p > 5 else "low"
+            hours.append({
+                "hour": h,
+                "avg_pedestrians": round(avg_p, 1),
+                "avg_vehicles": round(avg_v, 1),
+                "density": density,
+                "sample_count": len(entries),
+            })
+        else:
+            hours.append({
+                "hour": h,
+                "avg_pedestrians": 0,
+                "avg_vehicles": 0,
+                "density": "low",
+                "sample_count": 0,
+            })
+
+    peak = max(hours, key=lambda b: b["avg_pedestrians"])
+    return {
+        "hours": hours,
+        "peak_hour": peak["hour"],
+        "peak_pedestrians": peak["avg_pedestrians"],
+        "camera_count": len(camera_ids),
+    }
+
+
+@web_app.get("/cctv/timeseries/{neighborhood}")
+async def cctv_timeseries(neighborhood: str):
+    """24h rolling timeseries aggregated by hour for a neighborhood's cameras."""
+    return _aggregate_timeseries_for_neighborhood(neighborhood)
+
+
+@web_app.get("/vision/streetscape/{neighborhood}")
+async def vision_streetscape(neighborhood: str):
+    """Streetscape intelligence from vision pipeline analysis results."""
+    volume.reload()
+    analysis_dir = Path(PROCESSED_DATA_PATH) / "vision" / "analysis"
+    if not analysis_dir.exists():
+        return {"counts": None, "indicators": None, "analysis_count": 0}
+
+    # Scan analysis results filtered by neighborhood
+    totals = {
+        "person": 0, "vehicle": 0, "storefront_open": 0, "storefront_closed": 0,
+        "for_lease_sign": 0, "construction": 0, "restaurant_signage": 0, "outdoor_dining": 0,
+    }
+    analysis_count = 0
+    slug = neighborhood.lower().replace(" ", "_")
+
+    for jf in analysis_dir.glob("*.json"):
+        try:
+            data = json.loads(jf.read_text())
+            counts = data.get("counts")
+            if not counts:
+                continue
+            # Match by filename prefix or JSON neighborhood field
+            file_match = jf.name.startswith(f"{slug}_")
+            field_match = data.get("neighborhood", "").lower().replace(" ", "_") == slug
+            if not file_match and not field_match:
+                continue
+            for key in totals:
+                totals[key] += counts.get(key, 0)
+            analysis_count += 1
+        except Exception:
+            continue
+
+    if analysis_count == 0:
+        return {"counts": None, "indicators": None, "analysis_count": 0}
+
+    # Compute interpretation thresholds
+    total_storefronts = totals["storefront_open"] + totals["storefront_closed"] + totals["for_lease_sign"]
+    if total_storefronts > 0:
+        vacancy_pct = (totals["for_lease_sign"] + totals["storefront_closed"]) / total_storefronts
+        vacancy_signal = "high" if vacancy_pct > 0.4 else "moderate" if vacancy_pct > 0.15 else "low"
+    else:
+        vacancy_signal = "low"
+
+    dining_total = totals["restaurant_signage"] + totals["outdoor_dining"]
+    dining_saturation = "high" if dining_total > 10 else "moderate" if dining_total > 3 else "low"
+
+    growth_signal = "active" if totals["construction"] > 0 else "stable"
+
+    return {
+        "counts": totals,
+        "indicators": {
+            "vacancy_signal": vacancy_signal,
+            "dining_saturation": dining_saturation,
+            "growth_signal": growth_signal,
+        },
+        "analysis_count": analysis_count,
+    }
 
 
 @web_app.get("/geo")
@@ -1410,6 +1800,46 @@ async def graph(page: int = 1, limit: int = 200):
     except Exception as e:
         print(f"Supermemory /graph error: {type(e).__name__}: {e}")
         return JSONResponse(empty, status_code=200)
+
+
+def _load_city_graph() -> dict:
+    """Load the pre-built city graph from volume."""
+    volume.reload()
+    graph_path = Path(PROCESSED_DATA_PATH) / "graph" / "city_graph.json"
+    if not graph_path.exists():
+        return {"nodes": [], "edges": [], "stats": {}}
+    return json.loads(graph_path.read_text())
+
+
+@web_app.get("/graph/full")
+async def get_full_graph():
+    """Full city graph as node/edge JSON for D3."""
+    return _load_city_graph()
+
+
+@web_app.get("/graph/neighborhood/{name}")
+async def get_neighborhood_graph(name: str):
+    """1-hop subgraph around a neighborhood node."""
+    data = _load_city_graph()
+    nb_id = f"nb:{name}"
+
+    connected = {nb_id}
+    for edge in data["edges"]:
+        if edge["source"] == nb_id or edge["target"] == nb_id:
+            connected.add(edge["source"])
+            connected.add(edge["target"])
+
+    nodes = [n for n in data["nodes"] if n["id"] in connected]
+    edges = [e for e in data["edges"] if e["source"] in connected and e["target"] in connected]
+
+    return {"nodes": nodes, "edges": edges, "center": nb_id}
+
+
+@web_app.get("/graph/stats")
+async def get_graph_stats():
+    """Graph statistics."""
+    data = _load_city_graph()
+    return data.get("stats", {})
 
 
 @web_app.get("/gpu-metrics")

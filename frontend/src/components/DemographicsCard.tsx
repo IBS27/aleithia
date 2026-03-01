@@ -80,18 +80,18 @@ export default function DemographicsCard({ metrics, demographics, cctv }: Props)
         </div>
       )}
 
-      {/* Foot Traffic — Live CCTV */}
+      {/* Highway Traffic — IDOT Cameras */}
       {cctv && cctv.cameras.length > 0 && (
         <div className="mb-5 pb-4 border-b border-white/[0.06]">
-          <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mb-3">Foot Traffic — Live CCTV</div>
+          <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mb-3">Highway Traffic — IDOT Cameras</div>
           <div className="grid grid-cols-2 gap-2">
-            <div className="bg-white/[0.02] border border-white/[0.04] p-3">
-              <div className="text-lg font-bold font-mono text-white">{Math.round(cctv.avg_pedestrians)}</div>
-              <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mt-0.5">Avg Pedestrians</div>
-            </div>
             <div className="bg-white/[0.02] border border-white/[0.04] p-3">
               <div className="text-lg font-bold font-mono text-white">{Math.round(cctv.avg_vehicles)}</div>
               <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mt-0.5">Avg Vehicles</div>
+            </div>
+            <div className="bg-white/[0.02] border border-white/[0.04] p-3">
+              <div className="text-lg font-bold font-mono text-white">{Math.round(cctv.avg_pedestrians)}</div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mt-0.5">Hwy Pedestrians</div>
             </div>
             <div className="bg-white/[0.02] border border-white/[0.04] p-3">
               <div className="text-lg font-bold font-mono text-white">{cctv.cameras.length}</div>

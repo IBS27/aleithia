@@ -1,0 +1,30 @@
+{
+  "neighborhood": "Pilsen",
+  "hours": [
+    {"hour": 0, "pedestrians": 1.8, "vehicles": 6.5, "congestion": 0.12},
+    {"hour": 1, "pedestrians": 1.0, "vehicles": 4.0, "congestion": 0.08},
+    {"hour": 2, "pedestrians": 0.6, "vehicles": 2.5, "congestion": 0.06},
+    {"hour": 3, "pedestrians": 0.4, "vehicles": 1.8, "congestion": 0.04},
+    {"hour": 4, "pedestrians": 0.5, "vehicles": 2.5, "congestion": 0.05},
+    {"hour": 5, "pedestrians": 1.5, "vehicles": 6.0, "congestion": 0.14},
+    {"hour": 6, "pedestrians": 4.0, "vehicles": 14.0, "congestion": 0.28},
+    {"hour": 7, "pedestrians": 7.5, "vehicles": 20.0, "congestion": 0.45},
+    {"hour": 8, "pedestrians": 10.5, "vehicles": 24.0, "congestion": 0.58},
+    {"hour": 9, "pedestrians": 11.0, "vehicles": 22.0, "congestion": 0.52},
+    {"hour": 10, "pedestrians": 12.0, "vehicles": 20.5, "congestion": 0.48},
+    {"hour": 11, "pedestrians": 14.5, "vehicles": 21.0, "congestion": 0.50},
+    {"hour": 12, "pedestrians": 16.0, "vehicles": 23.5, "congestion": 0.55},
+    {"hour": 13, "pedestrians": 15.0, "vehicles": 22.5, "congestion": 0.53},
+    {"hour": 14, "pedestrians": 13.5, "vehicles": 21.0, "congestion": 0.50},
+    {"hour": 15, "pedestrians": 12.8, "vehicles": 22.0, "congestion": 0.52},
+    {"hour": 16, "pedestrians": 14.0, "vehicles": 26.0, "congestion": 0.62},
+    {"hour": 17, "pedestrians": 17.0, "vehicles": 30.0, "congestion": 0.75},
+    {"hour": 18, "pedestrians": 18.5, "vehicles": 27.0, "congestion": 0.68},
+    {"hour": 19, "pedestrians": 16.0, "vehicles": 22.5, "congestion": 0.55},
+    {"hour": 20, "pedestrians": 13.5, "vehicles": 18.0, "congestion": 0.42},
+    {"hour": 21, "pedestrians": 10.0, "vehicles": 14.5, "congestion": 0.30},
+    {"hour": 22, "pedestrians": 7.0, "vehicles": 11.0, "congestion": 0.22},
+    {"hour": 23, "pedestrians": 3.5, "vehicles": 8.0, "congestion": 0.18}
+  ],
+  "generated_at": "2026-02-28T00:00:00Z"
+}

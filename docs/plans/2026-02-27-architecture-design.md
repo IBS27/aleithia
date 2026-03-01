@@ -177,7 +177,7 @@ Three GPU models running on Modal:
 - **DocClassifier** (`facebook/bart-large-mnli`, 406M params, T4): Zero-shot classification into regulatory/economic/safety/infrastructure/community/business. Batch size 32 via `@modal.batched`.
 - **SentimentAnalyzer** (`cardiffnlp/twitter-roberta-base-sentiment-latest`, T4): Sentiment scoring. Batch size 32 via `@modal.batched`.
 - **AlethiaLLM** (Qwen3 8B via vLLM, H100): Streaming chat responses, intelligence briefs, agent synthesis. 20 concurrent inputs via `@modal.concurrent`.
-- **CCTVDetector** (YOLOv8n, T4): Pedestrian and vehicle detection on IDOT highway camera snapshots. Foot traffic density classification (high/medium/low).
+- **CCTVDetector** (YOLOv8n, T4): Vehicle and pedestrian detection on IDOT highway camera snapshots. Highway traffic density classification (high/medium/low). Note: these are expressway cameras — walk-in potential is sourced from CTA ridership data instead.
 
 ## Supermemory Integration
 

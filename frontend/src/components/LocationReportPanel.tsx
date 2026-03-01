@@ -1,5 +1,7 @@
+import { useState, useEffect } from 'react'
 import { jsPDF } from 'jspdf'
-import type { NeighborhoodData, RiskScore, UserProfile } from '../types/index.ts'
+import type { NeighborhoodData, RiskScore, UserProfile, StreetscapeData } from '../types/index.ts'
+import { api } from '../api.ts'
 
 interface AgentInfo {
   agents_deployed: number
@@ -25,7 +27,7 @@ type Signal = {
   detail: string
 }
 
-function buildAdvantages(data: NeighborhoodData | null): Signal[] {
+function buildAdvantages(data: NeighborhoodData | null, streetscape?: StreetscapeData | null): Signal[] {
   if (!data) return []
 
   const items: Signal[] = []
@@ -48,9 +50,19 @@ function buildAdvantages(data: NeighborhoodData | null): Signal[] {
   }
 
   if (data.cctv && data.cctv.cameras.length > 0 && (data.cctv.density === 'high' || data.cctv.density === 'medium')) {
+    const peakNote = data.cctv.peak_hour != null
+      ? `, peaking around ${data.cctv.peak_hour}:00`
+      : ''
     items.push({
-      title: 'Consistent street activity',
-      detail: `${data.cctv.cameras.length} nearby cameras report ${data.cctv.density} foot traffic (avg ${data.cctv.avg_pedestrians} pedestrians), supporting walk-in potential.`,
+      title: 'Highway accessibility',
+      detail: `${data.cctv.cameras.length} IDOT highway cameras report ${data.cctv.density} vehicle flow (~${Math.round(data.cctv.avg_vehicles)} avg vehicles${peakNote}), indicating strong transport corridor access.`,
+    })
+  }
+
+  if (streetscape?.indicators?.vacancy_signal === 'moderate') {
+    items.push({
+      title: 'Available commercial space',
+      detail: `Moderate vacancy detected (${streetscape.counts.for_lease_sign} for-lease signs) indicates room for new entrants without overcrowding.`,
     })
   }
 
@@ -68,10 +80,10 @@ function buildAdvantages(data: NeighborhoodData | null): Signal[] {
     })
   }
 
-  return items.slice(0, 2)
+  return items.slice(0, 3)
 }
 
-function buildRisks(data: NeighborhoodData | null): Signal[] {
+function buildRisks(data: NeighborhoodData | null, profile: UserProfile, streetscape?: StreetscapeData | null): Signal[] {
   if (!data) return []
 
   const items: Signal[] = []
@@ -104,6 +116,14 @@ function buildRisks(data: NeighborhoodData | null): Signal[] {
     })
   }
 
+  const isRestaurant = ['Restaurant', 'Coffee Shop', 'Bar'].includes(profile.business_type)
+  if (streetscape?.indicators?.dining_saturation === 'high' && isRestaurant) {
+    items.push({
+      title: 'Saturated dining market',
+      detail: `${streetscape.counts.restaurant_signage + streetscape.counts.outdoor_dining} dining indicators detected — high density may limit differentiation for food/beverage businesses.`,
+    })
+  }
+
   if (avgRating > 0 && avgRating < 3.8) {
     items.push({
       title: 'Mixed consumer sentiment',
@@ -118,7 +138,7 @@ function buildRisks(data: NeighborhoodData | null): Signal[] {
     })
   }
 
-  return items.slice(0, 2)
+  return items.slice(0, 3)
 }
 
 function buildSummary(profile: UserProfile, data: NeighborhoodData | null, riskScore: RiskScore | null): string {
@@ -151,8 +171,17 @@ function safeNumber(value: number | undefined): string {
 }
 
 export default function LocationReportPanel({ profile, neighborhoodData, riskScore, loading, agentInfo }: Props) {
-  const advantages = buildAdvantages(neighborhoodData)
-  const risks = buildRisks(neighborhoodData)
+  const [streetscape, setStreetscape] = useState<StreetscapeData | null>(null)
+
+  useEffect(() => {
+    if (!profile.neighborhood) return
+    api.streetscape(profile.neighborhood)
+      .then(d => setStreetscape(d.counts ? d as StreetscapeData : null))
+      .catch(() => setStreetscape(null))
+  }, [profile.neighborhood])
+
+  const advantages = buildAdvantages(neighborhoodData, streetscape)
+  const risks = buildRisks(neighborhoodData, profile, streetscape)
   const summary = buildSummary(profile, neighborhoodData, riskScore)
 
   const handleDownloadPdf = () => {
@@ -218,7 +247,7 @@ export default function LocationReportPanel({ profile, neighborhoodData, riskSco
         ? `Demand signal: local review sentiment averages ${rating.toFixed(1)}/5 across ${neighborhoodData?.reviews?.length || 0} records.`
         : null,
       neighborhoodData?.cctv?.cameras.length
-        ? `Street activity: ${neighborhoodData.cctv.cameras.length} nearby CCTV points report ${neighborhoodData.cctv.density} traffic density with ~${neighborhoodData.cctv.avg_pedestrians} average pedestrians.`
+        ? `Highway access: ${neighborhoodData.cctv.cameras.length} IDOT cameras report ${neighborhoodData.cctv.density} vehicle flow with ~${Math.round(neighborhoodData.cctv.avg_vehicles)} average vehicles.`
         : null,
       neighborhoodData && neighborhoodData.permit_count > 0
         ? `Investment velocity: ${neighborhoodData.permit_count} active permits suggest current reinvestment in the area.`

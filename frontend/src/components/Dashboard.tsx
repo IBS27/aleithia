@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { SignedIn, SignedOut, SignInButton, SignUpButton, useClerk, useUser } from '@clerk/clerk-react'
-import type { UserProfile, NeighborhoodData, DataSources, RiskScore } from '../types/index.ts'
-import { api } from '../api.ts'
+import type { UserProfile, NeighborhoodData, DataSources, RiskScore, CCTVData, Document } from '../types/index.ts'
+import { api, fetchTrends, type TrendData } from '../api.ts'
 import RiskCard from './RiskCard.tsx'
 import MapView from './MapView.tsx'
 import Timer from './Timer.tsx'
@@ -19,7 +19,10 @@ import PipelineMonitor from './PipelineMonitor.tsx'
 import MLMonitor from './MLMonitor.tsx'
 import CCTVFeedCard from './CCTVFeedCard.tsx'
 import InsightsCard from './InsightsCard.tsx'
+import CityGraph from './CityGraph.tsx'
 import LocationReportPanel from './LocationReportPanel.tsx'
+import FootTrafficChart from './FootTrafficChart.tsx'
+import StreetscapeCard from './StreetscapeCard.tsx'
 
 /*
   Legacy chat imports intentionally commented out (not deleted):
@@ -30,7 +33,7 @@ import LocationReportPanel from './LocationReportPanel.tsx'
   import ChatPanel from './ChatPanel.tsx'
 */
 
-type Tab = 'overview' | 'inspections' | 'permits' | 'licenses' | 'news' | 'community' | 'market' | 'models'
+type Tab = 'overview' | 'inspections' | 'permits' | 'licenses' | 'news' | 'community' | 'market' | 'vision' | 'models'
 
 interface ReportAgentInfo {
   agents_deployed: number
@@ -116,11 +119,11 @@ function computeRiskScore(data: NeighborhoodData, profile: UserProfile): RiskSco
   if (data.cctv && data.cctv.cameras.length > 0) {
     const density = data.cctv.density
     factors.push({
-      label: `${data.cctv.cameras.length} CCTV cameras — ${density} foot traffic`,
+      label: `${data.cctv.cameras.length} IDOT cameras — ${density} highway traffic`,
       pct: density === 'high' ? 5 : density === 'medium' ? 10 : 15,
       source: 'cctv',
       severity: density === 'low' ? 'medium' as const : 'low' as const,
-      description: `Live CCTV analysis shows ~${data.cctv.avg_pedestrians} avg pedestrians and ~${data.cctv.avg_vehicles} avg vehicles across ${data.cctv.cameras.length} nearby cameras.`,
+      description: `IDOT highway cameras show ~${Math.round(data.cctv.avg_vehicles)} avg vehicles across ${data.cctv.cameras.length} nearby expressway cameras.`,
     })
   }
 
@@ -162,7 +165,7 @@ function computeRiskScore(data: NeighborhoodData, profile: UserProfile): RiskSco
       pct: congested.length * 10,
       source: 'traffic',
       severity: congested.length > 3 ? 'high' as const : 'medium' as const,
-      description: 'Heavy traffic may affect foot traffic and deliveries.',
+      description: 'Heavy traffic may affect deliveries and customer access.',
     })
   }
 
@@ -201,6 +204,7 @@ export default function Dashboard({ profile, onReset }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
+  const [trends, setTrends] = useState<TrendData | null>(null)
 
   /*
     Legacy ChatPanel state intentionally commented out (not deleted):
@@ -227,6 +231,8 @@ export default function Dashboard({ profile, onReset }: Props) {
       setSources(srcData)
       setRiskScore(computeRiskScore(nbData, profile))
       setLoading(false)
+      // Fetch trends (non-blocking)
+      fetchTrends(profile.neighborhood).then(t => setTrends(t)).catch(() => {})
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data')
       setLoading(false)
@@ -431,6 +437,7 @@ export default function Dashboard({ profile, onReset }: Props) {
     { key: 'news', label: 'Intel', count: (neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0), isEmpty: () => !((neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0)) },
     { key: 'community', label: 'Community', count: (neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0), isEmpty: () => !((neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0)) },
     { key: 'market', label: 'Market', count: (neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0), isEmpty: () => !((neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0)) },
+    { key: 'vision', label: 'Vision', count: neighborhoodData?.cctv?.cameras.length || 0, isEmpty: () => false },
     { key: 'models', label: 'Models' },
   ]
   const tabs = useMemo(
@@ -445,6 +452,7 @@ export default function Dashboard({ profile, onReset }: Props) {
       neighborhoodData?.tiktok?.length,
       neighborhoodData?.reviews?.length,
       neighborhoodData?.realestate?.length,
+      neighborhoodData?.cctv?.cameras.length,
     ]
   )
   const visibleTabKeys = useMemo(() => tabs.map(t => t.key), [tabs])
@@ -555,6 +563,16 @@ export default function Dashboard({ profile, onReset }: Props) {
             </div>
           ) : (
             <>
+              {activeTab === 'overview' && trends?.congestion.anomalies && trends.congestion.anomalies.length > 0 && (
+                <div className="border border-red-500/20 bg-red-500/[0.04] px-4 py-3 flex items-center gap-3">
+                  <span className="text-red-400 text-xs font-mono font-bold">ALERT</span>
+                  <span className="text-xs text-white/50">
+                    {trends.congestion.anomalies.length} traffic anomal{trends.congestion.anomalies.length === 1 ? 'y' : 'ies'} detected:
+                    {' '}{trends.congestion.anomalies.map(a => a.road).join(', ')}
+                  </span>
+                </div>
+              )}
+
               {activeTab === 'overview' && (
                 <div className="space-y-4">
                   <div className="h-[300px]">
@@ -570,7 +588,7 @@ export default function Dashboard({ profile, onReset }: Props) {
                   </div>
 
                   {neighborhoodData && (
-                    <InsightsCard data={neighborhoodData} profile={profile} />
+                    <InsightsCard data={neighborhoodData} profile={profile} onTabChange={(tab) => setActiveTab(tab as Tab)} />
                   )}
 
                   {neighborhoodData?.traffic && neighborhoodData.traffic.length > 0 && (
@@ -606,6 +624,7 @@ export default function Dashboard({ profile, onReset }: Props) {
                         value={neighborhoodData.news.length + neighborhoodData.politics.length}
                         sub="recent"
                         severity="nominal"
+                        trend={trends ? { direction: trends.news_activity.trend, pct: trends.news_activity.change_pct } : null}
                       />
                       <StatCard
                         label="Business Reviews"
@@ -620,10 +639,11 @@ export default function Dashboard({ profile, onReset }: Props) {
                         severity="nominal"
                       />
                       <StatCard
-                        label="CCTV Cameras"
+                        label="IDOT Cameras"
                         value={neighborhoodData.cctv?.cameras.length ?? 0}
                         sub={neighborhoodData.cctv?.density ?? 'no data'}
                         severity="nominal"
+                        trend={trends ? { direction: trends.foot_traffic.trend, pct: trends.foot_traffic.change_pct } : null}
                       />
                     </div>
                   )}
@@ -670,8 +690,15 @@ export default function Dashboard({ profile, onReset }: Props) {
                 <MarketPanel reviews={neighborhoodData.reviews || []} realestate={neighborhoodData.realestate || []} />
               )}
 
+              {activeTab === 'vision' && (
+                <VisionTab cctv={neighborhoodData?.cctv ?? null} traffic={neighborhoodData?.traffic ?? []} neighborhood={profile.neighborhood} />
+              )}
+
               {activeTab === 'models' && (
-                <MLMonitor />
+                <div className="space-y-4">
+                  <CityGraph activeNeighborhood={profile.neighborhood} />
+                  <MLMonitor />
+                </div>
               )}
             </>
           )}
@@ -707,11 +734,365 @@ export default function Dashboard({ profile, onReset }: Props) {
   )
 }
 
-function StatCard({ label, value, sub, severity }: { label: string; value: number; sub: string; severity: 'high' | 'nominal' }) {
+const YOLO_CLASSES = ['person', 'bicycle', 'car', 'motorcycle', 'bus', 'truck'] as const
+
+const PIPELINE_STEPS = [
+  { label: 'IDOT CCTV', sub: 'Camera snapshots' },
+  { label: 'Download', sub: 'Frame capture' },
+  { label: 'YOLOv8n', sub: 'T4 GPU inference' },
+  { label: 'Counting', sub: 'Ped / veh / bike' },
+  { label: 'Scoring', sub: 'Density classification' },
+] as const
+
+function VisionTab({ cctv, traffic, neighborhood }: { cctv: CCTVData | null; traffic: Document[]; neighborhood: string }) {
+  const [expandedCam, setExpandedCam] = useState<string | null>(null)
+  const cameras = cctv?.cameras ?? []
+
+  // Aggregate stats
+  const totalPeds = cameras.reduce((s, c) => s + c.pedestrians, 0)
+  const totalVehs = cameras.reduce((s, c) => s + c.vehicles, 0)
+  const totalBikes = cameras.reduce((s, c) => s + c.bicycles, 0)
+  const totalDetections = totalPeds + totalVehs + totalBikes
+  const pedPct = totalDetections > 0 ? Math.round((totalPeds / totalDetections) * 100) : 0
+  const vehPct = totalDetections > 0 ? Math.round((totalVehs / totalDetections) * 100) : 0
+  const bikePct = totalDetections > 0 ? 100 - pedPct - vehPct : 0
+
+  const densityCounts = { high: 0, medium: 0, low: 0, unknown: 0 }
+  for (const c of cameras) densityCounts[c.density_level]++
+  const avgDensity = cameras.length > 0
+    ? (densityCounts.high >= densityCounts.medium && densityCounts.high >= densityCounts.low ? 'high' : densityCounts.medium >= densityCounts.low ? 'medium' : 'low')
+    : 'n/a'
+
+  const selectedCamera = expandedCam ? cameras.find(c => c.camera_id === expandedCam) : null
+
+  return (
+    <div className="space-y-4">
+      {/* Section A: Pipeline Overview */}
+      <div className="border border-white/[0.06] bg-white/[0.02] p-5">
+        <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30 mb-4">
+          Vision Pipeline
+        </h3>
+        <div className="flex items-center gap-0">
+          {PIPELINE_STEPS.map((step, i) => (
+            <div key={step.label} className="flex items-center">
+              <div className="flex flex-col items-center text-center w-28">
+                <div className="w-10 h-10 rounded-full border border-white/10 bg-white/[0.03] flex items-center justify-center mb-1.5">
+                  <span className="text-[10px] font-mono font-bold text-white/50">{i + 1}</span>
+                </div>
+                <div className="text-[11px] font-mono text-white/60">{step.label}</div>
+                <div className="text-[9px] font-mono text-white/20">{step.sub}</div>
+              </div>
+              {i < PIPELINE_STEPS.length - 1 && (
+                <div className="flex-shrink-0 w-8 h-px bg-gradient-to-r from-white/15 to-white/5 -mt-4" />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Streetscape Intelligence */}
+      <StreetscapeCard neighborhood={neighborhood} />
+
+      {/* Section B: Model Card */}
+      <div className="border border-white/[0.06] bg-white/[0.02] p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">
+            Model Card — YOLOv8n
+          </h3>
+          <span className="text-[9px] font-mono px-2 py-0.5 border border-white/10 text-white/25">Ultralytics</span>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-1">Parameters</div>
+            <div className="text-sm font-mono text-white/70">3.2M</div>
+          </div>
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-1">GPU</div>
+            <div className="text-sm font-mono text-white/70">NVIDIA T4</div>
+          </div>
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-1">Confidence</div>
+            <div className="text-sm font-mono text-white/70">0.3 threshold</div>
+          </div>
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-1">Features</div>
+            <div className="text-sm font-mono text-white/70">GPU snapshots</div>
+          </div>
+        </div>
+        <div className="mt-3 pt-3 border-t border-white/[0.04]">
+          <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-2">Detected Classes</div>
+          <div className="flex flex-wrap gap-1.5">
+            {YOLO_CLASSES.map(cls => (
+              <span key={cls} className="text-[10px] font-mono px-2 py-0.5 border border-white/[0.08] bg-white/[0.02] text-white/40">
+                {cls}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Section D: Aggregate Stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="border border-white/[0.06] bg-white/[0.02] p-4">
+          <div className="text-2xl font-bold font-mono text-white">{cameras.length}</div>
+          <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Cameras</div>
+        </div>
+        <div className="border border-white/[0.06] bg-white/[0.02] p-4">
+          <div className="text-2xl font-bold font-mono text-green-400">{totalPeds}</div>
+          <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Pedestrians</div>
+        </div>
+        <div className="border border-white/[0.06] bg-white/[0.02] p-4">
+          <div className="text-2xl font-bold font-mono text-blue-400">{totalVehs}</div>
+          <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Vehicles</div>
+        </div>
+        <div className="border border-white/[0.06] bg-white/[0.02] p-4">
+          <div className="text-2xl font-bold font-mono text-amber-400">{totalBikes}</div>
+          <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Bicycles</div>
+        </div>
+        <div className="border border-white/[0.06] bg-white/[0.02] p-4">
+          <div className="text-2xl font-bold font-mono text-white/70">{avgDensity}</div>
+          <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Avg Density</div>
+        </div>
+      </div>
+
+      {/* Detection distribution bar */}
+      {totalDetections > 0 && (
+        <div className="border border-white/[0.06] bg-white/[0.02] p-4">
+          <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-2">Detection Distribution</div>
+          <div className="flex h-3 rounded-sm overflow-hidden">
+            <div className="bg-green-500/70" style={{ width: `${pedPct}%` }} />
+            <div className="bg-blue-500/70" style={{ width: `${vehPct}%` }} />
+            <div className="bg-amber-500/70" style={{ width: `${bikePct}%` }} />
+          </div>
+          <div className="flex justify-between mt-2">
+            <span className="text-[10px] font-mono text-green-400/60">Pedestrians {pedPct}%</span>
+            <span className="text-[10px] font-mono text-blue-400/60">Vehicles {vehPct}%</span>
+            <span className="text-[10px] font-mono text-amber-400/60">Bicycles {bikePct}%</span>
+          </div>
+        </div>
+      )}
+
+      {/* Highway Traffic 24h Chart */}
+      <FootTrafficChart neighborhood={neighborhood} />
+
+      {/* Section C: Camera Grid — all cameras */}
+      {cameras.length > 0 ? (
+        <div className="border border-white/[0.06] bg-white/[0.02]">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
+            <div className="flex items-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+              <span className="text-[10px] font-mono uppercase tracking-wider text-white/40">
+                Live Camera Feeds
+              </span>
+            </div>
+            <span className="text-[10px] font-mono text-white/20">
+              {cameras.length} camera{cameras.length !== 1 ? 's' : ''} — click to expand
+            </span>
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-white/[0.04]">
+            {cameras.map(cam => (
+              <button
+                key={cam.camera_id}
+                type="button"
+                onClick={() => setExpandedCam(expandedCam === cam.camera_id ? null : cam.camera_id)}
+                className={`relative bg-[#06080d] p-0 cursor-pointer transition-all ${
+                  expandedCam === cam.camera_id ? 'ring-1 ring-white/30' : 'hover:ring-1 hover:ring-white/10'
+                }`}
+              >
+                <div className="relative aspect-video bg-black/40 overflow-hidden">
+                  <img
+                    src={api.cctvFrameUrl(cam.camera_id)}
+                    alt={`Camera ${cam.camera_id}`}
+                    className="w-full h-full object-cover"
+                    loading="lazy"
+                    onError={e => {
+                      const target = e.currentTarget
+                      target.style.display = 'none'
+                      const parent = target.parentElement
+                      if (parent && !parent.querySelector('.fallback')) {
+                        const fb = document.createElement('div')
+                        fb.className = 'fallback absolute inset-0 flex items-center justify-center'
+                        fb.innerHTML = '<span class="text-[10px] font-mono text-white/15">NO SIGNAL</span>'
+                        parent.appendChild(fb)
+                      }
+                    }}
+                  />
+                  <div className="absolute top-1.5 right-1.5 flex gap-1">
+                    <span className="px-1.5 py-0.5 text-[9px] font-mono font-bold bg-green-500/80 text-white rounded-sm">
+                      P:{cam.pedestrians}
+                    </span>
+                    <span className="px-1.5 py-0.5 text-[9px] font-mono font-bold bg-blue-500/80 text-white rounded-sm">
+                      V:{cam.vehicles}
+                    </span>
+                    {cam.bicycles > 0 && (
+                      <span className="px-1.5 py-0.5 text-[9px] font-mono font-bold bg-amber-500/80 text-white rounded-sm">
+                        B:{cam.bicycles}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="px-2 py-1.5 text-left">
+                  <div className="text-[10px] font-mono text-white/50 truncate">{cam.camera_id}</div>
+                  <div className="flex items-center justify-between mt-0.5">
+                    <span className="text-[9px] font-mono text-white/20">{cam.distance_km?.toFixed(1) ?? '—'}km</span>
+                    <span className={`text-[9px] font-mono ${
+                      cam.density_level === 'high' ? 'text-green-400/60' :
+                      cam.density_level === 'medium' ? 'text-yellow-400/60' :
+                      'text-white/20'
+                    }`}>
+                      {cam.density_level}
+                    </span>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          {/* Expanded camera detail */}
+          {selectedCamera && (
+            <div className="border-t border-white/[0.06] p-4">
+              <div className="flex gap-4">
+                <div className="flex-1 aspect-video bg-black/40 overflow-hidden relative">
+                  <img
+                    src={api.cctvFrameUrl(selectedCamera.camera_id)}
+                    alt={`Camera ${selectedCamera.camera_id} — expanded`}
+                    className="w-full h-full object-contain"
+                  />
+                  <div className="absolute top-2 right-2 flex gap-1.5">
+                    <span className="px-2 py-1 text-[10px] font-mono font-bold bg-green-500/80 text-white rounded-sm">
+                      P:{selectedCamera.pedestrians}
+                    </span>
+                    <span className="px-2 py-1 text-[10px] font-mono font-bold bg-blue-500/80 text-white rounded-sm">
+                      V:{selectedCamera.vehicles}
+                    </span>
+                    {selectedCamera.bicycles > 0 && (
+                      <span className="px-2 py-1 text-[10px] font-mono font-bold bg-amber-500/80 text-white rounded-sm">
+                        B:{selectedCamera.bicycles}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="w-48 space-y-3">
+                  <div>
+                    <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-1">Camera</div>
+                    <div className="text-xs font-mono text-white/60">{selectedCamera.camera_id}</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-1">Distance</div>
+                    <div className="text-xs font-mono text-white/60">{selectedCamera.distance_km?.toFixed(1) ?? '—'} km</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-1">Density</div>
+                    <div className={`text-xs font-mono ${
+                      selectedCamera.density_level === 'high' ? 'text-green-400' :
+                      selectedCamera.density_level === 'medium' ? 'text-yellow-400' :
+                      'text-white/40'
+                    }`}>
+                      {selectedCamera.density_level}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-1">Detections</div>
+                    <div className="text-xs font-mono text-white/50">
+                      {selectedCamera.pedestrians} ped / {selectedCamera.vehicles} veh / {selectedCamera.bicycles} bike
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-1">Timestamp</div>
+                    <div className="text-[10px] font-mono text-white/40">
+                      {selectedCamera.timestamp ? new Date(selectedCamera.timestamp).toLocaleString() : '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-1">Coordinates</div>
+                    <div className="text-[10px] font-mono text-white/30">
+                      {selectedCamera.lat != null && selectedCamera.lng != null
+                        ? `${selectedCamera.lat.toFixed(4)}, ${selectedCamera.lng.toFixed(4)}`
+                        : '—'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="border border-white/[0.06] bg-white/[0.02] p-8 text-center">
+          <div className="text-xs font-mono text-white/20">No camera data available for this neighborhood</div>
+          <div className="text-[10px] font-mono text-white/10 mt-1">CCTV pipeline runs on-demand — camera feeds will appear after analysis</div>
+        </div>
+      )}
+
+      {/* Section E: Traffic Flow table */}
+      {traffic.length > 0 && (
+        <div className="border border-white/[0.06] bg-white/[0.02]">
+          <div className="px-4 py-3 border-b border-white/[0.06]">
+            <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">
+              Traffic Flow — TomTom
+            </h3>
+          </div>
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-white/[0.04]">
+                <th className="px-4 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Road Segment</th>
+                <th className="px-4 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Speed</th>
+                <th className="px-4 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Free Flow</th>
+                <th className="px-4 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Congestion</th>
+                <th className="px-4 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Delay</th>
+              </tr>
+            </thead>
+            <tbody>
+              {traffic.map(doc => {
+                const level = (doc.metadata?.congestion_level as string) || 'free'
+                const speed = (doc.metadata?.current_speed as number) || 0
+                const freeFlow = (doc.metadata?.free_flow_speed as number) || 0
+                const travelTime = (doc.metadata?.travel_time as number) || 0
+                const freeFlowTime = (doc.metadata?.free_flow_travel_time as number) || 0
+                const delay = travelTime > 0 && freeFlowTime > 0 ? Math.max(0, travelTime - freeFlowTime) : 0
+                const road = doc.geo?.neighborhood || doc.title || 'Unknown'
+                const congestionColor =
+                  level === 'blocked' ? 'text-red-400' :
+                  level === 'heavy' ? 'text-orange-400' :
+                  level === 'moderate' ? 'text-yellow-400' :
+                  'text-green-400'
+
+                return (
+                  <tr key={doc.id} className="border-b border-white/[0.03] hover:bg-white/[0.02]">
+                    <td className="px-4 py-2 text-xs font-mono text-white/50 truncate max-w-[200px]">{road}</td>
+                    <td className="px-4 py-2 text-xs font-mono text-white/50">{speed > 0 ? `${speed} mph` : '—'}</td>
+                    <td className="px-4 py-2 text-xs font-mono text-white/30">{freeFlow > 0 ? `${freeFlow} mph` : '—'}</td>
+                    <td className={`px-4 py-2 text-xs font-mono font-medium ${congestionColor}`}>{level}</td>
+                    <td className="px-4 py-2 text-xs font-mono text-white/30">{delay > 0 ? `+${Math.round(delay)}s` : '—'}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StatCard({ label, value, sub, severity, trend }: {
+  label: string; value: number | string; sub: string; severity: 'high' | 'nominal'
+  trend?: { direction: 'up' | 'down' | 'stable'; pct: number } | null
+}) {
   return (
     <div className={`border p-4 ${severity === 'high' ? 'border-red-500/20 bg-red-500/[0.03]' : 'border-white/[0.06] bg-white/[0.02]'}`}>
-      <div className={`text-2xl font-bold font-mono ${severity === 'high' ? 'text-red-400' : 'text-white'}`}>
-        {value}
+      <div className="flex items-baseline gap-1">
+        <span className={`text-2xl font-bold font-mono ${severity === 'high' ? 'text-red-400' : 'text-white'}`}>
+          {value}
+        </span>
+        {trend && (
+          <span className={`text-[10px] font-mono ${
+            trend.direction === 'up' ? 'text-emerald-400' :
+            trend.direction === 'down' ? 'text-red-400' : 'text-white/20'
+          }`}>
+            {trend.direction === 'up' ? '\u2191' : trend.direction === 'down' ? '\u2193' : '\u2014'}
+            {Math.abs(trend.pct)}%
+          </span>
+        )}
       </div>
       <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">{label}</div>
       <div className="text-[10px] font-mono text-white/15">{sub}</div>

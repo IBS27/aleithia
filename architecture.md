@@ -276,7 +276,7 @@ Document counts per source, average enrichment latency, graph node/edge counts.
 A 3-step form that creates the user's Supermemory profile:
 1. **What's your business?** — dropdown: restaurant, bar, retail, tech, service, other
 2. **Where?** — neighborhood picker (autocomplete across Chicago's 77 community areas)
-3. **What concerns you most?** — multi-select: zoning, competition, crime/safety, regulations, foot traffic, rent/costs
+3. **What concerns you most?** — multi-select: zoning, competition, crime/safety, regulations, transit access, rent/costs
 
 On submit: creates a Supermemory user profile (`containerTag: "user-{id}"`), then redirects to the query interface with a pre-populated first query based on their profile.
 

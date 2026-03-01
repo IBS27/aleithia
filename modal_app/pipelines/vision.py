@@ -238,7 +238,7 @@ def train_detector(dataset_dir: str, epochs: int = 50) -> str:
 
 
 @app.function(image=yolo_image, gpu="T4", volumes={"/data": volume}, timeout=120)
-def analyze_neighborhood(image_path: str, model_path: str = "") -> dict:
+def analyze_neighborhood(image_path: str, model_path: str = "", neighborhood: str = "") -> dict:
     """Run custom detector on a neighborhood image. Returns structured analysis."""
     from ultralytics import YOLO
 
@@ -259,24 +259,38 @@ def analyze_neighborhood(image_path: str, model_path: str = "") -> dict:
     vacancy_rate = counts["for_lease_sign"] + counts["storefront_closed"]
     business_activity = counts["storefront_open"] + counts["restaurant_signage"] + counts["outdoor_dining"]
 
-    return {
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    result = {
         "counts": counts,
         "foot_traffic_density": foot_traffic,
         "vacancy_indicators": vacancy_rate,
         "business_activity_score": business_activity,
         "development_activity": counts["construction"],
         "dining_scene": counts["restaurant_signage"] + counts["outdoor_dining"],
+        "neighborhood": neighborhood,
+        "timestamp": ts,
     }
+
+    # Persist analysis result to disk
+    analysis_dir = Path(PROCESSED_DATA_PATH) / "vision" / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    slug = neighborhood.lower().replace(" ", "_") if neighborhood else "unknown"
+    out_path = analysis_dir / f"{slug}_{ts}.json"
+    out_path.write_text(json.dumps(result, indent=2))
+    volume.commit()
+    print(f"Analysis saved to {out_path}")
+
+    return result
 
 
 # ─── Full Pipeline Orchestrator ────────────────────────────────────────────────
 
 
 @app.local_entrypoint()
-def run_vision_pipeline(youtube_url: str):
+def run_vision_pipeline(youtube_url: str, neighborhood: str = ""):
     """End-to-end: YouTube URL → custom neighborhood detector.
 
-    Usage: modal run modal_app/pipelines/vision.py --youtube-url "https://youtube.com/watch?v=..."
+    Usage: modal run modal_app/pipelines/vision.py --youtube-url "https://youtube.com/watch?v=..." --neighborhood "Loop"
     """
     print("=" * 60)
     print("Alethia Neighborhood Vision Pipeline")

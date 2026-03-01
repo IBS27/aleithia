@@ -141,6 +141,46 @@ export interface CCTVData {
   avg_pedestrians: number
   avg_vehicles: number
   density: string
+  peak_hour?: number
+  peak_pedestrians?: number
+}
+
+export interface CCTVHourBucket {
+  hour: number
+  avg_pedestrians: number
+  avg_vehicles: number
+  density: string
+  sample_count: number
+}
+
+export interface CCTVTimeseries {
+  hours: CCTVHourBucket[]
+  peak_hour: number
+  peak_pedestrians: number
+  camera_count: number
+}
+
+export interface StreetscapeCounts {
+  storefront_open: number
+  storefront_closed: number
+  for_lease_sign: number
+  construction: number
+  restaurant_signage: number
+  outdoor_dining: number
+  person: number
+  vehicle: number
+}
+
+export interface StreetscapeIndicators {
+  vacancy_signal: 'low' | 'moderate' | 'high'
+  dining_saturation: 'low' | 'moderate' | 'high'
+  growth_signal: 'active' | 'stable'
+}
+
+export interface StreetscapeData {
+  counts: StreetscapeCounts
+  indicators: StreetscapeIndicators
+  analysis_count: number
 }
 
 export interface NeighborhoodData {
@@ -165,6 +205,14 @@ export interface NeighborhoodData {
   permit_count: number
   license_count: number
   cctv?: CCTVData
+  transit?: TransitData
+}
+
+export interface TransitData {
+  stations_nearby: number
+  total_daily_riders: number
+  transit_score: number
+  station_names: string[]
 }
 
 export interface GeoFeature {

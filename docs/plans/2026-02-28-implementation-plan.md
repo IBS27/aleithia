@@ -35,7 +35,7 @@
 | Reconciler | Auto-restarts stale pipelines every 5min | Self-healing | **DEPLOYED** |
 | Cost Tracking | modal.Dict logging compute costs | Dashboard display | **DEPLOYED** |
 | Tracing | Arize AX + OTel connected spans | Cross-container traces | **DEPLOYED** |
-| CCTV | IDOT cameras + YOLOv8n detection | Foot traffic scoring | **DEPLOYED** |
+| CCTV | IDOT cameras + YOLOv8n detection | Highway traffic scoring | **DEPLOYED** |
 | Traffic | TomTom API congestion data | Business location scoring | **DEPLOYED** |
 | Frontend | 18 React components + ProcessFlow | Streaming chat + dashboard | **DEPLOYED** |
 | Modal Features | 18 features used | 15 target | **EXCEEDED** |

@@ -1,10 +1,21 @@
-import { useState, useMemo } from 'react'
-import type { NeighborhoodData, UserProfile, RiskProfile, CategoryScore } from '../types/index.ts'
+import { useState, useEffect, useMemo } from 'react'
+import type { NeighborhoodData, UserProfile, RiskProfile, CategoryScore, StreetscapeData } from '../types/index.ts'
 import { computeInsights } from '../insights.ts'
+import { api } from '../api.ts'
 
 interface Props {
   data: NeighborhoodData
   profile: UserProfile
+  onTabChange?: (tab: string) => void
+}
+
+const CATEGORY_TAB_MAP: Record<string, string> = {
+  regulatory: 'inspections',
+  economic: 'permits',
+  market: 'market',
+  demographic: 'overview',
+  safety: 'vision',
+  community: 'community',
 }
 
 const PROFILES: { key: RiskProfile; label: string }[] = [
@@ -42,7 +53,13 @@ function ScoreBar({ score, signal }: { score: number; signal: string }) {
   )
 }
 
-function CategoryRow({ cat, expanded, onToggle }: { cat: CategoryScore; expanded: boolean; onToggle: () => void }) {
+function CategoryRow({ cat, expanded, onToggle, evidence, onViewAll }: {
+  cat: CategoryScore
+  expanded: boolean
+  onToggle: () => void
+  evidence: Array<{ label: string; detail: string }>
+  onViewAll?: () => void
+}) {
   return (
     <div className="border-b border-white/[0.04] last:border-0">
       <button
@@ -78,20 +95,106 @@ function CategoryRow({ cat, expanded, onToggle }: { cat: CategoryScore; expanded
           <div className="text-[10px] font-mono text-white/15">
             {cat.sources.join(' + ')} &middot; {cat.dataPoints} data point{cat.dataPoints !== 1 ? 's' : ''}
           </div>
+
+          {evidence.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-white/[0.04] space-y-1.5">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mb-1">
+                Source Documents
+              </div>
+              {evidence.slice(0, 5).map((ev, i) => (
+                <div key={i} className="flex items-center gap-2 text-[11px]">
+                  <span className="text-white/10">&#9679;</span>
+                  <span className="text-white/40 flex-1 truncate">{ev.label}</span>
+                  <span className="text-white/15 font-mono text-[10px] shrink-0">{ev.detail}</span>
+                </div>
+              ))}
+              {onViewAll && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onViewAll() }}
+                  className="text-[10px] font-mono text-white/30 hover:text-white/60 transition-colors cursor-pointer mt-1"
+                >
+                  View all &rarr;
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
   )
 }
 
-export default function InsightsCard({ data, profile }: Props) {
+export default function InsightsCard({ data, profile, onTabChange }: Props) {
   const [riskProfile, setRiskProfile] = useState<RiskProfile>('conservative')
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [streetscape, setStreetscape] = useState<StreetscapeData | null>(null)
+
+  useEffect(() => {
+    if (!profile.neighborhood) return
+    api.streetscape(profile.neighborhood)
+      .then(d => setStreetscape(d.counts ? d as StreetscapeData : null))
+      .catch(() => setStreetscape(null))
+  }, [profile.neighborhood])
 
   const insights = useMemo(
-    () => computeInsights(data, profile, riskProfile),
-    [data, profile, riskProfile],
+    () => computeInsights(data, profile, riskProfile, streetscape),
+    [data, profile, riskProfile, streetscape],
   )
+
+  const evidenceMap = useMemo(() => {
+    const map: Record<string, Array<{ label: string; detail: string }>> = {}
+
+    map.regulatory = (data.inspections || []).slice(0, 5).map(i => ({
+      label: (i.metadata?.raw_record as Record<string, string>)?.dba_name || i.title,
+      detail: (i.metadata?.raw_record as Record<string, string>)?.results || 'Inspected',
+    }))
+
+    map.economic = [
+      ...(data.permits || []).slice(0, 3).map(p => ({
+        label: `${(p.metadata?.raw_record as Record<string, string>)?.work_type || 'Permit'} — ${(p.metadata?.raw_record as Record<string, string>)?.street_name || ''}`,
+        detail: (p.metadata?.raw_record as Record<string, string>)?.permit_status || 'Active',
+      })),
+      ...(data.licenses || []).slice(0, 2).map(l => ({
+        label: (l.metadata?.raw_record as Record<string, string>)?.doing_business_as_name || l.title,
+        detail: (l.metadata?.raw_record as Record<string, string>)?.license_description || 'License',
+      })),
+    ]
+
+    map.market = (data.reviews || []).slice(0, 5).map(r => ({
+      label: (r.metadata?.business_name as string) || r.title,
+      detail: r.metadata?.rating ? `${r.metadata.rating}/5` : '',
+    }))
+
+    map.demographic = data.demographics ? [{
+      label: 'Census / ACS Data',
+      detail: `${data.demographics.total_population?.toLocaleString() || '—'} residents`,
+    }] : []
+
+    map.safety = [
+      ...(data.cctv?.cameras || []).slice(0, 3).map(c => ({
+        label: `Camera ${c.camera_id}`,
+        detail: `${c.pedestrians} peds, ${c.vehicles} vehicles`,
+      })),
+      ...(data.traffic || []).slice(0, 2).map(t => ({
+        label: t.title || 'Traffic segment',
+        detail: (t.metadata?.congestion_level as string) || '',
+      })),
+    ]
+
+    map.community = [
+      ...(data.news || []).slice(0, 3).map(n => ({
+        label: n.title,
+        detail: n.source,
+      })),
+      ...(data.reddit || []).slice(0, 2).map(r => ({
+        label: r.title,
+        detail: 'reddit',
+      })),
+    ]
+
+    return map
+  }, [data])
 
   if (insights.coverageCount === 0) return null
 
@@ -150,6 +253,8 @@ export default function InsightsCard({ data, profile }: Props) {
             cat={cat}
             expanded={expandedId === cat.id}
             onToggle={() => setExpandedId(expandedId === cat.id ? null : cat.id)}
+            evidence={evidenceMap[cat.id] || []}
+            onViewAll={onTabChange && CATEGORY_TAB_MAP[cat.id] ? () => onTabChange(CATEGORY_TAB_MAP[cat.id]) : undefined}
           />
         ))}
       </div>

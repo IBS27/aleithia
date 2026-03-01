@@ -118,7 +118,10 @@ Chicago-focused data source collectors, each running as Modal functions. All out
 - Business license applications and renewals
 - Building permits (new construction, renovation, demolition)
 - Food establishment inspections
-- CTA ridership data
+- CTA L-station ridership data (`t2rn-p8d7`) — used for Walk-In Potential transit scoring
+- CTA bus ridership data (`jyb9-n7fm`)
+
+**Transit scoring:** CTA L-station ridership + station locations (`8pix-ypme`) are used by the web API to compute a Walk-In Potential score per neighborhood. Stations within 3km of the neighborhood centroid are matched, and average weekday ridership is normalized to a 0–100 transit score, weighted by business type.
 
 **Live count:** 459 documents
 
@@ -183,7 +186,7 @@ Chicago-focused data source collectors, each running as Modal functions. All out
 
 ---
 
-## 7. CCTV / Foot Traffic — `cctv_ingester`
+## 7. Highway Traffic (IDOT CCTV) — `cctv_ingester`
 
 **File:** `modal_app/pipelines/cctv.py`
 **Schedule:** On-demand (was 5min cron, removed to stay under cron limit)
@@ -191,13 +194,15 @@ Chicago-focused data source collectors, each running as Modal functions. All out
 
 **Sources:**
 - Illinois Department of Transportation (IDOT) ArcGIS REST API (public, no auth)
-- Highway camera snapshots around Chicago metro area
+- Highway camera snapshots around Chicago metro area (I-90/94, expressway ramps, etc.)
 
 **What we collect:**
 - Camera locations (lat/lng, description)
 - JPEG snapshots from live feeds
-- YOLOv8n detection: pedestrian count, vehicle count per frame
-- Foot traffic density classification (high / medium / low)
+- YOLOv8n detection: vehicle count, pedestrian count per frame
+- Highway traffic density classification (high / medium / low)
+
+**Important:** These are expressway cameras, not street-level. Vehicle counts are the primary useful metric. Pedestrian counts are near-zero on highways and should not be used for walk-in potential scoring. Walk-in potential is instead sourced from CTA L-station ridership data (see Section 4a, `cta_ridership_L` dataset).
 
 **GPU:** T4 via `CCTVDetector` class (YOLOv8n inference)
 **Functions:** `cctv_ingester`, `analyze_cctv_batch`, `CCTVDetector`
@@ -208,18 +213,21 @@ Chicago-focused data source collectors, each running as Modal functions. All out
 
 **File:** `modal_app/pipelines/vision.py`
 **Schedule:** On-demand
-**Pattern:** YouTube download → frame extraction → GPT-4V labeling → YOLO training → inference
+**Pattern:** YouTube download → frame extraction → GPT-4V labeling → YOLO training → inference → persist per-neighborhood
 
 **Sources:**
 - YouTube walking tour videos of Chicago neighborhoods
 
 **What we collect:**
 - Video frames extracted at configurable intervals
-- GPT-4V labels (8 classes: pedestrian, vehicle, storefront, restaurant, construction, for_lease, graffiti, security_camera)
+- GPT-4V labels (8 classes: person, vehicle, storefront_open, storefront_closed, for_lease_sign, construction, restaurant_signage, outdoor_dining)
 - Custom-trained YOLOv8n detector for neighborhood analysis
+- Per-neighborhood analysis results persisted to `/data/processed/vision/analysis/{neighborhood}_{timestamp}.json`
+
+**Neighborhood filtering:** `analyze_neighborhood()` accepts a `neighborhood` parameter and saves results with neighborhood metadata. The `/vision/streetscape/{neighborhood}` API endpoint filters results by neighborhood (filename prefix or JSON field match), returning only data for the requested area.
 
 **GPU:** T4 (training + inference), GPT-4V via OpenAI API (labeling)
-**Functions:** `extract_frames`, `label_frames_with_gpt`, `build_yolo_dataset`, `train_custom_detector`, `analyze_neighborhood`
+**Functions:** `extract_frames`, `label_all_frames`, `train_detector`, `analyze_neighborhood`
 
 ---
 

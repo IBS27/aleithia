@@ -55,7 +55,7 @@ The social impact narrative is our strongest differentiator. Every demo moment s
    - "3 new zoning regulations" — 40% weight, HIGH severity (from politics pipeline)
    - "Rising competition: 12 new restaurant permits in 90 days" — 25% weight (from Socrata)
    - "Positive neighborhood sentiment" — 15% weight, trending up (from Reddit)
-   - "Foot traffic: HIGH based on CTA data" — 10% weight (from public data)
+   - "Walk-in potential: HIGH based on CTA L-station ridership" — 10% weight (from public data)
    - "Average review rating: 4.1/5 for area restaurants" — 10% weight (from Yelp)
 
 7. **Heatmap toggle.** Switch between three layers on the Chicago map:

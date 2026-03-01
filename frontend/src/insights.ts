@@ -6,6 +6,7 @@ import type {
   CategoryScore,
   SubMetric,
   InsightSignal,
+  StreetscapeData,
 } from './types/index.ts'
 
 const WEIGHTS: Record<RiskProfile, Record<string, number>> = {
@@ -156,7 +157,7 @@ function scoreEconomic(data: NeighborhoodData): CategoryScore | null {
   }
 }
 
-function scoreMarket(data: NeighborhoodData, profile: UserProfile): CategoryScore | null {
+function scoreMarket(data: NeighborhoodData, profile: UserProfile, streetscape?: StreetscapeData | null): CategoryScore | null {
   const reviews = data.reviews || []
   const subs: SubMetric[] = []
 
@@ -196,6 +197,17 @@ function scoreMarket(data: NeighborhoodData, profile: UserProfile): CategoryScor
   const reviewCount = (data.metrics?.review_count || reviews.length)
   if (reviewCount > 0) {
     subs.push({ name: 'Review Volume', value: clamp(reviewCount / 5), raw: `${reviewCount} total reviews` })
+  }
+
+  // Space Availability from streetscape vision data
+  if (streetscape?.counts) {
+    const total = streetscape.counts.storefront_open + streetscape.counts.storefront_closed + streetscape.counts.for_lease_sign
+    if (total > 0) {
+      const vacancyRate = (streetscape.counts.for_lease_sign + streetscape.counts.storefront_closed) / total
+      // Moderate vacancy (15-40%) is best for new entrants; too low = no space, too high = bad area
+      const availability = vacancyRate > 0.4 ? clamp(30) : vacancyRate > 0.15 ? clamp(75) : clamp(40)
+      subs.push({ name: 'Space Availability', value: availability, raw: `${streetscape.counts.for_lease_sign} for-lease, ${total} total storefronts` })
+    }
   }
 
   if (subs.length === 0) return null
@@ -260,18 +272,29 @@ function scoreDemographic(data: NeighborhoodData): CategoryScore | null {
   }
 }
 
-function scoreSafety(data: NeighborhoodData): CategoryScore | null {
+const WALKIN_WEIGHT: Record<string, number> = {
+  'Coffee Shop': 1.0,
+  'Retail Store': 0.95,
+  'Restaurant': 0.9,
+  'Bar': 0.85,
+  'Salon': 0.8,
+  'Professional Services': 0.3,
+  'Warehouse': 0.1,
+}
+
+function scoreSafety(data: NeighborhoodData, profile: UserProfile): CategoryScore | null {
   const subs: SubMetric[] = []
   let dataPoints = 0
 
-  // CCTV foot traffic
+  // CCTV highway traffic (IDOT expressway cameras — not street-level)
   if (data.cctv && data.cctv.cameras.length > 0) {
     const densityMap: Record<string, number> = { low: 25, medium: 60, high: 100 }
-    const footTraffic = densityMap[data.cctv.density] ?? 50
-    subs.push({ name: 'Foot Traffic', value: footTraffic, raw: `${data.cctv.density} density from ${data.cctv.cameras.length} cameras` })
+    const activity = densityMap[data.cctv.density] ?? 50
+    subs.push({ name: 'Highway Activity', value: activity, raw: `${data.cctv.density} density from ${data.cctv.cameras.length} IDOT cameras` })
 
-    const pedScore = clamp((data.cctv.avg_pedestrians / 30) * 100)
-    subs.push({ name: 'Pedestrian Volume', value: pedScore, raw: `~${Math.round(data.cctv.avg_pedestrians)} avg pedestrians` })
+    const vehScore = clamp((data.cctv.avg_vehicles / 100) * 100)
+    subs.push({ name: 'Vehicle Flow', value: vehScore, raw: `~${Math.round(data.cctv.avg_vehicles)} avg vehicles` })
+
     dataPoints += data.cctv.cameras.length
   }
 
@@ -291,18 +314,37 @@ function scoreSafety(data: NeighborhoodData): CategoryScore | null {
     dataPoints += traffic.length
   }
 
+  // Walk-In Potential from CTA transit ridership (not highway cameras)
+  if (data.transit && data.transit.stations_nearby > 0) {
+    const weight = WALKIN_WEIGHT[profile.business_type] ?? 0.5
+    const walkinScore = Math.round(data.transit.transit_score * weight)
+    const stationList = data.transit.station_names.slice(0, 3).join(', ')
+    const ridersLabel = data.transit.total_daily_riders > 0
+      ? `~${Math.round(data.transit.total_daily_riders / 1000)}K daily riders`
+      : `${data.transit.stations_nearby} stations nearby`
+    subs.push({
+      name: 'Walk-In Potential',
+      value: walkinScore,
+      raw: `${data.transit.stations_nearby} CTA stations (${stationList}), ${ridersLabel}, ${profile.business_type} weight ${weight}`,
+    })
+    dataPoints += data.transit.stations_nearby
+  }
+
   if (subs.length === 0) return null
 
   const score = Math.round(avg(subs.map(s => s.value)))
   const { signal: sig, signalLabel } = signal(score)
-  const pedCount = data.cctv ? Math.round(data.cctv.avg_pedestrians) : 0
   const vehicleFlow = data.cctv ? `~${Math.round(data.cctv.avg_vehicles)} vehicles` : 'no data'
+  const peakClaim = data.cctv?.peak_hour != null ? `, peak ~${data.cctv.peak_hour}:00` : ''
+  const transitClaim = data.transit && data.transit.stations_nearby > 0
+    ? `, ${data.transit.stations_nearby} CTA stations`
+    : ''
 
   return {
-    id: 'safety', name: 'Safety', score, subMetrics: subs,
-    claim: `~${pedCount} avg pedestrians, ${vehicleFlow} — ${signalLabel} foot traffic & accessibility`,
+    id: 'safety', name: 'Traffic & Accessibility', score, subMetrics: subs,
+    claim: `${vehicleFlow}${peakClaim}${transitClaim} — ${signalLabel} accessibility`,
     signal: sig, signalLabel,
-    sources: ['cctv', 'traffic'],
+    sources: ['cctv', 'traffic', 'transit'],
     dataPoints,
   }
 }
@@ -367,13 +409,14 @@ export function computeInsights(
   data: NeighborhoodData,
   profile: UserProfile,
   riskProfile: RiskProfile,
+  streetscape?: StreetscapeData | null,
 ): InsightsResult {
   const scorers = [
     scoreRegulatory(data),
     scoreEconomic(data),
-    scoreMarket(data, profile),
+    scoreMarket(data, profile, streetscape),
     scoreDemographic(data),
-    scoreSafety(data),
+    scoreSafety(data, profile),
     scoreCommunity(data),
   ]
 

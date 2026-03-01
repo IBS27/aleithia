@@ -1,4 +1,4 @@
-import type { DataSources, GeoJSON, NeighborhoodData, Document } from './types'
+import type { DataSources, GeoJSON, NeighborhoodData, Document, CCTVTimeseries, StreetscapeData } from './types'
 
 // Modal deployed endpoint — set via VITE_MODAL_URL, fallback to local proxy
 const API_BASE = import.meta.env.VITE_MODAL_URL || '/api/data'
@@ -189,6 +189,17 @@ export async function fetchGpuMetrics(): Promise<GpuMetrics> {
   return fetchJSON<GpuMetrics>('/gpu-metrics')
 }
 
+export interface TrendData {
+  foot_traffic: { trend: 'up' | 'down' | 'stable'; change_pct: number; current_avg: number; prior_avg: number }
+  congestion: { trend: 'up' | 'down' | 'stable'; change_pct: number; anomalies: Array<{ type: string; description: string; road: string }> }
+  news_activity: { trend: 'up' | 'down' | 'stable'; change_pct: number }
+  hours: Array<{ hour: number; pedestrians: number; vehicles: number; congestion: number }>
+}
+
+export async function fetchTrends(neighborhood: string): Promise<TrendData> {
+  return fetchJSON<TrendData>(`/trends/${encodeURIComponent(neighborhood)}`)
+}
+
 export const api = {
   sources: () => fetchJSON<DataSources>('/sources'),
   geo: () => fetchJSON<GeoJSON>('/geo'),
@@ -262,4 +273,50 @@ export const api = {
 
   cctvFrameUrl: (cameraId: string) =>
     `${API_BASE}/cctv/frame/${encodeURIComponent(cameraId)}`,
+
+  cctvTimeseries: (neighborhood: string) =>
+    fetchJSON<CCTVTimeseries>(`/cctv/timeseries/${encodeURIComponent(neighborhood)}`),
+
+  streetscape: (neighborhood: string) =>
+    fetchJSON<StreetscapeData>(`/vision/streetscape/${encodeURIComponent(neighborhood)}`),
+}
+
+export interface GraphNode {
+  id: string
+  type: 'neighborhood' | 'regulation' | 'entity' | 'business_type'
+  label: string
+  size: number
+  lat?: number
+  lng?: number
+  sentiment?: number
+}
+
+export interface GraphEdge {
+  source: string
+  target: string
+  type: 'regulates' | 'sentiment' | 'competes_in' | 'affects' | 'trending'
+  weight: number
+}
+
+export interface CityGraphData {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  stats?: {
+    total_nodes: number
+    total_edges: number
+    neighborhoods: number
+    regulations: number
+    entities: number
+    business_types: number
+    built_at: string
+  }
+  center?: string
+}
+
+export async function fetchCityGraph(): Promise<CityGraphData> {
+  return fetchJSON<CityGraphData>('/graph/full')
+}
+
+export async function fetchNeighborhoodGraph(neighborhood: string): Promise<CityGraphData> {
+  return fetchJSON<CityGraphData>(`/graph/neighborhood/${encodeURIComponent(neighborhood)}`)
 }

@@ -73,7 +73,7 @@ modal deploy -m modal_app
 #                process_queue_batch (2min), data_reconciler (5min)
 # - 10 on-demand pipelines: politics, demographics, reviews, realestate,
 #                            federal_register, tiktok, traffic, cctv, vision, worldpop
-# - GPU inference: AlethiaLLM (H100), DocClassifier (T4), SentimentAnalyzer (T4), CCTVDetector (T4)
+# - GPU inference: AlethiaLLM (H100), DocClassifier (T4), SentimentAnalyzer (T4), CCTVDetector/TrafficAnalyzer (T4)
 # - Agent swarm: neighborhood_intel_agent, regulatory_agent, orchestrate_query
 # - Web API: https://ibsrinivas27--alethia-serve.modal.run (17 endpoints)
 # - Utilities: compress, supermemory sync, model download, scaling_demo
@@ -94,7 +94,7 @@ modal run -m modal_app.pipelines.realestate::realestate_ingester
 modal run -m modal_app.pipelines.federal_register::federal_register_ingester
 modal run -m modal_app.pipelines.traffic::traffic_ingester
 modal run -m modal_app.pipelines.cctv::cctv_ingester
-modal run -m modal_app.pipelines.vision::extract_frames
+modal run -m modal_app.pipelines.vision::run_vision_pipeline --youtube-url "URL" --neighborhood "Loop"
 modal run -m modal_app.pipelines.worldpop::ingest_worldpop
 
 # Run data compression

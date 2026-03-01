@@ -1,0 +1,30 @@
+{
+  "neighborhood": "Boystown",
+  "hours": [
+    {"hour": 0, "pedestrians": 2.1, "vehicles": 8.3, "congestion": 0.15},
+    {"hour": 1, "pedestrians": 1.4, "vehicles": 5.1, "congestion": 0.10},
+    {"hour": 2, "pedestrians": 0.8, "vehicles": 3.2, "congestion": 0.08},
+    {"hour": 3, "pedestrians": 0.5, "vehicles": 2.1, "congestion": 0.05},
+    {"hour": 4, "pedestrians": 0.6, "vehicles": 2.8, "congestion": 0.06},
+    {"hour": 5, "pedestrians": 1.2, "vehicles": 5.5, "congestion": 0.12},
+    {"hour": 6, "pedestrians": 3.5, "vehicles": 12.0, "congestion": 0.25},
+    {"hour": 7, "pedestrians": 6.2, "vehicles": 18.5, "congestion": 0.40},
+    {"hour": 8, "pedestrians": 8.8, "vehicles": 22.1, "congestion": 0.55},
+    {"hour": 9, "pedestrians": 9.5, "vehicles": 20.3, "congestion": 0.50},
+    {"hour": 10, "pedestrians": 10.2, "vehicles": 18.7, "congestion": 0.45},
+    {"hour": 11, "pedestrians": 12.5, "vehicles": 19.2, "congestion": 0.48},
+    {"hour": 12, "pedestrians": 14.8, "vehicles": 21.5, "congestion": 0.52},
+    {"hour": 13, "pedestrians": 13.2, "vehicles": 20.8, "congestion": 0.50},
+    {"hour": 14, "pedestrians": 11.5, "vehicles": 19.5, "congestion": 0.47},
+    {"hour": 15, "pedestrians": 10.8, "vehicles": 20.2, "congestion": 0.49},
+    {"hour": 16, "pedestrians": 12.3, "vehicles": 24.5, "congestion": 0.60},
+    {"hour": 17, "pedestrians": 15.1, "vehicles": 28.3, "congestion": 0.72},
+    {"hour": 18, "pedestrians": 16.5, "vehicles": 25.1, "congestion": 0.65},
+    {"hour": 19, "pedestrians": 14.2, "vehicles": 20.8, "congestion": 0.52},
+    {"hour": 20, "pedestrians": 11.8, "vehicles": 16.5, "congestion": 0.40},
+    {"hour": 21, "pedestrians": 9.5, "vehicles": 13.2, "congestion": 0.32},
+    {"hour": 22, "pedestrians": 6.8, "vehicles": 10.5, "congestion": 0.25},
+    {"hour": 23, "pedestrians": 4.2, "vehicles": 9.1, "congestion": 0.20}
+  ],
+  "generated_at": "2026-02-28T00:00:00Z"
+}

@@ -43,6 +43,8 @@ politics_image = _base.pip_install(
 
 data_image = _base.pip_install("pandas==2.2.0").add_local_python_source("modal_app", copy=True)
 
+graph_image = _base.pip_install("networkx==3.3", "pandas==2.2.0").add_local_python_source("modal_app", copy=True)
+
 # vLLM image for self-hosted LLM (Qwen3-8B on H100)
 # vLLM includes its own optimized attention kernels; flash-attn is optional
 vllm_image = (

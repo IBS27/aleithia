@@ -1,0 +1,30 @@
+{
+  "neighborhood": "Loop",
+  "hours": [
+    {"hour": 0, "pedestrians": 1.5, "vehicles": 5.2, "congestion": 0.10},
+    {"hour": 1, "pedestrians": 0.8, "vehicles": 3.1, "congestion": 0.07},
+    {"hour": 2, "pedestrians": 0.4, "vehicles": 2.0, "congestion": 0.05},
+    {"hour": 3, "pedestrians": 0.3, "vehicles": 1.5, "congestion": 0.04},
+    {"hour": 4, "pedestrians": 0.5, "vehicles": 2.2, "congestion": 0.05},
+    {"hour": 5, "pedestrians": 1.8, "vehicles": 8.5, "congestion": 0.18},
+    {"hour": 6, "pedestrians": 5.5, "vehicles": 18.0, "congestion": 0.35},
+    {"hour": 7, "pedestrians": 12.0, "vehicles": 32.5, "congestion": 0.65},
+    {"hour": 8, "pedestrians": 18.5, "vehicles": 38.0, "congestion": 0.80},
+    {"hour": 9, "pedestrians": 20.2, "vehicles": 35.5, "congestion": 0.75},
+    {"hour": 10, "pedestrians": 19.0, "vehicles": 30.2, "congestion": 0.65},
+    {"hour": 11, "pedestrians": 22.5, "vehicles": 32.0, "congestion": 0.70},
+    {"hour": 12, "pedestrians": 25.0, "vehicles": 34.5, "congestion": 0.75},
+    {"hour": 13, "pedestrians": 23.0, "vehicles": 33.0, "congestion": 0.72},
+    {"hour": 14, "pedestrians": 20.5, "vehicles": 31.5, "congestion": 0.68},
+    {"hour": 15, "pedestrians": 19.8, "vehicles": 33.0, "congestion": 0.70},
+    {"hour": 16, "pedestrians": 22.0, "vehicles": 38.5, "congestion": 0.82},
+    {"hour": 17, "pedestrians": 24.5, "vehicles": 42.0, "congestion": 0.90},
+    {"hour": 18, "pedestrians": 20.0, "vehicles": 35.0, "congestion": 0.78},
+    {"hour": 19, "pedestrians": 15.5, "vehicles": 25.5, "congestion": 0.55},
+    {"hour": 20, "pedestrians": 10.2, "vehicles": 18.0, "congestion": 0.38},
+    {"hour": 21, "pedestrians": 7.5, "vehicles": 14.0, "congestion": 0.28},
+    {"hour": 22, "pedestrians": 4.8, "vehicles": 10.5, "congestion": 0.20},
+    {"hour": 23, "pedestrians": 2.8, "vehicles": 7.5, "congestion": 0.15}
+  ],
+  "generated_at": "2026-02-28T00:00:00Z"
+}

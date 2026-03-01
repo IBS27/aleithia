@@ -1,6 +1,6 @@
 # Alethia — Chicago Business Intelligence Platform
 
-An AI-powered regulatory intelligence platform that aggregates live Chicago-area data (news, politics, social, public records, reviews, real estate, federal regulations, traffic, CCTV), analyzes it on Modal GPUs (Qwen3 8B on H100, bart-large-mnli + roberta on T4, YOLOv8n on T4), and delivers actionable insights to small business owners through a streaming chat + dashboard interface.
+An AI-powered regulatory intelligence platform that aggregates live Chicago-area data (news, politics, social, public records, reviews, real estate, federal regulations, traffic, IDOT highway cameras, CTA ridership), analyzes it on Modal GPUs (Qwen3 8B on H100, bart-large-mnli + roberta on T4, YOLOv8n on T4), and delivers actionable insights to small business owners through a streaming chat + dashboard interface.
 
 ## Tech Stack
 
@@ -22,9 +22,9 @@ An AI-powered regulatory intelligence platform that aggregates live Chicago-area
 4. **LLM layer** — Qwen3 8B AWQ (INT4) via vLLM on H100 for streaming chat responses and intelligence briefs. 20 concurrent inputs via `@modal.concurrent`. GPU memory snapshots for fast cold starts.
 5. **Agent swarm** — 4 agent types (neighborhood intel, regulatory, comparison, synthesis) fan out via `.spawn()` for query-time parallel intelligence gathering. W3C trace context propagation links spans across containers.
 6. **Self-healing** — Reconciler runs every 5 min, checks pipeline freshness, auto-restarts stale ingesters. Cost tracking via `modal.Dict`.
-7. **Vision layer** — CCTV pipeline ingests IDOT highway camera frames, YOLOv8n detects pedestrians/vehicles for foot traffic density scoring. Vision pipeline trains custom detectors from YouTube walking tours.
+7. **Vision layer** — CCTV pipeline ingests IDOT highway camera frames, YOLOv8n detects vehicles for highway traffic density scoring (not street-level foot traffic). Vision pipeline trains custom detectors from YouTube walking tours and persists per-neighborhood analysis results to `/data/processed/vision/analysis/`. Walk-in potential is sourced from CTA L-station ridership data instead.
 8. **Observability** — Arize AX tracing with OpenTelemetry. Connected spans across web → orchestrator → agents → LLM. OpenAI auto-instrumentor for GPT-4V calls.
-9. **Web API** — Modal-hosted FastAPI with 19 endpoints including `/chat`, `/brief/{neighborhood}`, `/neighborhood/{name}`, `/analyze`, `/cctv/latest`, `/cctv/frame/{camera_id}`, `/gpu-metrics`, `/status`, `/metrics`, `/health`.
+9. **Web API** — Modal-hosted FastAPI with 19 endpoints including `/chat`, `/brief/{neighborhood}`, `/neighborhood/{name}` (now includes `transit` field with CTA data), `/analyze`, `/cctv/latest`, `/cctv/frame/{camera_id}`, `/vision/streetscape/{neighborhood}` (filtered by neighborhood), `/gpu-metrics`, `/status`, `/metrics`, `/health`.
 10. **Deep Dive** — `/analyze` endpoint generates Python analysis scripts via LLM, runs them in `modal.Sandbox` against real pipeline data. Returns stats, charts (base64 PNG), and the generated code.
 
 ## Project Structure
@@ -56,8 +56,8 @@ modal_app/              — Modal functions (all compute runs here)
     federal_register.py — SBA/FDA/OSHA/EPA regulations (on-demand)
     tiktok.py           — Playwright + Kernel + Whisper transcription (on-demand)
     traffic.py          — TomTom Traffic Flow API (on-demand)
-    cctv.py             — IDOT highway cameras + YOLOv8n detection + GPU metrics (on-demand)
-    vision.py           — YouTube → YOLO frame analysis + custom training (on-demand)
+    cctv.py             — IDOT highway cameras + YOLOv8n vehicle detection + GPU metrics (on-demand)
+    vision.py           — YouTube → YOLO frame analysis + custom training + per-neighborhood persistence (on-demand)
     worldpop.py         — Google Earth Engine population data (on-demand)
 frontend/               — React 19 + TypeScript + Vite (19 components)
   src/components/
@@ -65,7 +65,7 @@ frontend/               — React 19 + TypeScript + Vite (19 components)
     AgentSwarm.tsx      — Agent status indicators
     ChatPanel.tsx       — Streaming chat with inline ProcessFlow + Deep Dive
     DeepDivePanel.tsx   — AI-generated analysis: stats grid, chart, code toggle
-    Dashboard.tsx       — Main dashboard (tabs, map, risk, demographics, CCTV)
+    Dashboard.tsx       — Main dashboard (tabs, map, risk, demographics, highway traffic)
     MapView.tsx         — Mapbox neighborhood map
     PipelineMonitor.tsx — Live pipeline status polling
     MLMonitor.tsx       — ML model monitoring
@@ -85,7 +85,7 @@ docs/                   — Design docs, setup guide, plans
 
 - **Document schema** (`common.py`): All pipelines normalize to `Document(id, source, title, content, url, timestamp, metadata, geo, status)`.
 - **Ingestion flow**: `_fetch_*()` → `FallbackChain` → `SeenSet` dedup → save to volume → push to `doc_queue` → `classify.py` enriches.
-- **Volume paths**: raw at `/data/raw/{source}/{date}/`, enriched at `/data/processed/enriched/`, cache at `/data/cache/`, dedup at `/data/dedup/`.
+- **Volume paths**: raw at `/data/raw/{source}/{date}/`, enriched at `/data/processed/enriched/`, cache at `/data/cache/`, dedup at `/data/dedup/`, vision analysis at `/data/processed/vision/analysis/`.
 - **Two APIs**: `web.py` is the production Modal-hosted API. `backend/` is a local dev proxy.
 - **Reasoning**: `orchestrate_query()` fans out 4 agents via `.spawn()`, gathers results, synthesizes with LLM.
 
@@ -95,7 +95,7 @@ docs/                   — Design docs, setup guide, plans
 ## Implementation Status
 
 - **Deployed**: All 13 pipelines, enrichment (classify.py), reasoning (agents.py + llm.py), compression, reconciler, Supermemory, web API, Arize tracing with connected spans.
-- **Frontend complete**: Streaming chat, pipeline monitor, agent visualization, ProcessFlow trace diagram with copy-logs, CCTV stat card, demographics card, Deep Dive analysis panel.
+- **Frontend complete**: Streaming chat, pipeline monitor, agent visualization, ProcessFlow trace diagram with copy-logs, highway traffic stat card, CTA transit scoring, demographics card, Deep Dive analysis panel.
 - **Not built**: City graph (NetworkX multigraph described in architecture.md — agents read raw/enriched JSON directly). Trend/anomaly detection.
 
 ## Secrets (Modal dashboard)
