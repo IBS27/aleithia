@@ -264,8 +264,13 @@ class TrafficAnalyzer:
 
     @modal.enter(snap=True)
     def load_model(self):
+        # PyTorch 2.6 defaults weights_only=True; Ultralytics .pt needs unsafe load
+        import torch
+        _orig = torch.load
+        torch.load = lambda *a, **kw: _orig(*a, **{**kw, "weights_only": False})
         from ultralytics import YOLO
-        self.model = YOLO("yolov8n.pt")  # stock COCO-80, ~6MB auto-download
+        self.model = YOLO("yolov8n.pt")
+        torch.load = _orig
 
     @modal.method()
     def gpu_metrics(self) -> dict:
