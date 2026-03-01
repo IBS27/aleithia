@@ -1,6 +1,8 @@
 {
-  "installCommand": "npm ci",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "framework": null
+  "framework": null,
+  "rewrites": [
+    { "source": "/api/data/:path*", "destination": "https://gt12889--alethia-serve.modal.run/api/data/:path*" }
+  ]
 }

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { SignedIn, SignedOut, SignInButton, SignUpButton, useClerk, useUser } from '@clerk/clerk-react'
-import type { UserProfile, NeighborhoodData, DataSources, RiskScore, CCTVData, Document, ParkingData } from '../types/index.ts'
+import type { UserProfile, NeighborhoodData, DataSources, RiskScore, CCTVData, Document as Doc, ParkingData } from '../types/index.ts'
 import { api, API_BASE, fetchTrends, type TrendData } from '../api.ts'
 import RiskCard from './RiskCard.tsx'
 import MapView from './MapView.tsx'
@@ -13,7 +13,6 @@ import LicenseTable from './LicenseTable.tsx'
 import NewsFeed from './NewsFeed.tsx'
 import CommunityFeed from './CommunityFeed.tsx'
 import MarketPanel from './MarketPanel.tsx'
-import TrafficCard from './TrafficCard.tsx'
 import DemographicsCard from './DemographicsCard.tsx'
 import PipelineMonitor from './PipelineMonitor.tsx'
 import MLMonitor from './MLMonitor.tsx'
@@ -25,6 +24,7 @@ import CityGraph from './CityGraph.tsx'
 import LocationReportPanel from './LocationReportPanel.tsx'
 import FootTrafficChart from './FootTrafficChart.tsx'
 import StreetscapeCard from './StreetscapeCard.tsx'
+import RecursiveAgentPanel from './RecursiveAgentPanel.tsx'
 import Drawer from './Drawer.tsx'
 import ProfilePage from './ProfilePage.tsx'
 import ShinyText from './ShinyText.tsx'
@@ -39,7 +39,7 @@ import { InspectionOutcomesChart, TopViolationsPareto, AlertHoursStackedArea } f
   import ChatPanel from './ChatPanel.tsx'
 */
 
-type Tab = 'overview' | 'inspections' | 'permits' | 'licenses' | 'news' | 'community' | 'market' | 'vision' | 'models' | 'vault'
+type Tab = 'overview' | 'regulatory' | 'intel' | 'community' | 'market' | 'vision' | 'models' | 'vault'
 
 interface ReportAgentInfo {
   agents_deployed: number
@@ -68,131 +68,227 @@ interface AgentInfo {
 }
 */
 
+/**
+ * Multi-Criteria Risk Assessment using Weighted Linear Combination (WLC).
+ *
+ * Methodology (ISO 31000-aligned):
+ * 1. Logistic normalization of each input to [0, 1] risk scale
+ *    — standard in risk modeling; smooth, bounded, handles outliers
+ * 2. Dimensional weighting from MCDA literature for commercial site selection
+ * 3. WLC aggregation: risk = Σ(wᵢ · rᵢ) / Σ(wᵢ) over available dimensions
+ * 4. Confidence from dimensional coverage (breadth) + data depth
+ *
+ * Risk dimensions (weights sum to 1.0):
+ *   Regulatory compliance  0.25 — inspection failure rates
+ *   Market competition      0.20 — license density, review quality
+ *   Economic vitality       0.20 — permit/construction activity
+ *   Accessibility           0.15 — highway traffic, congestion, CTA transit
+ *   Political stability     0.10 — legislative activity volume
+ *   Community presence      0.10 — news + social media visibility
+ */
 function computeRiskScore(data: NeighborhoodData, profile: UserProfile): RiskScore {
-  const factors = []
+  // Logistic (sigmoid) normalization: f(x) = 1 / (1 + e^(-k(x - x₀)))
+  // x₀ = midpoint (output 0.5), k = steepness
+  const logistic = (x: number, x0: number, k: number) =>
+    1 / (1 + Math.exp(-k * (x - x0)))
+
+  // MCDA dimensional weights — commercial site selection literature
+  const W = {
+    regulatory: 0.25,
+    market: 0.20,
+    economic: 0.20,
+    accessibility: 0.15,
+    political: 0.10,
+    community: 0.10,
+  }
+
+  const scored: Array<{
+    label: string; source: string; severity: 'low' | 'medium' | 'high'
+    description: string; risk: number; weight: number; dimension: string
+  }> = []
+
   const stats = data.inspection_stats
 
+  // ── Regulatory Compliance (25%) — inspection fail rate ──────────────
   if (stats.total > 0) {
     const failRate = stats.failed / stats.total
-    factors.push({
-      label: `${stats.failed} of ${stats.total} inspections failed nearby`,
-      pct: Math.round(failRate * 100),
+    // Chicago city-wide avg fail rate ~22%; calibrated midpoint
+    const risk = logistic(failRate, 0.22, 8)
+    scored.push({
+      label: `${stats.failed} of ${stats.total} inspections failed`,
       source: 'food_inspections',
-      severity: failRate > 0.4 ? 'high' as const : failRate > 0.2 ? 'medium' as const : 'low' as const,
-      description: `${stats.passed} passed, ${stats.failed} failed out of ${stats.total} recent food inspections in the area.`,
+      severity: failRate > 0.35 ? 'high' : failRate > 0.18 ? 'medium' : 'low',
+      description: `${Math.round(failRate * 100)}% failure rate (city avg ~22%). ${stats.passed} passed, ${stats.failed} failed.`,
+      risk, weight: W.regulatory, dimension: 'regulatory',
     })
   }
 
-  if (data.permit_count > 0) {
-    factors.push({
-      label: `${data.permit_count} active building permits`,
-      pct: Math.min(data.permit_count * 5, 30),
-      source: 'building_permits',
-      severity: data.permit_count > 10 ? 'medium' as const : 'low' as const,
-      description: 'Active construction and renovation activity suggests a developing area.',
-    })
-  }
-
+  // ── Market Competition (20%) — license density + review quality ────
   if (data.license_count > 0) {
-    factors.push({
+    // More licenses = more competition = higher risk for new entrant
+    const risk = logistic(data.license_count, 12, 0.25)
+    scored.push({
       label: `${data.license_count} active business licenses`,
-      pct: Math.min(data.license_count * 3, 25),
       source: 'business_licenses',
-      severity: data.license_count > 15 ? 'medium' as const : 'low' as const,
-      description: 'Existing business density indicates competition level and market viability.',
+      severity: data.license_count > 20 ? 'high' : data.license_count > 10 ? 'medium' : 'low',
+      description: `Higher license density means more competition for new entrants.`,
+      risk, weight: W.market * 0.5, dimension: 'market',
     })
   }
 
-  if (data.news.length > 0) {
-    factors.push({
-      label: `${data.news.length} recent news articles`,
-      pct: 10,
-      source: 'news',
-      severity: 'low' as const,
-      description: 'Local news coverage indicates community activity and awareness.',
-    })
-  }
-
-  if (data.politics.length > 0) {
-    factors.push({
-      label: `${data.politics.length} legislative items`,
-      pct: 15,
-      source: 'politics',
-      severity: data.politics.length > 5 ? 'medium' as const : 'low' as const,
-      description: 'Recent city council activity related to this area.',
-    })
-  }
-
-  if (data.cctv && data.cctv.cameras.length > 0) {
-    const density = data.cctv.density
-    factors.push({
-      label: `${data.cctv.cameras.length} IDOT cameras — ${density} highway traffic`,
-      pct: density === 'high' ? 5 : density === 'medium' ? 10 : 15,
-      source: 'cctv',
-      severity: density === 'low' ? 'medium' as const : 'low' as const,
-      description: `IDOT highway cameras show ~${Math.round(data.cctv.avg_vehicles)} avg vehicles across ${data.cctv.cameras.length} nearby expressway cameras.`,
-    })
-  }
-
-  const metrics = data.metrics || {}
-  if (metrics.active_permits) {
-    factors.push({
-      label: `Permit density: ${metrics.active_permits} in neighborhood`,
-      pct: 10,
-      source: 'public_data',
-      severity: 'low' as const,
-      description: 'Overall permit activity density across the neighborhood.',
-    })
-  }
-
-  // Review ratings factor
   const reviews = data.reviews || []
   const ratings = reviews
     .map(r => (r.metadata?.rating as number) || 0)
     .filter(r => r > 0)
   if (ratings.length > 0) {
     const avgRating = ratings.reduce((a, b) => a + b, 0) / ratings.length
-    factors.push({
+    // Inverted: lower area ratings = higher risk for new business
+    const risk = 1 - logistic(avgRating, 3.5, 3)
+    scored.push({
       label: `Avg ${avgRating.toFixed(1)}/5 across ${ratings.length} businesses`,
-      pct: Math.round((5 - avgRating) * 5),
       source: 'reviews',
-      severity: avgRating < 3.5 ? 'high' as const : avgRating < 4.0 ? 'medium' as const : 'low' as const,
-      description: 'Average business review rating in the area.',
+      severity: avgRating < 3.5 ? 'high' : avgRating < 4.0 ? 'medium' : 'low',
+      description: `Area business quality indicator. Low ratings suggest market challenges.`,
+      risk, weight: W.market * 0.5, dimension: 'market',
     })
   }
 
-  // Traffic congestion factor
+  // ── Economic Vitality (20%) — permit/construction activity ─────────
+  if (data.permit_count > 0) {
+    // Inverted: more permits = active development = lower risk
+    const risk = 1 - logistic(data.permit_count, 8, 0.3)
+    scored.push({
+      label: `${data.permit_count} active building permits`,
+      source: 'building_permits',
+      severity: data.permit_count < 3 ? 'medium' : 'low',
+      description: `Construction activity signals economic investment and area development.`,
+      risk, weight: W.economic, dimension: 'economic',
+    })
+  }
+
+  // ── Accessibility (15%) — highway traffic + congestion + transit ────
+  if (data.cctv && data.cctv.cameras.length > 0) {
+    // Low highway traffic = potentially less accessible area
+    const densityRisk: Record<string, number> = { low: 0.7, medium: 0.4, high: 0.15 }
+    const risk = densityRisk[data.cctv.density] ?? 0.5
+    scored.push({
+      label: `${data.cctv.cameras.length} IDOT cameras — ${data.cctv.density} highway traffic`,
+      source: 'cctv',
+      severity: data.cctv.density === 'low' ? 'medium' : 'low',
+      description: `Highway proximity via ~${Math.round(data.cctv.avg_vehicles)} avg vehicles on nearby expressways.`,
+      risk, weight: W.accessibility * 0.35, dimension: 'accessibility',
+    })
+  }
+
   const traffic = data.traffic || []
-  const congested = traffic.filter(t =>
-    (t.metadata?.congestion_level as string) === 'heavy' || (t.metadata?.congestion_level as string) === 'blocked'
-  )
-  if (congested.length > 0) {
-    factors.push({
-      label: `${congested.length} congested traffic zones`,
-      pct: congested.length * 10,
+  if (traffic.length > 0) {
+    const congested = traffic.filter(t =>
+      ['heavy', 'blocked'].includes((t.metadata?.congestion_level as string) || '')
+    )
+    const congestionRatio = congested.length / traffic.length
+    const risk = logistic(congestionRatio, 0.3, 6)
+    scored.push({
+      label: `${congested.length} of ${traffic.length} traffic zones congested`,
       source: 'traffic',
-      severity: congested.length > 3 ? 'high' as const : 'medium' as const,
-      description: 'Heavy traffic may affect deliveries and customer access.',
+      severity: congestionRatio > 0.5 ? 'high' : congestionRatio > 0.2 ? 'medium' : 'low',
+      description: `Congestion affects deliveries and customer access.`,
+      risk, weight: W.accessibility * 0.3, dimension: 'accessibility',
     })
   }
 
-  const failRate = stats.total > 0 ? stats.failed / stats.total : 0
-  const overallScore = Math.min(10, Math.max(1,
-    3 + failRate * 4 + (data.license_count > 10 ? 1 : 0) + (data.politics.length > 3 ? 1 : 0)
-  ))
+  if (data.transit && data.transit.stations_nearby > 0) {
+    // Inverted: more transit = more walk-in customers = lower risk
+    const risk = 1 - logistic(data.transit.stations_nearby, 3, 1.0)
+    const stationList = data.transit.station_names.slice(0, 3).join(', ')
+    const ridersLabel = data.transit.total_daily_riders > 0
+      ? `~${Math.round(data.transit.total_daily_riders / 1000)}K daily riders`
+      : ''
+    scored.push({
+      label: `${data.transit.stations_nearby} CTA stations nearby`,
+      source: 'transit',
+      severity: data.transit.stations_nearby < 2 ? 'medium' : 'low',
+      description: `${stationList}${ridersLabel ? ` — ${ridersLabel}` : ''}. Transit access drives foot traffic.`,
+      risk, weight: W.accessibility * 0.35, dimension: 'accessibility',
+    })
+  }
 
-  const totalPct = factors.reduce((s, f) => s + f.pct, 0) || 1
-  factors.forEach(f => { f.pct = Math.round((f.pct / totalPct) * 100) })
+  // ── Political Stability (10%) — legislative activity ───────────────
+  if (data.politics.length > 0) {
+    // More legislative activity = more regulatory uncertainty
+    const risk = logistic(data.politics.length, 5, 0.4)
+    scored.push({
+      label: `${data.politics.length} legislative items`,
+      source: 'politics',
+      severity: data.politics.length > 8 ? 'high' : data.politics.length > 3 ? 'medium' : 'low',
+      description: `Active legislation creates regulatory uncertainty for businesses.`,
+      risk, weight: W.political, dimension: 'political',
+    })
+  }
 
-  const totalDataPoints = stats.total + data.permit_count + data.license_count + reviews.length + traffic.length
+  // ── Community Presence (10%) — news + social ───────────────────────
+  const redditCount = data.reddit?.length || 0
+  const totalMentions = data.news.length + redditCount
+  if (totalMentions > 0) {
+    // Inverted: low visibility = slightly higher risk (unknown area)
+    const risk = 1 - logistic(totalMentions, 8, 0.3)
+    scored.push({
+      label: `${data.news.length} news + ${redditCount} social mentions`,
+      source: 'news + social',
+      severity: totalMentions < 3 ? 'medium' : 'low',
+      description: `Community visibility and engagement level.`,
+      risk, weight: W.community, dimension: 'community',
+    })
+  }
+
+  // ── Weighted Linear Combination ────────────────────────────────────
+  if (scored.length === 0) {
+    return {
+      neighborhood: profile.neighborhood,
+      business_type: profile.business_type,
+      overall_score: 5.0,
+      confidence: 0.10,
+      factors: [],
+      summary: `Insufficient data for ${profile.neighborhood}. More pipeline data needed for risk assessment.`,
+    }
+  }
+
+  let weightedRisk = 0
+  let totalWeight = 0
+  for (const s of scored) {
+    weightedRisk += s.risk * s.weight
+    totalWeight += s.weight
+  }
+  const normalizedRisk = weightedRisk / totalWeight
+  const overallScore = Math.round(normalizedRisk * 100) / 10 // 0–10 scale
+
+  // Factor contribution percentages (each factor's share of total weighted risk)
+  const totalContribution = scored.reduce((sum, s) => sum + s.risk * s.weight, 0) || 1
+  const factors = scored.map(s => ({
+    label: s.label,
+    pct: Math.max(1, Math.round((s.risk * s.weight / totalContribution) * 100)),
+    source: s.source,
+    severity: s.severity,
+    description: s.description,
+  }))
+
+  // Confidence: 60% dimensional coverage + 40% data depth
+  const dimensionsCovered = new Set(scored.map(s => s.dimension)).size
+  const totalDimensions = Object.keys(W).length
+  const coverage = dimensionsCovered / totalDimensions
+  const totalDataPoints = stats.total + data.permit_count + data.license_count
+    + ratings.length + traffic.length + (data.cctv?.cameras.length || 0)
+    + data.news.length + data.politics.length + redditCount
+    + (data.transit?.stations_nearby || 0)
+  const depth = Math.min(1, totalDataPoints / 50)
+  const confidence = Math.min(0.95, Math.round((coverage * 0.6 + depth * 0.4) * 100) / 100)
 
   return {
     neighborhood: profile.neighborhood,
     business_type: profile.business_type,
-    overall_score: Math.round(overallScore * 10) / 10,
-    confidence: Math.min(0.95, 0.4 + totalDataPoints * 0.008),
+    overall_score: overallScore,
+    confidence,
     factors,
-    summary: `Analysis of ${profile.neighborhood} for a ${profile.business_type.toLowerCase()} based on ${totalDataPoints} data points across city permits, inspections, licenses, reviews, traffic, and legislative activity.`,
+    summary: `Multi-criteria risk assessment of ${profile.neighborhood} for ${profile.business_type.toLowerCase()} across ${dimensionsCovered} dimensions using ${totalDataPoints} data points.`,
   }
 }
 
@@ -452,12 +548,11 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
   }
   */
 
+  const regulatoryCount = (neighborhoodData?.inspection_stats.total || 0) + (neighborhoodData?.permit_count || 0) + (neighborhoodData?.license_count || 0)
   const allTabs: { key: Tab; label: string; count?: number; isEmpty?: () => boolean }[] = [
     { key: 'overview', label: 'Overview' },
-    { key: 'inspections', label: 'Inspections', count: neighborhoodData?.inspection_stats.total, isEmpty: () => !(neighborhoodData?.inspection_stats.total ?? 0) },
-    { key: 'permits', label: 'Permits', count: neighborhoodData?.permit_count, isEmpty: () => !(neighborhoodData?.permit_count ?? 0) },
-    { key: 'licenses', label: 'Licenses', count: neighborhoodData?.license_count, isEmpty: () => !(neighborhoodData?.license_count ?? 0) },
-    { key: 'news', label: 'Intel', count: (neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0), isEmpty: () => !((neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0)) },
+    { key: 'regulatory', label: 'Regulatory', count: regulatoryCount, isEmpty: () => !regulatoryCount },
+    { key: 'intel', label: 'Intel', count: (neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0), isEmpty: () => !((neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0)) },
     { key: 'community', label: 'Community', count: (neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0), isEmpty: () => !((neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0)) },
     { key: 'market', label: 'Market', count: (neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0), isEmpty: () => !((neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0)) },
     { key: 'vision', label: 'Vision', count: neighborhoodData?.cctv?.cameras.length || 0, isEmpty: () => false },
@@ -621,86 +716,21 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
                   {/* Quadrant 2: Demographics + Insights */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     {neighborhoodData?.metrics && (
-                      <DemographicsCard metrics={neighborhoodData.metrics} demographics={neighborhoodData.demographics} cctv={neighborhoodData.cctv} />
+                      <DemographicsCard metrics={neighborhoodData.metrics} demographics={neighborhoodData.demographics} />
                     )}
                     {neighborhoodData && (
                       <InsightsCard data={neighborhoodData} profile={profile} onTabChange={(tab) => setActiveTab(tab as Tab)} />
                     )}
                   </div>
 
-                  {neighborhoodData?.traffic && neighborhoodData.traffic.length > 0 && (
-                    <TrafficCard data={neighborhoodData.traffic} />
-                  )}
-
-                  {neighborhoodData?.cctv && neighborhoodData.cctv.cameras.length > 0 && (
-                    <CCTVFeedCard cctv={neighborhoodData.cctv} />
-                  )}
-
-                  {neighborhoodData && (
-                    <div className="grid grid-cols-3 lg:grid-cols-7 gap-3">
-                      <StatCard
-                        label="Food Inspections"
-                        value={neighborhoodData.inspection_stats.total}
-                        sub={`${neighborhoodData.inspection_stats.failed} failed`}
-                        severity={neighborhoodData.inspection_stats.failed > 5 ? 'high' : 'nominal'}
-                      />
-                      <StatCard
-                        label="Building Permits"
-                        value={neighborhoodData.permit_count}
-                        sub="active"
-                        severity="nominal"
-                      />
-                      <StatCard
-                        label="Business Licenses"
-                        value={neighborhoodData.license_count}
-                        sub="in area"
-                        severity="nominal"
-                      />
-                      <StatCard
-                        label="Intel Items"
-                        value={neighborhoodData.news.length + neighborhoodData.politics.length}
-                        sub="recent"
-                        severity="nominal"
-                        trend={trends ? { direction: trends.news_activity.trend, pct: trends.news_activity.change_pct } : null}
-                      />
-                      <StatCard
-                        label="Business Reviews"
-                        value={neighborhoodData.reviews?.length || 0}
-                        sub={neighborhoodData.metrics.avg_review_rating > 0 ? `avg ${neighborhoodData.metrics.avg_review_rating}/5` : 'listings'}
-                        severity="nominal"
-                      />
-                      <StatCard
-                        label="Community"
-                        value={(neighborhoodData.reddit?.length || 0) + (neighborhoodData.tiktok?.length || 0)}
-                        sub="posts"
-                        severity="nominal"
-                      />
-                      <StatCard
-                        label="IDOT Cameras"
-                        value={neighborhoodData.cctv?.cameras.length ?? 0}
-                        sub={neighborhoodData.cctv?.density ?? 'no data'}
-                        severity="nominal"
-                        trend={trends ? { direction: trends.foot_traffic.trend, pct: trends.foot_traffic.change_pct } : null}
-                      />
-                    </div>
-                  )}
-
                 </div>
               )}
 
-              {activeTab === 'inspections' && neighborhoodData && (
-                <InspectionTable inspections={neighborhoodData.inspections} />
+              {activeTab === 'regulatory' && neighborhoodData && (
+                <RegulatorySubTabs neighborhoodData={neighborhoodData} />
               )}
 
-              {activeTab === 'permits' && neighborhoodData && (
-                <PermitTable permits={neighborhoodData.permits} />
-              )}
-
-              {activeTab === 'licenses' && neighborhoodData && (
-                <LicenseTable licenses={neighborhoodData.licenses} />
-              )}
-
-              {activeTab === 'news' && neighborhoodData && (
+              {activeTab === 'intel' && neighborhoodData && (
                 <NewsFeed news={neighborhoodData.news} politics={neighborhoodData.politics} />
               )}
 
@@ -716,11 +746,12 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
               )}
 
               {activeTab === 'vision' && (
-                <VisionTab cctv={neighborhoodData?.cctv ?? null} traffic={neighborhoodData?.traffic ?? []} parking={neighborhoodData?.parking ?? null} neighborhood={profile.neighborhood} />
+                <VisionTab cctv={neighborhoodData?.cctv ?? null} parking={neighborhoodData?.parking ?? null} neighborhood={profile.neighborhood} />
               )}
 
               {activeTab === 'models' && (
                 <div className="space-y-4">
+                  <RecursiveAgentPanel />
                   <CityGraph activeNeighborhood={profile.neighborhood} interactive />
                   <MLMonitor />
                 </div>
@@ -783,17 +814,7 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
   )
 }
 
-const YOLO_CLASSES = ['person', 'bicycle', 'car', 'motorcycle', 'bus', 'truck'] as const
-
-const PIPELINE_STEPS = [
-  { label: 'IDOT CCTV', sub: 'Camera snapshots' },
-  { label: 'Download', sub: 'Frame capture' },
-  { label: 'YOLOv8n', sub: 'T4 GPU inference' },
-  { label: 'Counting', sub: 'Ped / veh / bike' },
-  { label: 'Scoring', sub: 'Density classification' },
-] as const
-
-function VisionTab({ cctv, traffic, parking, neighborhood }: { cctv: CCTVData | null; traffic: Document[]; parking: ParkingData | null; neighborhood: string }) {
+function VisionTab({ cctv, parking, neighborhood }: { cctv: CCTVData | null; parking: ParkingData | null; neighborhood: string }) {
   const [expandedCam, setExpandedCam] = useState<string | null>(null)
   const cameras = cctv?.cameras ?? []
 
@@ -816,29 +837,6 @@ function VisionTab({ cctv, traffic, parking, neighborhood }: { cctv: CCTVData | 
 
   return (
     <div className="space-y-4">
-      {/* Section A: Pipeline Overview */}
-      <div className="border border-white/[0.06] bg-white/[0.02] p-5">
-        <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30 mb-4">
-          Vision Pipeline
-        </h3>
-        <div className="flex items-center gap-0">
-          {PIPELINE_STEPS.map((step, i) => (
-            <div key={step.label} className="flex items-center">
-              <div className="flex flex-col items-center text-center w-28">
-                <div className="w-10 h-10 rounded-full border border-white/10 bg-white/[0.03] flex items-center justify-center mb-1.5">
-                  <span className="text-[10px] font-mono font-bold text-white/50">{i + 1}</span>
-                </div>
-                <div className="text-[11px] font-mono text-white/60">{step.label}</div>
-                <div className="text-[9px] font-mono text-white/20">{step.sub}</div>
-              </div>
-              {i < PIPELINE_STEPS.length - 1 && (
-                <div className="flex-shrink-0 w-8 h-px bg-gradient-to-r from-white/15 to-white/5 -mt-4" />
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
       {/* Streetscape Intelligence */}
       <StreetscapeCard neighborhood={neighborhood} />
 
@@ -934,84 +932,49 @@ function VisionTab({ cctv, traffic, parking, neighborhood }: { cctv: CCTVData | 
         </>
       )}
 
-      {/* Section B: Model Card */}
+      {/* Detection Summary — stats + distribution merged */}
       <div className="border border-white/[0.06] bg-white/[0.02] p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">
-            Model Card — YOLOv8n
-          </h3>
-          <span className="text-[9px] font-mono px-2 py-0.5 border border-white/10 text-white/25">Ultralytics</span>
-        </div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <div>
-            <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-1">Parameters</div>
-            <div className="text-sm font-mono text-white/70">3.2M</div>
+        <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30 mb-4">
+          Detection Summary
+        </h3>
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
+          <div className="bg-white/[0.02] border border-white/[0.04] p-3">
+            <div className="text-2xl font-bold font-mono text-white">{cameras.length}</div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Cameras</div>
           </div>
-          <div>
-            <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-1">GPU</div>
-            <div className="text-sm font-mono text-white/70">NVIDIA T4</div>
+          <div className="bg-white/[0.02] border border-white/[0.04] p-3">
+            <div className="text-2xl font-bold font-mono text-green-400">{totalPeds}</div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Pedestrians</div>
           </div>
-          <div>
-            <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-1">Confidence</div>
-            <div className="text-sm font-mono text-white/70">0.3 threshold</div>
+          <div className="bg-white/[0.02] border border-white/[0.04] p-3">
+            <div className="text-2xl font-bold font-mono text-blue-400">{totalVehs}</div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Vehicles</div>
           </div>
-          <div>
-            <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-1">Features</div>
-            <div className="text-sm font-mono text-white/70">GPU snapshots</div>
+          <div className="bg-white/[0.02] border border-white/[0.04] p-3">
+            <div className="text-2xl font-bold font-mono text-amber-400">{totalBikes}</div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Bicycles</div>
           </div>
-        </div>
-        <div className="mt-3 pt-3 border-t border-white/[0.04]">
-          <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-2">Detected Classes</div>
-          <div className="flex flex-wrap gap-1.5">
-            {YOLO_CLASSES.map(cls => (
-              <span key={cls} className="text-[10px] font-mono px-2 py-0.5 border border-white/[0.08] bg-white/[0.02] text-white/40">
-                {cls}
-              </span>
-            ))}
+          <div className="bg-white/[0.02] border border-white/[0.04] p-3">
+            <div className="text-2xl font-bold font-mono text-white/70">{avgDensity}</div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Avg Density</div>
           </div>
         </div>
+        {totalDetections > 0 && (
+          <>
+            <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-2">Detection Distribution</div>
+            <div className="flex h-3 rounded-sm overflow-hidden">
+              <div className="bg-green-500/70" style={{ width: `${pedPct}%` }} />
+              <div className="bg-blue-500/70" style={{ width: `${vehPct}%` }} />
+              <div className="bg-amber-500/70" style={{ width: `${bikePct}%` }} />
+            </div>
+            <div className="flex justify-between mt-2">
+              <span className="text-[10px] font-mono text-green-400/60">Pedestrians {pedPct}%</span>
+              <span className="text-[10px] font-mono text-blue-400/60">Vehicles {vehPct}%</span>
+              <span className="text-[10px] font-mono text-amber-400/60">Bicycles {bikePct}%</span>
+            </div>
+          </>
+        )}
       </div>
-
-      {/* Section D: Aggregate Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <div className="border border-white/[0.06] bg-white/[0.02] p-4">
-          <div className="text-2xl font-bold font-mono text-white">{cameras.length}</div>
-          <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Cameras</div>
-        </div>
-        <div className="border border-white/[0.06] bg-white/[0.02] p-4">
-          <div className="text-2xl font-bold font-mono text-green-400">{totalPeds}</div>
-          <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Pedestrians</div>
-        </div>
-        <div className="border border-white/[0.06] bg-white/[0.02] p-4">
-          <div className="text-2xl font-bold font-mono text-blue-400">{totalVehs}</div>
-          <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Vehicles</div>
-        </div>
-        <div className="border border-white/[0.06] bg-white/[0.02] p-4">
-          <div className="text-2xl font-bold font-mono text-amber-400">{totalBikes}</div>
-          <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Bicycles</div>
-        </div>
-        <div className="border border-white/[0.06] bg-white/[0.02] p-4">
-          <div className="text-2xl font-bold font-mono text-white/70">{avgDensity}</div>
-          <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Avg Density</div>
-        </div>
-      </div>
-
-      {/* Detection distribution bar */}
-      {totalDetections > 0 && (
-        <div className="border border-white/[0.06] bg-white/[0.02] p-4">
-          <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-2">Detection Distribution</div>
-          <div className="flex h-3 rounded-sm overflow-hidden">
-            <div className="bg-green-500/70" style={{ width: `${pedPct}%` }} />
-            <div className="bg-blue-500/70" style={{ width: `${vehPct}%` }} />
-            <div className="bg-amber-500/70" style={{ width: `${bikePct}%` }} />
-          </div>
-          <div className="flex justify-between mt-2">
-            <span className="text-[10px] font-mono text-green-400/60">Pedestrians {pedPct}%</span>
-            <span className="text-[10px] font-mono text-blue-400/60">Vehicles {vehPct}%</span>
-            <span className="text-[10px] font-mono text-amber-400/60">Bicycles {bikePct}%</span>
-          </div>
-        </div>
-      )}
 
       {/* Highway Traffic 24h Chart */}
       <FootTrafficChart neighborhood={neighborhood} />
@@ -1055,53 +1018,6 @@ function VisionTab({ cctv, traffic, parking, neighborhood }: { cctv: CCTVData | 
         </div>
       )}
 
-      {/* Section E: Traffic Flow table */}
-      {traffic.length > 0 && (
-        <div className="border border-white/[0.06] bg-white/[0.02]">
-          <div className="px-4 py-3 border-b border-white/[0.06]">
-            <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">
-              Traffic Flow — TomTom
-            </h3>
-          </div>
-          <table className="w-full text-left">
-            <thead>
-              <tr className="border-b border-white/[0.04]">
-                <th className="px-4 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Road Segment</th>
-                <th className="px-4 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Speed</th>
-                <th className="px-4 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Free Flow</th>
-                <th className="px-4 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Congestion</th>
-                <th className="px-4 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Delay</th>
-              </tr>
-            </thead>
-            <tbody>
-              {traffic.map(doc => {
-                const level = (doc.metadata?.congestion_level as string) || 'free'
-                const speed = (doc.metadata?.current_speed as number) || 0
-                const freeFlow = (doc.metadata?.free_flow_speed as number) || 0
-                const travelTime = (doc.metadata?.travel_time as number) || 0
-                const freeFlowTime = (doc.metadata?.free_flow_travel_time as number) || 0
-                const delay = travelTime > 0 && freeFlowTime > 0 ? Math.max(0, travelTime - freeFlowTime) : 0
-                const road = doc.geo?.neighborhood || doc.title || 'Unknown'
-                const congestionColor =
-                  level === 'blocked' ? 'text-red-400' :
-                  level === 'heavy' ? 'text-orange-400' :
-                  level === 'moderate' ? 'text-yellow-400' :
-                  'text-green-400'
-
-                return (
-                  <tr key={doc.id} className="border-b border-white/[0.03] hover:bg-white/[0.02]">
-                    <td className="px-4 py-2 text-xs font-mono text-white/50 truncate max-w-[200px]">{road}</td>
-                    <td className="px-4 py-2 text-xs font-mono text-white/50">{speed > 0 ? `${speed} mph` : '—'}</td>
-                    <td className="px-4 py-2 text-xs font-mono text-white/30">{freeFlow > 0 ? `${freeFlow} mph` : '—'}</td>
-                    <td className={`px-4 py-2 text-xs font-mono font-medium ${congestionColor}`}>{level}</td>
-                    <td className="px-4 py-2 text-xs font-mono text-white/30">{delay > 0 ? `+${Math.round(delay)}s` : '—'}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   )
 }
@@ -1178,28 +1094,38 @@ function VaultTab({
   )
 }
 
-function StatCard({ label, value, sub, severity, trend }: {
-  label: string; value: number | string; sub: string; severity: 'high' | 'nominal'
-  trend?: { direction: 'up' | 'down' | 'stable'; pct: number } | null
-}) {
+function RegulatorySubTabs({ neighborhoodData }: { neighborhoodData: NeighborhoodData }) {
+  const [subTab, setSubTab] = useState<'inspections' | 'permits' | 'licenses'>('inspections')
+
+  const subTabs = [
+    { key: 'inspections' as const, label: 'Inspections', count: neighborhoodData.inspection_stats.total },
+    { key: 'permits' as const, label: 'Permits', count: neighborhoodData.permit_count },
+    { key: 'licenses' as const, label: 'Licenses', count: neighborhoodData.license_count },
+  ]
+
   return (
-    <div className={`border p-4 ${severity === 'high' ? 'border-red-500/20 bg-red-500/[0.03]' : 'border-white/[0.06] bg-white/[0.02]'}`}>
-      <div className="flex items-baseline gap-1">
-        <span className={`text-2xl font-bold font-mono ${severity === 'high' ? 'text-red-400' : 'text-white'}`}>
-          {value}
-        </span>
-        {trend && (
-          <span className={`text-[10px] font-mono ${
-            trend.direction === 'up' ? 'text-emerald-400' :
-            trend.direction === 'down' ? 'text-red-400' : 'text-white/20'
-          }`}>
-            {trend.direction === 'up' ? '\u2191' : trend.direction === 'down' ? '\u2193' : '\u2014'}
-            {Math.abs(trend.pct)}%
-          </span>
-        )}
+    <div className="space-y-4">
+      <div className="flex gap-0 border-b border-white/[0.06]">
+        {subTabs.map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setSubTab(tab.key)}
+            className={`flex items-center gap-2 px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px cursor-pointer ${
+              subTab === tab.key
+                ? 'border-white text-white'
+                : 'border-transparent text-white/30 hover:text-white/60'
+            }`}
+          >
+            {tab.label}
+            {tab.count > 0 && (
+              <span className="font-mono text-[10px] text-white/20">{tab.count}</span>
+            )}
+          </button>
+        ))}
       </div>
-      <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">{label}</div>
-      <div className="text-[10px] font-mono text-white/15">{sub}</div>
+      {subTab === 'inspections' && <InspectionTable inspections={neighborhoodData.inspections} />}
+      {subTab === 'permits' && <PermitTable permits={neighborhoodData.permits} />}
+      {subTab === 'licenses' && <LicenseTable licenses={neighborhoodData.licenses} />}
     </div>
   )
 }

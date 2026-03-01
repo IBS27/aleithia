@@ -10,8 +10,8 @@ interface Props {
 }
 
 const CATEGORY_TAB_MAP: Record<string, string> = {
-  regulatory: 'inspections',
-  economic: 'permits',
+  regulatory: 'regulatory',
+  economic: 'regulatory',
   market: 'market',
   demographic: 'overview',
   safety: 'vision',
