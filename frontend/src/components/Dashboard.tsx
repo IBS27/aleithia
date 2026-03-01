@@ -490,12 +490,12 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
           <SignedOut>
             <SignInButton mode="modal">
               <button className="text-[10px] font-mono uppercase tracking-wider text-white/30 hover:text-white/60 transition-colors cursor-pointer">
-                Auth
+                Log in
               </button>
             </SignInButton>
             <SignUpButton mode="modal">
               <button className="text-[10px] font-mono uppercase tracking-wider text-white hover:text-white/80 transition-colors cursor-pointer">
-                Initialize
+                Get started
               </button>
             </SignUpButton>
           </SignedOut>

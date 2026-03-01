@@ -878,12 +878,12 @@ async def sources():
     return result
 
 
-def _load_cctv_for_neighborhood(name: str) -> dict:
+async def _load_cctv_for_neighborhood(name: str) -> dict:
     """Load latest CCTV analysis for cameras near a neighborhood."""
     from modal_app.common import NEIGHBORHOOD_CENTROIDS
     import math
 
-    volume.reload()
+    await volume.reload.aio()
     analysis_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "analysis"
     if not analysis_dir.exists():
         return {"cameras": [], "avg_pedestrians": 0, "avg_vehicles": 0, "density": "unknown"}
@@ -1144,7 +1144,7 @@ async def neighborhood(name: str, business_type: str = ""):
         demographics = _aggregate_demographics(name)
 
         # Load CCTV analysis
-        cctv_analysis = _load_cctv_for_neighborhood(name)
+        cctv_analysis = await _load_cctv_for_neighborhood(name)
 
         if span:
             span.set_attribute("output.value", json.dumps({
@@ -1375,41 +1375,179 @@ async def geo():
     return {"type": "FeatureCollection", "features": []}
 
 
+def _transform_doc_for_graph(doc: dict) -> dict:
+    """Transform Supermemory API doc to DocumentWithMemories format. Preserves all fields for graph viz."""
+    memories = doc.get("memories", doc.get("memoryEntries", []))
+    memory_entries = []
+    for m in memories:
+        # Normalize memoryRelations: API may return object {targetId: "updates"} or array [{targetMemoryId, relationType}]
+        rels = m.get("memoryRelations")
+        if isinstance(rels, dict):
+            rels = [{"targetMemoryId": k, "relationType": v} for k, v in rels.items() if v in ("updates", "extends", "derives")]
+        entry = {
+            "id": m.get("id", ""),
+            "documentId": doc.get("id", ""),
+            "content": m.get("memory", m.get("content")),
+            "summary": m.get("summary"),
+            "title": m.get("title"),
+            "createdAt": m.get("createdAt", m.get("created_at")),
+            "updatedAt": m.get("updatedAt", m.get("updated_at")),
+            "isLatest": m.get("isLatest", True),
+            "isForgotten": m.get("isForgotten"),
+            "forgetAfter": m.get("forgetAfter"),
+            "relation": m.get("relation") or m.get("changeType"),
+            "memoryRelations": rels if isinstance(rels, list) else m.get("memoryRelations"),
+            "updatesMemoryId": m.get("updatesMemoryId"),
+            "nextVersionId": m.get("nextVersionId"),
+            "parentMemoryId": m.get("parentMemoryId"),
+            "rootMemoryId": m.get("rootMemoryId"),
+            "metadata": m.get("metadata"),
+            "spaceId": m.get("spaceId"),
+            "spaceContainerTag": m.get("spaceContainerTag"),
+        }
+        memory_entries.append(entry)
+    out = {
+        "id": doc.get("id", ""),
+        "customId": doc.get("customId"),
+        "title": doc.get("title"),
+        "content": doc.get("content"),
+        "summary": doc.get("summary"),
+        "url": doc.get("url"),
+        "source": doc.get("source"),
+        "type": doc.get("type", doc.get("documentType")),
+        "status": doc.get("status", "done"),
+        "metadata": doc.get("metadata"),
+        "createdAt": doc.get("createdAt", doc.get("created_at")),
+        "updatedAt": doc.get("updatedAt", doc.get("updated_at")),
+        "memoryEntries": memory_entries,
+    }
+    # Preserve x,y for layout; summaryEmbedding for doc-doc similarity edges
+    if doc.get("x") is not None:
+        out["x"] = doc["x"]
+    if doc.get("y") is not None:
+        out["y"] = doc["y"]
+    if doc.get("summaryEmbedding") is not None:
+        out["summaryEmbedding"] = doc["summaryEmbedding"]
+    return out
+
+
+def _build_city_graph_fallback() -> dict:
+    """Build minimal city graph from neighborhoods + public data when no precomputed graph exists."""
+    from modal_app.common import NEIGHBORHOOD_CENTROIDS, CHICAGO_NEIGHBORHOODS
+
+    nodes = []
+    for nb in CHICAGO_NEIGHBORHOODS:
+        centroid = NEIGHBORHOOD_CENTROIDS.get(nb)
+        if centroid:
+            lat, lng = centroid
+            nodes.append({
+                "id": f"nb:{nb}",
+                "type": "neighborhood",
+                "label": nb,
+                "lat": lat,
+                "lng": lng,
+                "size": 40,
+            })
+        else:
+            nodes.append({"id": f"nb:{nb}", "type": "neighborhood", "label": nb, "size": 40})
+
+    # Edges: connect neighborhoods that share permits/inspections (from public_data)
+    edges = []
+    public_docs = _load_docs("public_data", limit=500)
+    nb_pairs: set[tuple[str, str]] = set()
+    for doc in public_docs:
+        meta = doc.get("metadata", {})
+        geo = meta.get("geo", {})
+        nb = (geo.get("neighborhood") or "").strip()
+        if not nb or nb not in CHICAGO_NEIGHBORHOODS:
+            nb = detect_neighborhood(doc.get("content", "") or doc.get("title", ""))
+        if nb:
+            dataset = meta.get("dataset", "")
+            # Create edges from same-dataset docs in same/different neighborhoods
+            for other in public_docs[:100]:
+                o_meta = other.get("metadata", {})
+                o_geo = o_meta.get("geo", {})
+                o_nb = (o_geo.get("neighborhood") or "").strip()
+                if not o_nb:
+                    o_nb = detect_neighborhood(other.get("content", "") or other.get("title", ""))
+                if o_nb and o_nb != nb and o_meta.get("dataset") == dataset:
+                    pair = tuple(sorted([nb, o_nb]))
+                    nb_pairs.add(pair)
+
+    for a, b in list(nb_pairs)[:400]:  # Cap edges
+        edges.append({"source": f"nb:{a}", "target": f"nb:{b}", "weight": 1})
+
+    return {"nodes": nodes, "edges": edges}
+
+
+@web_app.get("/graph/full")
+async def graph_full():
+    """City graph (nodes + edges) from volume or fallback build."""
+    await volume.reload.aio()
+    for path in [
+        Path(PROCESSED_DATA_PATH) / "city_graph.json",
+        Path(PROCESSED_DATA_PATH) / "graph" / "city_graph.json",
+        Path(PROCESSED_DATA_PATH) / "graph.json",
+    ]:
+        if path.exists():
+            try:
+                data = json.loads(path.read_text())
+                if data.get("nodes") is not None:
+                    return data
+            except Exception as e:
+                print(f"graph/full: failed to read {path}: {e}")
+                continue
+    return _build_city_graph_fallback()
+
+
 @web_app.get("/graph")
-async def graph(page: int = 1, limit: int = 200):
-    """Proxy to Supermemory list documents for Memory Graph visualization."""
+async def graph(page: int = 1, limit: int = 500):
+    """Proxy to Supermemory for Memory Graph. Tries graph/viewport first, then documents/list."""
     empty = {"documents": [], "pagination": {"currentPage": 1, "totalPages": 0}}
-    try:
-        api_key = os.environ.get("SUPERMEMORY_API_KEY", "")
-        if not api_key:
-            return JSONResponse(empty, status_code=200)
-        import httpx
-        async with httpx.AsyncClient(timeout=30) as client:
+    api_key = os.environ.get("SUPERMEMORY_API_KEY", "")
+    if not api_key:
+        return JSONResponse(empty, status_code=200)
+    import httpx
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    async with httpx.AsyncClient(timeout=15) as client:
+        try:
             resp = await client.post(
-                "https://api.supermemory.ai/v3/documents/list",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}",
-                },
+                "https://api.supermemory.ai/v3/graph/viewport",
+                headers=headers,
                 json={
-                    "page": page,
-                    "limit": min(limit, 200),  # Supermemory max is 200
-                    "sort": "createdAt",
-                    "order": "desc",
+                    "viewport": {"minX": 0, "maxX": 1000000, "minY": 0, "maxY": 1000000},
+                    "limit": min(limit, 500),
                 },
             )
-            if not resp.is_success:
-                print(f"Supermemory /graph HTTP {resp.status_code}: {resp.text[:200]}")
-                return JSONResponse(empty, status_code=200)
-            data = resp.json()
-            # Memory Graph expects 'documents'; Supermemory may return 'memories'
-            if "memories" in data and "documents" not in data:
-                data["documents"] = data["memories"]
-            # Return as JSONResponse to avoid FastAPI serialization issues
-            return JSONResponse(data, status_code=200)
-    except Exception as e:
-        print(f"Supermemory /graph error: {type(e).__name__}: {e}")
-        return JSONResponse(empty, status_code=200)
+            if resp.status_code == 200:
+                data = resp.json()
+                raw_docs = data.get("documents", [])
+                docs = [_transform_doc_for_graph(d) for d in raw_docs]
+                total = data.get("totalCount", len(docs))
+                out = {
+                    "documents": docs,
+                    "pagination": {"currentPage": 1, "totalPages": max(1, (total + limit - 1) // limit)},
+                }
+                # Pass through edges (doc-doc similarity) if API returns them
+                if data.get("edges"):
+                    out["edges"] = data["edges"]
+                return JSONResponse(out, status_code=200)
+        except Exception as e:
+            print(f"Supermemory graph/viewport: {e}")
+        for url in ["https://api.supermemory.ai/v3/documents/list", "https://api.supermemory.ai/v3/documents/documents"]:
+            try:
+                resp = await client.post(url, headers=headers, json={"page": page, "limit": min(limit, 500), "sort": "createdAt", "order": "desc"})
+                if resp.status_code in (401, 403):
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                raw_docs = data.get("documents") or data.get("memories") or []
+                docs = [_transform_doc_for_graph(d) for d in raw_docs]
+                return JSONResponse({"documents": docs, "pagination": data.get("pagination", {})}, status_code=200)
+            except Exception as e:
+                print(f"Supermemory {url}: {e}")
+                continue
+    return JSONResponse(empty, status_code=200)
 
 
 @web_app.get("/gpu-metrics")

@@ -71,7 +71,7 @@ export default function OnboardingForm({ onSubmit, onCancel, initialProfile, emb
         <div className="max-w-md w-full">
           <div className="mb-12">
             <h1 className="text-3xl font-bold tracking-tight text-white mb-2">
-                Initialize session
+                Get started
             </h1>
             <p className="text-sm text-white/40 leading-relaxed font-mono">
               Set business type and target neighborhood to run analysis.

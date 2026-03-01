@@ -264,7 +264,13 @@ class TrafficAnalyzer:
 
     @modal.enter(snap=True)
     def load_model(self):
+        import cv2
         from ultralytics import YOLO
+        volume.reload()  # Ensure latest frames from ingester are visible
+        try:
+            cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_SILENT)
+        except AttributeError:
+            pass
         self.model = YOLO("yolov8n.pt")
 
     @modal.method()
@@ -299,8 +305,12 @@ class TrafficAnalyzer:
     def analyze_frame(self, snapshot_path: str, camera_id: str) -> dict:
         """Run YOLOv8n on a single frame, annotate, and return counts."""
         import cv2
+        from pathlib import Path
 
-        img = cv2.imread(snapshot_path)
+        path = Path(snapshot_path)
+        if not path.exists():
+            return {"camera_id": camera_id, "error": "file not found"}
+        img = cv2.imread(str(path))
         if img is None:
             return {"camera_id": camera_id, "error": "cannot read image"}
 

@@ -166,12 +166,12 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
             <SignedOut>
               <SignInButton mode="modal">
                 <button className="pointer-events-auto px-4 py-2 text-sm font-medium text-white/80 hover:text-white transition-colors cursor-pointer font-mono uppercase text-[10px] tracking-wider">
-                  Auth
+                  Log in
                 </button>
               </SignInButton>
               <SignUpButton mode="modal">
                 <button className="pointer-events-auto px-6 py-2 text-sm font-medium !bg-white !text-[#06080d] hover:!bg-white/90 transition-colors cursor-pointer">
-                  Initialize Session
+                  Get started
                 </button>
               </SignUpButton>
             </SignedOut>
@@ -181,7 +181,7 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
                 onClick={onGetStarted}
                 className="pointer-events-auto px-6 py-2 text-sm font-medium !bg-white !text-[#06080d] hover:!bg-white/90 transition-colors cursor-pointer"
               >
-                Initialize Session
+                Get started
               </button>
             </SignedIn>
           </div>
