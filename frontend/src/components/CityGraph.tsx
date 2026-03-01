@@ -27,7 +27,7 @@ export default function CityGraph({ activeNeighborhood }: Props) {
   const [graphData, setGraphData] = useState<CityGraphData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<'neighborhood' | 'full'>('neighborhood')
+  const [viewMode, setViewMode] = useState<'neighborhood' | 'full'>(activeNeighborhood ? 'neighborhood' : 'full')
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
   const [filters, setFilters] = useState<Record<string, boolean>>({
     neighborhood: true,
@@ -39,21 +39,28 @@ export default function CityGraph({ activeNeighborhood }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
   const baseViewportRef = useRef<Viewport | null>(null)
   const viewportRef = useRef<Viewport | null>(null)
-  const panStateRef = useRef({ active: false, lastX: 0, lastY: 0 })
+  const panStateRef = useRef({ active: false, lastX: 0, lastY: 0, moved: false })
   const suppressNodeClickUntilRef = useRef(0)
+  const requestVersionRef = useRef(0)
 
   const loadGraph = useCallback(async () => {
+    const requestVersion = ++requestVersionRef.current
     setLoading(true)
     setError(null)
     try {
       const data = viewMode === 'neighborhood' && activeNeighborhood
         ? await fetchNeighborhoodGraph(activeNeighborhood)
         : await fetchCityGraph()
+      if (requestVersion !== requestVersionRef.current) return
       setGraphData(data)
+      setSelectedNode(null)
     } catch (e) {
+      if (requestVersion !== requestVersionRef.current) return
       setError(e instanceof Error ? e.message : 'Failed to load graph')
     } finally {
-      setLoading(false)
+      if (requestVersion === requestVersionRef.current) {
+        setLoading(false)
+      }
     }
   }, [viewMode, activeNeighborhood])
 
@@ -100,6 +107,11 @@ export default function CityGraph({ activeNeighborhood }: Props) {
   }, [applyViewport])
 
   useEffect(() => { loadGraph() }, [loadGraph])
+  useEffect(() => {
+    if (!activeNeighborhood && viewMode === 'neighborhood') {
+      setViewMode('full')
+    }
+  }, [activeNeighborhood, viewMode])
 
   useEffect(() => {
     const svg = svgRef.current
@@ -113,7 +125,10 @@ export default function CityGraph({ activeNeighborhood }: Props) {
 
     const onPointerDown = (event: PointerEvent) => {
       if (event.button !== 0 || !viewportRef.current) return
-      panStateRef.current = { active: true, lastX: event.clientX, lastY: event.clientY }
+      const target = event.target
+      if (target instanceof Element && target.closest('g[data-city-graph-node="true"]')) return
+
+      panStateRef.current = { active: true, lastX: event.clientX, lastY: event.clientY, moved: false }
       svg.style.cursor = 'grabbing'
       svg.setPointerCapture(event.pointerId)
     }
@@ -125,8 +140,8 @@ export default function CityGraph({ activeNeighborhood }: Props) {
 
       const dx = event.clientX - panStateRef.current.lastX
       const dy = event.clientY - panStateRef.current.lastY
-      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-        suppressNodeClickUntilRef.current = Date.now() + 120
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+        panStateRef.current.moved = true
       }
 
       const current = viewportRef.current
@@ -144,6 +159,9 @@ export default function CityGraph({ activeNeighborhood }: Props) {
 
     const onPointerUp = (event: PointerEvent) => {
       if (!panStateRef.current.active) return
+      if (panStateRef.current.moved) {
+        suppressNodeClickUntilRef.current = Date.now() + 120
+      }
       panStateRef.current.active = false
       if (svg.hasPointerCapture(event.pointerId)) {
         svg.releasePointerCapture(event.pointerId)
@@ -269,6 +287,7 @@ export default function CityGraph({ activeNeighborhood }: Props) {
 
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
       g.setAttribute('transform', `translate(${pos.x},${pos.y})`)
+      g.setAttribute('data-city-graph-node', 'true')
       g.style.cursor = 'pointer'
       g.addEventListener('click', () => {
         if (Date.now() < suppressNodeClickUntilRef.current) return
@@ -314,20 +333,26 @@ export default function CityGraph({ activeNeighborhood }: Props) {
         <h3 className="text-[10px] font-mono uppercase tracking-wider text-white/40">Knowledge Graph</h3>
         <div className="flex items-center gap-3">
           <div className="flex gap-0 border border-white/[0.08] rounded overflow-hidden">
-            {(['neighborhood', 'full'] as const).map(mode => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => setViewMode(mode)}
-                className={`px-3 py-1 text-[10px] font-mono uppercase tracking-wider transition-colors cursor-pointer ${
-                  viewMode === mode
-                    ? 'bg-white/[0.06] text-white'
-                    : 'text-white/30 hover:text-white/50'
-                }`}
-              >
-                {mode === 'neighborhood' ? '1-Hop' : 'Full'}
-              </button>
-            ))}
+            {(['neighborhood', 'full'] as const).map((mode) => {
+              const disabled = mode === 'neighborhood' && !activeNeighborhood
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setViewMode(mode)}
+                  disabled={disabled}
+                  className={`px-3 py-1 text-[10px] font-mono uppercase tracking-wider transition-colors ${
+                    viewMode === mode
+                      ? 'bg-white/[0.06] text-white'
+                      : disabled
+                        ? 'text-white/15 cursor-not-allowed'
+                        : 'text-white/30 hover:text-white/50 cursor-pointer'
+                  }`}
+                >
+                  {mode === 'neighborhood' ? '1-Hop' : 'Full'}
+                </button>
+              )
+            })}
           </div>
           {graphData?.stats && (
             <span className="text-[10px] font-mono text-white/20">
