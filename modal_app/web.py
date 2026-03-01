@@ -1045,12 +1045,24 @@ async def sources():
     return result
 
 
+def _load_fake_cctv() -> dict:
+    """Load pre-generated fake CCTV analytics from JSON file."""
+    fake_path = Path(PROCESSED_DATA_PATH) / "cctv" / "fake_analytics.json"
+    if fake_path.exists():
+        try:
+            return json.loads(fake_path.read_text())
+        except Exception:
+            pass
+    return {}
+
+
 async def _load_cctv_for_neighborhood(name: str) -> dict:
     """Load latest CCTV analysis for cameras near a neighborhood."""
     from modal_app.common import NEIGHBORHOOD_CENTROIDS
     import math
 
     await volume.reload.aio()
+
     analysis_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "analysis"
     if not analysis_dir.exists():
         return {"cameras": [], "avg_pedestrians": 0, "avg_vehicles": 0, "density": "unknown"}
@@ -1121,9 +1133,27 @@ async def _load_cctv_for_neighborhood(name: str) -> dict:
     if not cameras:
         return {"cameras": [], "avg_pedestrians": 0, "avg_vehicles": 0, "density": "unknown"}
 
-    avg_p = sum(c["pedestrians"] for c in cameras) / len(cameras)
-    avg_v = sum(c["vehicles"] for c in cameras) / len(cameras)
-    density = "high" if avg_p > 20 else "medium" if avg_p > 5 else "low"
+    # Overlay fake detection counts onto real cameras (keeps real IDs/positions/frames)
+    fake = _load_fake_cctv()
+    fake_entry = fake.get(name, {}).get("cameras", {})
+    if fake_entry:
+        fake_cams = fake_entry.get("cameras", [])
+        n_real = len(cameras)
+        for i, cam in enumerate(cameras):
+            # Round-robin assign fake counts from pre-generated cameras
+            fc = fake_cams[i % len(fake_cams)] if fake_cams else {}
+            cam["pedestrians"] = fc.get("pedestrians", cam["pedestrians"])
+            cam["vehicles"] = fc.get("vehicles", cam["vehicles"])
+            cam["bicycles"] = fc.get("bicycles", cam["bicycles"])
+            cam["density_level"] = fc.get("density_level", cam["density_level"])
+
+        avg_p = fake_entry.get("avg_pedestrians", 0)
+        avg_v = fake_entry.get("avg_vehicles", 0)
+        density = fake_entry.get("density", "unknown")
+    else:
+        avg_p = sum(c["pedestrians"] for c in cameras) / len(cameras)
+        avg_v = sum(c["vehicles"] for c in cameras) / len(cameras)
+        density = "high" if avg_p > 20 else "medium" if avg_p > 5 else "low"
 
     return {
         "cameras": cameras[:10],
@@ -1845,6 +1875,11 @@ async def cctv_frame(camera_id: str):
 async def _aggregate_timeseries_for_neighborhood(name: str, camera_ids: list[str] | None = None) -> dict:
     """Aggregate per-camera timeseries into hourly buckets for a neighborhood."""
     from zoneinfo import ZoneInfo
+
+    # Prefer fake analytics if available
+    fake = _load_fake_cctv()
+    if name in fake and fake[name].get("timeseries"):
+        return fake[name]["timeseries"]
 
     if camera_ids is None:
         volume.reload()
