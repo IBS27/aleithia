@@ -6,7 +6,6 @@ Modal features: @modal.asgi_app, streaming SSE
 """
 import asyncio
 import base64
-import asyncio
 import json
 import os
 import re
