@@ -234,15 +234,15 @@ function addSourceAndLayers(map: mapboxgl.Map, geojson: GeoJSON.FeatureCollectio
 
         popupRef.current?.remove()
         popupRef.current = new mapboxgl.Popup({ closeButton: false, className: 'alethia-popup' })
-          .setLngLat(coords)
-          .setHTML(`
-            <div style="font-family:system-ui;font-size:13px;color:#e2e8f0;line-height:1.5">
-              <strong style="color:#818cf8">${props.neighborhood || 'Unknown'}</strong><br/>
-              Permits: ${props.active_permits ?? '—'}<br/>
-              Reviews: ${props.review_count ?? '—'}<br/>
-              Activity: ${props.business_activity ?? '—'}
-            </div>
-          `)
+        .setLngLat(coords)
+        .setHTML(`
+          <div style="font-family:system-ui;font-size:13px;color:#e2e8f0;line-height:1.5;background:#1e1e2e;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.08)">
+            <strong style="color:#818cf8">${props.neighborhood || 'Unknown'}</strong><br/>
+            Permits: ${props.active_permits ?? '—'}<br/>
+            Reviews: ${props.review_count ?? '—'}<br/>
+            Activity: ${props.business_activity ?? '—'}
+          </div>
+        `)
           .addTo(map)
       })
     }
@@ -321,3 +321,18 @@ function addSourceAndLayers(map: mapboxgl.Map, geojson: GeoJSON.FeatureCollectio
     </div>
   )
 }
+const style = document.createElement('style')
+style.textContent = `
+  .alethia-popup.mapboxgl-popup .mapboxgl-popup-content {
+    background: transparent !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+  }
+  .alethia-popup.mapboxgl-popup .mapboxgl-popup-tip {
+    border-top-color: #1e1e2e !important;
+  }
+`
+document.head.appendChild(style)
