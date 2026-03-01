@@ -135,4 +135,11 @@ export const api = {
   },
   news: () => fetchJSON<Document[]>('/news'),
   politics: () => fetchJSON<Document[]>('/politics'),
+  graph: (opts?: { page?: number; limit?: number }) => {
+    const params = new URLSearchParams()
+    if (opts?.page) params.set('page', String(opts.page))
+    if (opts?.limit) params.set('limit', String(opts.limit))
+    const qs = params.toString()
+    return fetchJSON<{ documents: unknown[]; pagination?: { currentPage: number; totalPages: number } }>(`/graph${qs ? `?${qs}` : ''}`)
+  },
 }

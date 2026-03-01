@@ -1,7 +1,13 @@
-import { Suspense } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import Spline from '@splinetool/react-spline'
 import type { Application } from '@splinetool/runtime'
+import { MemoryGraph, injectStyles } from '@supermemory/memory-graph'
+import '@supermemory/memory-graph/styles.css'
+import type { DocumentWithMemories } from '@supermemory/memory-graph'
 import CityGlobe from './CityGlobe'
+import { api } from '../api.ts'
+
+injectStyles()
 
 interface Props {
   onGetStarted: () => void
@@ -50,6 +56,34 @@ const DATA_PILLARS = [
 ]
 
 export default function LandingPage({ onGetStarted }: Props) {
+  const [graphDocs, setGraphDocs] = useState<DocumentWithMemories[]>([])
+  const [graphLoading, setGraphLoading] = useState(true)
+  const [graphError, setGraphError] = useState<Error | null>(null)
+
+  useEffect(() => {
+    api
+      .graph({ page: 1, limit: 500 })
+      .then((data) => {
+        const raw = (data as { documents?: Record<string, unknown>[] }).documents ?? []
+        const normalized: DocumentWithMemories[] = raw.map((doc) => ({
+          ...doc,
+          memoryEntries: (doc.memoryEntries ?? doc.memories ?? []) as DocumentWithMemories['memoryEntries'],
+          contentHash: (doc.contentHash ?? null) as string | null,
+          orgId: (doc.orgId ?? '') as string,
+          userId: (doc.userId ?? '') as string,
+          status: (doc.status ?? 'done') as DocumentWithMemories['status'],
+          createdAt: (doc.createdAt ?? new Date().toISOString()) as string,
+          updatedAt: (doc.updatedAt ?? new Date().toISOString()) as string,
+        })) as DocumentWithMemories[]
+        setGraphDocs(normalized)
+        setGraphLoading(false)
+      })
+      .catch((err) => {
+        setGraphError(err instanceof Error ? err : new Error(String(err)))
+        setGraphLoading(false)
+      })
+  }, [])
+
   return (
     <div className="bg-[#06080d] text-white">
       {/* ── Hero ── */}
@@ -171,6 +205,33 @@ export default function LandingPage({ onGetStarted }: Props) {
             scene="https://prod.spline.design/2pfbb0RwX88uLSBZ/scene.splinecode"
             onLoad={(app) => makeStatic(app)}
           />
+        </div>
+      </section>
+
+      {/* ── Memory Graph ── */}
+      <section className="relative border-t border-white/[0.04]">
+        <div className="px-10 pt-20 pb-6 max-w-7xl mx-auto">
+          <p className="text-xs font-mono font-medium uppercase tracking-[0.3em] text-white/30 mb-4">
+            Knowledge layer
+          </p>
+          <h2 className="text-4xl sm:text-5xl font-bold tracking-tight text-white leading-[1.1] mb-4">
+            Memory Graph
+          </h2>
+          <p className="text-base text-white/50 mb-8 max-w-2xl">
+            Every ingested document is stored in Supermemory and connected by semantic similarity. Explore the knowledge graph powering Alethia's intelligence.
+          </p>
+        </div>
+        <div className="h-[700px] w-full">
+          <MemoryGraph
+            documents={graphDocs}
+            isLoading={graphLoading}
+            error={graphError}
+            variant="console"
+          >
+            <div className="flex items-center justify-center h-full">
+              <p className="text-sm font-mono text-white/20">No documents ingested yet</p>
+            </div>
+          </MemoryGraph>
         </div>
       </section>
 
