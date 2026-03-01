@@ -1,22 +1,16 @@
-import { Suspense } from 'react'
-import { SignedIn, SignedOut, SignInButton, SignUpButton, useClerk } from '@clerk/clerk-react'
+import { Suspense, useEffect, useState } from 'react'
 import Spline from '@splinetool/react-spline'
 import type { Application } from '@splinetool/runtime'
+import { MemoryGraph, injectStyles } from '@supermemory/memory-graph'
+import '@supermemory/memory-graph/styles.css'
+import type { DocumentWithMemories } from '@supermemory/memory-graph'
 import CityGlobe from './CityGlobe'
-import LogoLoop from './LogoLoop'
-import { ArizeAILogo, ModelLogo } from './SponsorLogos'
-import hfLogo from '../assets/logos/hf-logo.svg?url'
+import { api } from '../api.ts'
 
-const SPONSOR_LOGO_SVGS = {
-  modal: '/logo/modal-wordmark.svg',
-  supermemory: '/logo/logo-fullmark.svg',
-  chatgpt: '/logo/chatgpt.jpg',
-  huggingface: hfLogo,
-}
+injectStyles()
 
 interface Props {
   onGetStarted: () => void
-  onViewSource?: () => void
 }
 
 function makeStatic(app: Application) {
@@ -37,43 +31,6 @@ function tuneScene(app: Application) {
     }
   })
 }
-
-const logoImg = (src: string, alt: string, invert?: boolean) => (
-  <img
-    src={src}
-    alt={alt}
-    className={`w-auto object-contain ${invert ? 'invert' : ''}`}
-  />
-)
-
-const HfLogoWithName = ({ name }: { name: string }) => (
-  <span className="flex items-center gap-4 h-14">
-    <img
-      src={SPONSOR_LOGO_SVGS.huggingface}
-      alt="Hugging Face"
-      className="h-14 w-auto object-contain shrink-0"
-      style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}
-    />
-    <span className="font-semibold text-[1.25rem] whitespace-nowrap leading-none">{name}</span>
-  </span>
-)
-
-const SPONSOR_LOGOS = [
-  { node: logoImg(SPONSOR_LOGO_SVGS.modal, 'Modal'), large: false },
-  { node: logoImg(SPONSOR_LOGO_SVGS.supermemory, 'SuperMemory'), large: false },
-  { node: <ArizeAILogo />, large: true },
-  { node: logoImg(SPONSOR_LOGO_SVGS.chatgpt, 'ChatGPT', true), large: true, extraLarge: true },
-  { node: <ModelLogo name="Qwen3-8B" />, large: true },
-  { node: <HfLogoWithName name="BART-large-MNLI" />, large: true },
-  { node: <ModelLogo name="RoBERTa-Sentiment" />, large: true },
-]
-
-const STATS = [
-  { value: '9', label: 'Live Sources' },
-  { value: '77', label: 'Neighborhoods' },
-  { value: '140K+', label: 'Records Indexed' },
-  { value: '< 30s', label: 'Analysis Time' },
-]
 
 const DATA_PILLARS = [
   {
@@ -98,8 +55,34 @@ const DATA_PILLARS = [
   },
 ]
 
-export default function LandingPage({ onGetStarted, onViewSource }: Props) {
-  const { signOut } = useClerk()
+export default function LandingPage({ onGetStarted }: Props) {
+  const [graphDocs, setGraphDocs] = useState<DocumentWithMemories[]>([])
+  const [graphLoading, setGraphLoading] = useState(true)
+  const [graphError, setGraphError] = useState<Error | null>(null)
+
+  useEffect(() => {
+    api
+      .graph({ page: 1, limit: 500 })
+      .then((data) => {
+        const raw = (data as { documents?: Record<string, unknown>[] }).documents ?? []
+        const normalized: DocumentWithMemories[] = raw.map((doc) => ({
+          ...doc,
+          memoryEntries: (doc.memoryEntries ?? doc.memories ?? []) as DocumentWithMemories['memoryEntries'],
+          contentHash: (doc.contentHash ?? null) as string | null,
+          orgId: (doc.orgId ?? '') as string,
+          userId: (doc.userId ?? '') as string,
+          status: (doc.status ?? 'done') as DocumentWithMemories['status'],
+          createdAt: (doc.createdAt ?? new Date().toISOString()) as string,
+          updatedAt: (doc.updatedAt ?? new Date().toISOString()) as string,
+        })) as DocumentWithMemories[]
+        setGraphDocs(normalized)
+        setGraphLoading(false)
+      })
+      .catch((err) => {
+        setGraphError(err instanceof Error ? err : new Error(String(err)))
+        setGraphLoading(false)
+      })
+  }, [])
 
   return (
     <div className="bg-[#06080d] text-white">
@@ -117,36 +100,15 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
         <div className="relative z-20 min-h-screen flex flex-col pointer-events-none">
           {/* Translucent nav */}
           <nav className="flex items-center justify-between px-10 py-5 bg-white/[0.03] backdrop-blur-md border-b border-white/[0.06]">
-            <button
-              type="button"
-              onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-              className="pointer-events-auto text-lg font-semibold tracking-tight text-white uppercase hover:text-white/80 transition-colors cursor-pointer"
-            >
+            <span className="text-lg font-semibold tracking-tight text-white uppercase">
               Alethia
+            </span>
+            <button
+              onClick={onGetStarted}
+              className="pointer-events-auto px-6 py-2 text-sm font-medium bg-white text-[#06080d] hover:bg-gray-200 transition-colors cursor-pointer"
+            >
+              Get Started
             </button>
-            <div className="pointer-events-auto flex items-center gap-2">
-              <SignedOut>
-                <SignInButton mode="modal">
-                  <button className="px-4 py-2 text-sm font-medium border border-white/20 text-white/80 hover:text-white hover:border-white/40 transition-colors cursor-pointer">
-                    Log in
-                  </button>
-                </SignInButton>
-                <SignUpButton mode="modal">
-                  <button className="px-4 py-2 text-sm font-medium border border-white/20 text-white/80 hover:text-white hover:border-white/40 transition-colors cursor-pointer">
-                    Sign up
-                  </button>
-                </SignUpButton>
-              </SignedOut>
-
-              <SignedIn>
-                <button
-                  onClick={() => signOut()}
-                  className="px-4 py-2 text-sm font-medium border border-white/20 text-white/80 hover:text-white hover:border-white/40 transition-colors cursor-pointer"
-                >
-                  Sign out
-                </button>
-              </SignedIn>
-            </div>
           </nav>
 
           <div className="flex-1 flex items-center justify-center px-10">
@@ -171,64 +133,18 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
                 >
                   Analyze a Neighborhood
                 </button>
-                <button
-                  type="button"
-                  onClick={() => onViewSource?.()}
-                  className="pointer-events-auto px-8 py-3.5 text-sm font-semibold border border-white/20 text-white/70 hover:text-white hover:border-white/40 transition-colors cursor-pointer"
+                <a
+                  href="https://github.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="pointer-events-auto px-8 py-3.5 text-sm font-semibold border border-white/20 text-white/70 hover:text-white hover:border-white/40 transition-colors"
                 >
                   View Source
-                </button>
+                </a>
               </div>
             </div>
           </div>
-
-          {/* Floating scroll arrow */}
-          <button
-            type="button"
-            onClick={() => document.getElementById('next')?.scrollIntoView({ behavior: 'smooth' })}
-            className="pointer-events-auto absolute bottom-8 left-1/2 -translate-x-1/2 text-white/40 hover:text-white/70 transition-colors cursor-pointer"
-            aria-label="Scroll to next section"
-          >
-            <svg
-              className="w-6 h-6 animate-bounce"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-            >
-              <path d="M7 10l5 6 5-6H7z" />
-            </svg>
-          </button>
         </div>
-      </section>
-
-      {/* ── Sponsors Ticker ── */}
-      <section id="next" className="relative border-t border-white/[0.04] py-10 scroll-mt-0">
-        <p className="text-center text-[10px] font-mono uppercase tracking-[0.3em] text-white/20 mb-6">
-          Made possible with
-        </p>
-        <LogoLoop
-          logos={SPONSOR_LOGOS.map((s) => {
-            const sizeClass = (s as { extraLarge?: boolean }).extraLarge
-              ? '[&_img]:h-20 [&_svg]:h-20'
-              : s.large
-                ? '[&_img]:h-14 [&_svg]:h-14'
-                : '[&_img]:h-7 [&_svg]:h-7'
-            return {
-              node: (
-                <span
-                  className={`flex items-center px-4 py-2 text-white/30 hover:text-white/60 transition-colors [&_img]:opacity-70 [&:hover_img]:opacity-100 [&_img]:w-auto [&_img]:object-contain [&_svg]:w-auto [&_svg]:shrink-0 ${sizeClass}`}
-                >
-                  {s.node}
-                </span>
-              ),
-            }
-          })}
-          speed={40}
-          gap={120}
-          logoHeight={80}
-          pauseOnHover
-          fadeOut
-          fadeOutColor="#06080d"
-        />
       </section>
 
       {/* ── City Graph Globe ── */}
@@ -282,22 +198,6 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
         </div>
       </section>
 
-      {/* ── Live Stats ── */}
-      <section className="border-t border-white/[0.04] py-16">
-        <div className="max-w-5xl mx-auto px-10 grid grid-cols-2 sm:grid-cols-4 gap-8">
-          {STATS.map((s) => (
-            <div key={s.label} className="text-center">
-              <p className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-1">
-                {s.value}
-              </p>
-              <p className="text-xs font-mono text-white/30 uppercase tracking-wider">
-                {s.label}
-              </p>
-            </div>
-          ))}
-        </div>
-      </section>
-
       {/* ── Interactive 3D Section ── */}
       <section className="relative h-screen overflow-hidden border-t border-white/[0.04]">
         <div className="absolute inset-0 scale-[2] origin-center pointer-events-none">
@@ -305,6 +205,33 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
             scene="https://prod.spline.design/2pfbb0RwX88uLSBZ/scene.splinecode"
             onLoad={(app) => makeStatic(app)}
           />
+        </div>
+      </section>
+
+      {/* ── Memory Graph ── */}
+      <section className="relative border-t border-white/[0.04]">
+        <div className="px-10 pt-20 pb-6 max-w-7xl mx-auto">
+          <p className="text-xs font-mono font-medium uppercase tracking-[0.3em] text-white/30 mb-4">
+            Knowledge layer
+          </p>
+          <h2 className="text-4xl sm:text-5xl font-bold tracking-tight text-white leading-[1.1] mb-4">
+            Memory Graph
+          </h2>
+          <p className="text-base text-white/50 mb-8 max-w-2xl">
+            Every ingested document is stored in Supermemory and connected by semantic similarity. Explore the knowledge graph powering Alethia's intelligence.
+          </p>
+        </div>
+        <div className="h-[700px] w-full">
+          <MemoryGraph
+            documents={graphDocs}
+            isLoading={graphLoading}
+            error={graphError}
+            variant="console"
+          >
+            <div className="flex items-center justify-center h-full">
+              <p className="text-sm font-mono text-white/20">No documents ingested yet</p>
+            </div>
+          </MemoryGraph>
         </div>
       </section>
 
