@@ -142,7 +142,7 @@ async def push_pipeline_data_to_supermemory():
                     await asyncio.sleep(10)
 
     # Sync raw data from each pipeline source
-    for source in ["news", "politics", "public_data", "demographics", "reddit", "reviews", "realestate", "federal_register", "traffic"]:
+    for source in ["news", "politics", "federal_register", "public_data", "demographics", "reddit", "reviews", "realestate", "tiktok", "traffic"]:
         raw_dir = Path(RAW_DATA_PATH) / source
         if not raw_dir.exists():
             continue

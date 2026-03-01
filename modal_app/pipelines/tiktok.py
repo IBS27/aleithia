@@ -11,13 +11,15 @@ import hashlib
 import json
 import logging
 import os
+import re as _re
 import subprocess
 import tempfile
 from datetime import datetime, timezone
+from typing import Any
 
 import modal
 
-from modal_app.common import Document, SourceType, detect_neighborhood
+from modal_app.common import SourceType, build_document, detect_neighborhood
 from modal_app.dedup import SeenSet
 from modal_app.volume import (
     VOLUME_MOUNT,
@@ -48,6 +50,42 @@ CHICAGO_SEARCH_QUERIES = [
 ]
 
 MAX_VIDEOS_PER_QUERY = int(os.environ.get("MAX_VIDEOS_PER_QUERY", "5"))
+PROFILE_CITY_QUERY_LIMIT = 5
+PROFILE_LOCAL_QUERY_LIMIT = 2
+
+
+def sanitize_query_term(value: str) -> str:
+    """Normalize user-facing labels into stable TikTok query terms."""
+    cleaned = _clean_text(value).lower()
+    cleaned = _re.sub(r"[/_]+", " ", cleaned)
+    cleaned = _re.sub(r"[^a-z0-9\s-]", " ", cleaned)
+    cleaned = _re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def build_profile_tiktok_queries(business_type: str, neighborhood: str) -> list[dict]:
+    """Build 2-query profile plan with fixed per-query limits."""
+    biz = sanitize_query_term(business_type) or "small business"
+    nb = sanitize_query_term(neighborhood)
+    city_query = f"{biz} chicago"
+    local_query = f"{biz} {nb} chicago".strip() if nb else city_query
+
+    return [
+        {
+            "query": city_query,
+            "limit": PROFILE_CITY_QUERY_LIMIT,
+            "scope": "city",
+            "business_type": biz,
+            "neighborhood": "",
+        },
+        {
+            "query": local_query,
+            "limit": PROFILE_LOCAL_QUERY_LIMIT,
+            "scope": "local",
+            "business_type": biz,
+            "neighborhood": neighborhood,
+        },
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +181,7 @@ async def _scrape_async(search_query: str, max_videos: int) -> list[dict]:
                 const results = [];
                 const links = document.querySelectorAll('a[href*="/video/"]');
                 const seen = new Set();
+                const isCountString = (s) => /^\\d[\\d.,]*\\s*[KkMmBb]?$/.test(s.trim());
                 for (const link of links) {
                     const href = link.href;
                     if (seen.has(href)) continue;
@@ -156,15 +195,25 @@ async def _scrape_async(search_query: str, max_videos: int) -> list[dict]:
                         }
                         return '';
                     };
-                    const description = getText(card, [
+                    let description = getText(card, [
                         '[data-e2e="search-card-desc"]',
                         '[class*="SpanText"]',
                         '[class*="desc"]',
-                    ]) || link.textContent?.trim() || '';
+                        '[class*="card-desc"]',
+                        '[class*="VideoDesc"]',
+                    ]);
+                    if (isCountString(description)) description = '';
+                    if (!description) {
+                        const fallback = (link.textContent || '').trim();
+                        if (fallback.length > 10 && !isCountString(fallback)) {
+                            description = fallback;
+                        }
+                    }
                     const creator = getText(card, [
                         '[data-e2e="search-card-user-unique-id"]',
                         '[class*="SpanUniqueId"]',
                         '[class*="author"]',
+                        '[class*="AuthorTitle"]',
                     ]);
                     const views = getText(card, [
                         '[class*="video-count"]',
@@ -286,6 +335,138 @@ def _make_doc_id(video_url: str) -> str:
     return f"tiktok-{hashlib.sha256(video_url.encode()).hexdigest()[:16]}"
 
 
+_VIEW_COUNT_RE = _re.compile(r"^\s*\d[\d,.\s]*[KkMmBb]?\s*$")
+_CREATOR_FROM_URL_RE = _re.compile(r"tiktok\.com/@([^/?#]+)/video/", _re.IGNORECASE)
+
+
+def _is_count_only_text(value: str) -> bool:
+    text = (value or "").strip()
+    return bool(text) and bool(_VIEW_COUNT_RE.match(text))
+
+
+def _clean_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _parse_view_count(value: str) -> int:
+    """Parse TikTok view strings like '13.7K' into integers."""
+    text = _clean_text(value).replace(",", "").upper()
+    if not text:
+        return 0
+    match = _re.match(r"^(\d+(?:\.\d+)?)\s*([KMB])?$", text)
+    if not match:
+        return 0
+    num = float(match.group(1))
+    suffix = match.group(2) or ""
+    if suffix == "K":
+        num *= 1_000
+    elif suffix == "M":
+        num *= 1_000_000
+    elif suffix == "B":
+        num *= 1_000_000_000
+    return int(round(num))
+
+
+def _normalize_query_specs(
+    query_specs: list[dict[str, Any]] | None,
+    queries: list[str] | None,
+    max_videos: int,
+) -> list[dict[str, Any]]:
+    """Normalize caller-provided query inputs to structured specs."""
+    if query_specs:
+        normalized: list[dict[str, Any]] = []
+        for spec in query_specs:
+            query = _clean_text(str(spec.get("query", "")))
+            if not query:
+                continue
+            raw_limit = spec.get("limit", max_videos)
+            try:
+                limit = max(1, int(raw_limit))
+            except (TypeError, ValueError):
+                limit = max_videos
+            normalized.append(
+                {
+                    "query": query,
+                    "limit": limit,
+                    "scope": _clean_text(str(spec.get("scope", ""))).lower() or "city",
+                    "business_type": sanitize_query_term(str(spec.get("business_type", ""))),
+                    "neighborhood": _clean_text(str(spec.get("neighborhood", ""))),
+                }
+            )
+        if normalized:
+            return normalized
+
+    if not queries:
+        queries = CHICAGO_SEARCH_QUERIES
+
+    return [
+        {
+            "query": _clean_text(q),
+            "limit": max_videos,
+            "scope": "city",
+            "business_type": "",
+            "neighborhood": "",
+        }
+        for q in (queries or [])
+        if _clean_text(q)
+    ]
+
+
+def _extract_creator_from_url(video_url: str) -> str:
+    """Extract TikTok creator handle from canonical video URL."""
+    match = _CREATOR_FROM_URL_RE.search(video_url or "")
+    if not match:
+        return ""
+    return _clean_text(match.group(1)).lstrip("@")
+
+
+def _extract_transcript_title(transcription: str, max_len: int = 120) -> str:
+    """Derive a short human-readable title from transcript text."""
+    text = _clean_text(transcription)
+    if not text:
+        return ""
+    text = _re.sub(r"\s+", " ", text)
+    text = _re.sub(r"^\d[\d,.\s]*[KkMmBb]?\s*[:\-]?\s*", "", text)
+
+    for sep in (". ", "! ", "? "):
+        if sep in text:
+            text = text.split(sep, 1)[0].strip()
+            break
+
+    if len(text) > max_len:
+        text = text[:max_len].rsplit(" ", 1)[0]
+    return text.strip(" -:;,.")
+
+
+def _build_tiktok_title(v: dict) -> str:
+    """Build a meaningful title for a TikTok video document."""
+    desc = _clean_text(v.get("description", ""))
+    if _is_count_only_text(desc):
+        desc = ""
+    if desc:
+        return desc[:200]
+
+    transcript_title = _extract_transcript_title(v.get("transcription", ""))
+    if transcript_title:
+        return transcript_title[:200]
+
+    parts = []
+    creator = v.get("creator", "")
+    if creator:
+        parts.append(f"@{creator}")
+    hashtags = v.get("hashtags", [])
+    if hashtags:
+        parts.append(" ".join(f"#{str(h).lstrip('#')}" for h in hashtags[:3]))
+    if parts:
+        return " ".join(parts)[:200]
+    search_query = v.get("search_query", "")
+    if search_query:
+        return f"TikTok: {search_query}"
+    return "TikTok video"
+
+
 @app.function(
     image=tiktok_image,
     timeout=600,
@@ -294,6 +475,7 @@ def _make_doc_id(video_url: str) -> str:
 )
 def ingest_tiktok(
     queries: list[str] | None = None,
+    query_specs: list[dict[str, Any]] | None = None,
     max_videos: int = MAX_VIDEOS_PER_QUERY,
     transcribe: bool = True,
 ) -> dict:
@@ -305,22 +487,28 @@ def ingest_tiktok(
 
     Returns summary dict with counts.
     """
-    if queries is None:
-        queries = CHICAGO_SEARCH_QUERIES
+    specs = _normalize_query_specs(query_specs=query_specs, queries=queries, max_videos=max_videos)
+    if not specs:
+        return {"scraped": 0, "transcribed": 0, "saved": 0, "deduped": 0, "videos": []}
+    ingested_at = datetime.now(timezone.utc).isoformat()
 
     # --- Step 1: Parallel scrape ---
-    scrape_args = [(q, max_videos) for q in queries]
+    scrape_args = [(spec["query"], spec["limit"]) for spec in specs]
     all_videos: list[dict] = []
     seen_urls: set[str] = set()
 
-    for result in scrape_tiktok.starmap(scrape_args):
+    for spec, result in zip(specs, scrape_tiktok.starmap(scrape_args)):
         for v in (result or []):
             url = v.get("video_url", "")
             if url and url not in seen_urls:
                 seen_urls.add(url)
+                v["search_query"] = spec["query"]
+                v["query_scope"] = spec.get("scope", "city")
+                v["query_business_type"] = spec.get("business_type", "")
+                v["query_neighborhood"] = spec.get("neighborhood", "")
                 all_videos.append(v)
 
-    logger.info("Scraped %d unique videos from %d queries", len(all_videos), len(queries))
+    logger.info("Scraped %d unique videos from %d queries", len(all_videos), len(specs))
 
     if not all_videos:
         return {"scraped": 0, "transcribed": 0, "saved": 0}
@@ -349,41 +537,88 @@ def ingest_tiktok(
     for v in all_videos:
         doc_id = _make_doc_id(v["video_url"])
 
-        if seen.contains(doc_id):
+        # TikTok metadata is volatile; refresh entries periodically to improve quality.
+        if seen.contains(doc_id, max_age_hours=72):
             skipped += 1
             continue
 
+        # Normalize known scraper artifacts: count-only strings captured as description.
+        raw_desc = _clean_text(v.get("description", ""))
+        raw_views = _clean_text(v.get("views", ""))
+        if _is_count_only_text(raw_desc):
+            if not raw_views:
+                raw_views = raw_desc
+            raw_desc = ""
+        if _is_count_only_text(raw_views):
+            # Canonicalize display string (e.g. "6,745" -> "6745")
+            raw_views = raw_views.replace(",", "")
+
+        creator = _clean_text(v.get("creator", ""))
+        if not creator:
+            creator = _extract_creator_from_url(v.get("video_url", ""))
+
+        query_hint = _clean_text(v.get("search_query", ""))
+        if not query_hint and specs:
+            query_hint = specs[0]["query"]
+        query_scope = _clean_text(v.get("query_scope", "")).lower() or "city"
+        query_business_type = sanitize_query_term(v.get("query_business_type", ""))
+        query_neighborhood = _clean_text(v.get("query_neighborhood", ""))
+
+        v["description"] = raw_desc
+        v["views"] = raw_views
+        v["creator"] = creator
+        v["search_query"] = query_hint
+        v["query_scope"] = query_scope
+        v["query_business_type"] = query_business_type
+        v["query_neighborhood"] = query_neighborhood
+
+        transcript_text = _clean_text(v.get("transcription", ""))
+        transcript_text = _re.sub(r"^\d[\d,.\s]*[KkMmBb]?\s*[:\-]?\s*", "", transcript_text)
+        v["transcription"] = transcript_text
+
         content_parts = []
-        if v.get("description"):
-            content_parts.append(v["description"])
-        if v.get("transcription"):
-            content_parts.append(f"[Transcript] {v['transcription']}")
+        if raw_desc:
+            content_parts.append(raw_desc)
+        if transcript_text:
+            content_parts.append(f"[Transcript] {transcript_text}")
         if v.get("hashtags"):
             content_parts.append(f"[Hashtags] {' '.join(v['hashtags'])}")
 
-        content = "\n".join(content_parts) if content_parts else v.get("description", "")
+        content = "\n".join(content_parts).strip()
+        if not content and query_hint:
+            content = f"TikTok video related to: {query_hint}"
         neighborhood = detect_neighborhood(content)
 
         doc_data = {
             "id": doc_id,
             "source": SourceType.TIKTOK.value,
-            "title": v.get("description", "TikTok video")[:200],
+            "title": _build_tiktok_title(v),
             "content": content,
             "url": v.get("video_url", ""),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "metadata": {
                 "creator": v.get("creator", ""),
-                "views": v.get("views", ""),
+                "views": raw_views,
                 "hashtags": v.get("hashtags", []),
                 "language": v.get("language", ""),
                 "duration": v.get("duration", 0),
-                "search_query": v.get("search_query", ""),
+                "search_query": query_hint,
+                "query_scope": query_scope,
+                "query_business_type": query_business_type,
+                "query_neighborhood": query_neighborhood,
+                "views_normalized": _parse_view_count(raw_views),
+                "ingested_at": ingested_at,
             },
             "geo": {"neighborhood": neighborhood} if neighborhood else {},
             "status": "raw",
         }
 
-        doc = Document(**{k: v for k, v in doc_data.items() if k not in ("timestamp", "status")})
+        # Guardrail: skip empty/meaningless records.
+        if _is_count_only_text(doc_data["title"]) and _is_count_only_text(doc_data["content"]):
+            skipped += 1
+            continue
+
+        doc = build_document(doc_data)
         filepath = f"{save_dir}/{doc_id}.json"
         with open(filepath, "w") as f:
             f.write(doc.model_dump_json(indent=2))
@@ -438,12 +673,48 @@ def ingest_tiktok(
 
 @app.function(
     image=tiktok_image,
+    timeout=600,
+    volumes={VOLUME_MOUNT: volume},
+    secrets=[modal.Secret.from_name("tiktok-scraper-secrets")],
+)
+def ingest_tiktok_for_profile(
+    business_type: str,
+    neighborhood: str,
+    transcribe: bool = False,
+) -> dict:
+    """Profile-aware wrapper with fixed 2-query strategy."""
+    query_specs = build_profile_tiktok_queries(business_type, neighborhood)
+    result = ingest_tiktok.remote(query_specs=query_specs, transcribe=transcribe)
+    logger.info(
+        "TikTok profile ingest complete (%s / %s): %s",
+        business_type,
+        neighborhood,
+        result,
+    )
+    return result
+
+
+@app.function(
+    image=tiktok_image,
     timeout=900,
     volumes={VOLUME_MOUNT: volume},
     secrets=[modal.Secret.from_name("tiktok-scraper-secrets")],
 )
-def tiktok_on_demand(queries: list[str] | None = None):
-    """On-demand TikTok ingestion — pass user-specific queries or use defaults."""
+def tiktok_on_demand(
+    queries: list[str] | None = None,
+    business_type: str = "",
+    neighborhood: str = "",
+):
+    """On-demand TikTok ingestion (custom queries or profile-aware defaults)."""
+    if business_type or neighborhood:
+        result = ingest_tiktok_for_profile.remote(
+            business_type=business_type or "small business",
+            neighborhood=neighborhood,
+            transcribe=False,
+        )
+        logger.info("TikTok on-demand profile complete: %s", result)
+        return result
+
     result = ingest_tiktok.remote(queries=queries)
     logger.info("TikTok on-demand complete: %s", result)
     return result

@@ -50,7 +50,7 @@ function App() {
 
     if (isSignedIn && user && token) {
       try {
-        await api.updateUserProfile(token, p.business_type, p.neighborhood)
+        await api.updateUserProfile(token, p.business_type, p.neighborhood, p.risk_tolerance)
         setSavedProfile(p)
       } catch {
         // Non-blocking save failure

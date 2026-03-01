@@ -1,5 +1,49 @@
 import type { Document } from '../types/index.ts'
 
+function parseViewCount(raw: string): number {
+  if (!raw) return 0
+  const cleaned = raw.trim().toUpperCase().replace(/,/g, '')
+  const match = cleaned.match(/^([\d.]+)\s*([KMB])?$/)
+  if (!match) return parseInt(cleaned, 10) || 0
+  const num = parseFloat(match[1])
+  const suffix = match[2]
+  if (suffix === 'K') return Math.round(num * 1_000)
+  if (suffix === 'M') return Math.round(num * 1_000_000)
+  if (suffix === 'B') return Math.round(num * 1_000_000_000)
+  return Math.round(num)
+}
+
+function isCountOnlyText(raw: string): boolean {
+  if (!raw) return false
+  return /^\s*\d[\d,.\s]*[KMB]?\s*$/i.test(raw)
+}
+
+function cleanTikTokContent(raw: string): string {
+  const text = (raw || '').trim()
+  if (!text) return ''
+  if (isCountOnlyText(text)) return ''
+  if (text.includes('\n[Transcript]')) {
+    const [firstLine, ...rest] = text.split('\n')
+    if (isCountOnlyText(firstLine)) {
+      return rest.join('\n').trim()
+    }
+  }
+  return text
+}
+
+function transcriptHeadline(raw: string): string {
+  const text = cleanTikTokContent(raw)
+  if (!text) return ''
+  const transcriptPart = text.includes('[Transcript]') ? text.split('[Transcript]')[1] : text
+  const compact = transcriptPart.replace(/\s+/g, ' ').trim()
+  if (!compact) return ''
+
+  const endMatch = compact.match(/^(.*?[.!?])(\s|$)/)
+  const sentence = endMatch ? endMatch[1].trim() : compact
+  const trimmed = sentence.length > 120 ? `${sentence.slice(0, 117)}...` : sentence
+  return trimmed.replace(/^[\d,.\s]+[KMB]?\s*/i, '').trim()
+}
+
 interface Props {
   reddit: Document[]
   tiktok: Document[]
@@ -76,18 +120,26 @@ export default function CommunityFeed({ reddit, tiktok }: Props) {
           </div>
           {tiktok.map((video) => {
             const creator = (video.metadata?.creator as string) || ''
-            const views = (video.metadata?.view_count as number) || 0
+            const query = (video.metadata?.search_query as string) || ''
+            const views = parseViewCount((video.metadata?.views as string) || '')
             const hashtags = (video.metadata?.hashtags as string[]) || []
+            const rawTitle = (video.title || '').trim()
+            const transcriptTitle = transcriptHeadline(video.content)
+            const hasMeaningfulTitle = rawTitle && !isCountOnlyText(rawTitle) && rawTitle.toLowerCase() !== 'tiktok video'
+            const titleText = hasMeaningfulTitle
+              ? rawTitle
+              : transcriptTitle || (creator ? `@${creator}` : '') || (query ? `TikTok: ${query}` : 'TikTok video')
+            const contentText = cleanTikTokContent(video.content)
 
             return (
               <div key={video.id} className="border border-white/[0.06] bg-white/[0.01] p-4">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
-                    <h4 className="text-sm font-semibold text-white mb-1">{video.title}</h4>
-                    {video.content && (
+                    <h4 className="text-sm font-semibold text-white mb-1">{titleText}</h4>
+                    {contentText && (
                       <p className="text-xs text-white/30 leading-relaxed mb-2">
-                        {video.content.substring(0, 150)}
-                        {video.content.length > 150 && '...'}
+                        {contentText.substring(0, 150)}
+                        {contentText.length > 150 && '...'}
                       </p>
                     )}
                     <div className="flex items-center gap-3 text-[10px] font-mono text-white/15 flex-wrap">

@@ -196,7 +196,7 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
         nb_community_area = neighborhood_to_ca(neighborhood)
 
         # Read local volume data
-        for source in ["public_data", "news", "politics", "demographics", "reddit", "reviews", "realestate", "tiktok", "cctv"]:
+        for source in ["public_data", "news", "politics", "federal_register", "demographics", "reddit", "reviews", "realestate", "tiktok", "cctv"]:
             source_dir = Path(RAW_DATA_PATH) / source
             if not source_dir.exists():
                 continue
@@ -335,7 +335,18 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
                 sm = SupermemoryClient(api_key)
                 results = await sm.search(
                     query=f"{business_type} in {neighborhood} Chicago permits zoning competition",
-                    container_tags=["chicago_data", "chicago_news", "chicago_public_data", "chicago_reddit", "chicago_reviews", "chicago_politics", "chicago_cctv"],
+                    container_tags=[
+                        "chicago_data",
+                        "chicago_news",
+                        "chicago_public_data",
+                        "chicago_demographics",
+                        "chicago_reddit",
+                        "chicago_reviews",
+                        "chicago_realestate",
+                        "chicago_tiktok",
+                        "chicago_politics",
+                        "chicago_federal_register",
+                    ],
                     limit=10,
                 )
                 report["findings"]["supermemory"] = {
@@ -501,7 +512,7 @@ async def regulatory_agent(business_type: str, trace_context: dict | None = None
                 for item in live_federal:
                     doc = Document(
                         id=item["id"],
-                        source=SourceType.POLITICS,
+                        source=SourceType.FEDERAL_REGISTER,
                         title=item["title"],
                         content=f"{item.get('type', '')} — {item.get('agency', '')}",
                         url=item.get("url", ""),
@@ -595,11 +606,10 @@ async def orchestrate_query(user_id: str, question: str, business_type: str, tar
 
         # TikTok: fire-and-forget scrape — results land on volume for Community tab on next refresh
         try:
-            from modal_app.pipelines.tiktok import ingest_tiktok
-            tiktok_query = f"{target_neighborhood} {business_type} chicago"
-            ingest_tiktok.spawn(
-                queries=[tiktok_query],
-                max_videos=5,
+            from modal_app.pipelines.tiktok import ingest_tiktok_for_profile
+            ingest_tiktok_for_profile.spawn(
+                business_type=business_type or "small business",
+                neighborhood=target_neighborhood,
                 transcribe=False,
             )
         except Exception:

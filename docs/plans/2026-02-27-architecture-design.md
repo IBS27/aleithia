@@ -3,7 +3,7 @@
 **Date:** 2026-02-27 (updated 2026-02-28)
 **Project:** Alethia — Regulatory Intelligence for Small Businesses
 **Event:** HackIllinois 2026
-**Status:** DEPLOYED — `https://gt12889--alethia-serve.modal.run`
+**Status:** DEPLOYED — `https://ibsrinivas27--alethia-serve.modal.run`
 **Scale:** 28+ Modal functions | 13 pipelines | 13 custom images | 18 Modal features | 17 API endpoints
 
 ## Goal
@@ -97,7 +97,7 @@ Build an AI-powered regulatory intelligence platform that aggregates live Chicag
 │  └────────────────────────────────────────────────────────────────────┘  │
 │                                                                          │
 │  ┌───────────────── WEB API (@modal.asgi_app) ───────────────────────┐  │
-│  │  FastAPI → https://gt12889--alethia-serve.modal.run               │  │
+│  │  FastAPI → https://ibsrinivas27--alethia-serve.modal.run               │  │
 │  │  POST /chat        — agent swarm + streaming SSE                  │  │
 │  │  GET  /brief/{n}   — neighborhood intelligence brief              │  │
 │  │  GET  /alerts      — regulatory alerts by business type           │  │
@@ -218,7 +218,7 @@ Three GPU models running on Modal:
 | Component | Platform | Status |
 |-----------|----------|--------|
 | All compute | Modal (28+ functions) | **DEPLOYED** |
-| Web API | Modal `@modal.asgi_app` | **LIVE** at `https://gt12889--alethia-serve.modal.run` (17 endpoints) |
+| Web API | Modal `@modal.asgi_app` | **LIVE** at `https://ibsrinivas27--alethia-serve.modal.run` (17 endpoints) |
 | LLM | Modal H100 (Qwen3 8B) | **DEPLOYED** |
 | Classification | Modal T4 (2 models) | **DEPLOYED** |
 | CCTV Detection | Modal T4 (YOLOv8n) | **DEPLOYED** |

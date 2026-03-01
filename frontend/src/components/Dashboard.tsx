@@ -1,11 +1,9 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { SignedIn, SignedOut, SignInButton, SignUpButton, useClerk, useUser } from '@clerk/clerk-react'
-import type { UserProfile, NeighborhoodData, DataSources, ChatMessage, RiskScore } from '../types/index.ts'
-import { api, streamChat } from '../api.ts'
-import type { ProcessStage } from './ProcessFlow.tsx'
+import type { UserProfile, NeighborhoodData, DataSources, RiskScore } from '../types/index.ts'
+import { api } from '../api.ts'
 import RiskCard from './RiskCard.tsx'
-import ChatPanel from './ChatPanel.tsx'
 import MapView from './MapView.tsx'
 import Timer from './Timer.tsx'
 import DataSourceBadge from './DataSourceBadge.tsx'
@@ -24,17 +22,13 @@ import InsightsCard from './InsightsCard.tsx'
 
 type Tab = 'overview' | 'inspections' | 'permits' | 'licenses' | 'news' | 'community' | 'market' | 'models'
 
-interface AgentInfo {
-  agents_deployed: number
-  neighborhoods: string[]
-  data_points: number
-  agent_summaries?: Array<{
-    name: string
-    data_points: number
-    sources?: string[]
-    regulation_count?: number
-    error?: boolean
-  }>
+interface RiskBrief {
+  riskTolerance: 'low' | 'medium' | 'high'
+  riskBand: 'low' | 'moderate' | 'high'
+  headline: string
+  highlight: string
+  summary: string
+  recommendation: string
 }
 
 function computeRiskScore(data: NeighborhoodData, profile: UserProfile): RiskScore {
@@ -165,6 +159,46 @@ function computeRiskScore(data: NeighborhoodData, profile: UserProfile): RiskSco
   }
 }
 
+function buildRiskBrief(profile: UserProfile, data: NeighborhoodData, riskScore: RiskScore | null): RiskBrief {
+  const riskTolerance = profile.risk_tolerance ?? 'medium'
+  const score = riskScore?.overall_score ?? data.metrics?.risk_score ?? 5
+
+  const riskBand: 'low' | 'moderate' | 'high' = score <= 4 ? 'low' : score <= 7 ? 'moderate' : 'high'
+  const inspectionFailRate = data.inspection_stats.total > 0
+    ? Math.round((data.inspection_stats.failed / data.inspection_stats.total) * 100)
+    : 0
+
+  const riskLabel = riskBand === 'low' ? 'lower-risk' : riskBand === 'moderate' ? 'balanced-risk' : 'higher-risk'
+  const densityLabel = data.license_count > 20 ? 'high competition' : data.license_count > 8 ? 'moderate competition' : 'lower competition'
+
+  const toleranceNarrative = {
+    low: 'Safety-first strategy favors predictable permit and compliance environments.',
+    medium: 'Balanced strategy supports selective expansion with clear guardrails.',
+    high: 'Growth strategy can absorb volatility for upside opportunities.',
+  }[riskTolerance]
+
+  const recommendation = {
+    low: riskBand === 'high'
+      ? 'Recommendation: delay launch or narrow scope until compliance and competition signals improve.'
+      : 'Recommendation: proceed with a controlled launch and strong compliance checklist.',
+    medium: riskBand === 'high'
+      ? 'Recommendation: proceed only with phased rollout and conservative budgeting.'
+      : 'Recommendation: proceed with standard due diligence and weekly signal monitoring.',
+    high: riskBand === 'low'
+      ? 'Recommendation: favorable conditions for an assertive launch and faster expansion testing.'
+      : 'Recommendation: acceptable for growth-oriented entry if operations can handle variability.',
+  }[riskTolerance]
+
+  return {
+    riskTolerance,
+    riskBand,
+    headline: `${profile.business_type} in ${profile.neighborhood}: ${riskLabel} setup`,
+    highlight: `${data.inspection_stats.total} inspections (${inspectionFailRate}% fail), ${data.permit_count} permits, ${data.license_count} licenses, ${data.news.length + data.politics.length} recent intel items; market shows ${densityLabel}.`,
+    summary: `${toleranceNarrative} Current score is ${score.toFixed(1)}/10 with ${Math.round((riskScore?.confidence ?? 0.6) * 100)}% confidence from local operational and regulatory signals.`,
+    recommendation,
+  }
+}
+
 interface Props {
   profile: UserProfile
   onReset: () => void
@@ -177,25 +211,14 @@ export default function Dashboard({ profile, onReset }: Props) {
   const [neighborhoodData, setNeighborhoodData] = useState<NeighborhoodData | null>(null)
   const [sources, setSources] = useState<DataSources | null>(null)
   const [riskScore, setRiskScore] = useState<RiskScore | null>(null)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [chatLoading, setChatLoading] = useState(false)
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [statusMessage, setStatusMessage] = useState('')
-  const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null)
-  const [agentActive, setAgentActive] = useState(false)
-  const [agentElapsedMs, setAgentElapsedMs] = useState<number | undefined>(undefined)
-  const [processStage, setProcessStage] = useState<ProcessStage>('idle')
-  const [chatQuestion, setChatQuestion] = useState('')
-  const processLogs = useRef<string[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
-  const userId = user?.id ?? `anon_${Date.now()}`
 
   const refreshData = async () => {
     try {
       const [nbData, srcData] = await Promise.all([
-        api.neighborhood(profile.neighborhood),
+        api.neighborhood(profile.neighborhood, profile.business_type),
         api.sources(),
       ])
       setNeighborhoodData(nbData)
@@ -215,149 +238,17 @@ export default function Dashboard({ profile, onReset }: Props) {
   }, [profile])
 
   const sourceList = sources
-    ? Object.entries(sources).map(([name, info]) => ({
+    ? (Object.entries(sources) as Array<[string, { count: number; active: boolean }]>).map(([name, info]) => ({
         name: name.replace('_', ' '),
         count: info.count,
         active: info.active,
       }))
     : []
 
-  const handleChat = async (message: string) => {
-    setMessages(prev => [...prev, { role: 'user', content: message, timestamp: new Date() }])
-    setChatLoading(true)
-    setAgentActive(true)
-    setAgentInfo(null)
-    setStatusMessage('')
-    setProcessStage('deploying')
-    setChatQuestion(message)
-    processLogs.current = [`--- query ---\n${message}\n\n--- trace ---`, `[${new Date().toISOString()}] start`]
-    const startTime = Date.now()
-    let responseAccum = ''
-
-    // Add empty assistant message for streaming
-    setMessages(prev => [...prev, { role: 'assistant', content: '', timestamp: new Date() }])
-    setIsStreaming(true)
-
-    try {
-      await streamChat(message, profile, {
-        onStatus: (content) => {
-          setStatusMessage(content)
-          processLogs.current.push(`[+${Date.now() - startTime}ms] status: ${content}`)
-          if (content.toLowerCase().includes('synth')) {
-            setProcessStage('synthesizing')
-          }
-        },
-        onAgents: (data) => {
-          setAgentInfo(data)
-          setAgentActive(false)
-          setAgentElapsedMs(Date.now() - startTime)
-          setProcessStage('agents_complete')
-          processLogs.current.push(`[+${Date.now() - startTime}ms] agents: ${data.agents_deployed} deployed, ${data.data_points} pts, neighborhoods=[${data.neighborhoods.join(', ')}]`)
-          if (data.agent_summaries) {
-            for (const a of data.agent_summaries) {
-              processLogs.current.push(`  agent ${a.name}: ${a.data_points} pts${a.sources ? ` sources=[${a.sources.join(',')}]` : ''}${a.regulation_count ? ` regs=${a.regulation_count}` : ''}${a.error ? ' ERROR' : ''}`)
-            }
-          }
-        },
-        onToken: (token) => {
-          setStatusMessage('')
-          setProcessStage('streaming')
-          responseAccum += token
-          setMessages(prev => {
-            const updated = [...prev]
-            const last = updated[updated.length - 1]
-            if (last && last.role === 'assistant') {
-              updated[updated.length - 1] = { ...last, content: last.content + token }
-            }
-            return updated
-          })
-        },
-        onDone: () => {
-          setIsStreaming(false)
-          setChatLoading(false)
-          setProcessStage('complete')
-          processLogs.current.push(`[+${Date.now() - startTime}ms] done, total=${Date.now() - startTime}ms`)
-          processLogs.current.push(`\n--- response ---\n${responseAccum}`)
-
-          if (user) {
-            api.saveUserSettings(user.id, profile.business_type, profile.neighborhood).catch(() => {})
-          }
-
-          setMessages(prev => {
-            const updated = [...prev]
-            updated[updated.length - 1] = { ...updated[updated.length - 1], timestamp: new Date() }
-            return updated
-          })
-
-          // Auto-refresh data after chat — TikTok scrape may have landed new data on volume
-          setTimeout(() => refreshData(), 30_000)
-        },
-        onError: (_errorMsg) => {
-          // Fallback to local response
-          setIsStreaming(false)
-          setAgentActive(false)
-          setStatusMessage('')
-          setProcessStage('complete')
-          processLogs.current.push(`[+${Date.now() - startTime}ms] error: ${_errorMsg} (local fallback)`)
-
-          const nb = profile.neighborhood
-          const biz = profile.business_type.toLowerCase()
-          let response = ''
-
-          if (message.toLowerCase().includes('permit')) {
-            const permits = neighborhoodData?.permits || []
-            response = `Based on ${permits.length} recent permits in ${nb}:\n\n`
-            if (permits.length > 0) {
-              response += permits.slice(0, 3).map(p => {
-                const r = p.metadata?.raw_record || {} as Record<string, string>
-                return `- ${r.work_type || 'Permit'}: ${r.street_number || ''} ${r.street_direction || ''} ${r.street_name || ''} (${r.permit_status || 'Active'})`
-              }).join('\n')
-            }
-            response += `\n\nFor a ${biz}, you'll typically need a Limited Business License and applicable permits for your specific operation.`
-          } else if (message.toLowerCase().includes('inspection') || message.toLowerCase().includes('health')) {
-            const stats = neighborhoodData?.inspection_stats || { total: 0, failed: 0, passed: 0 }
-            response = `Food inspection data for ${nb}:\n\n`
-            response += `- **Total inspections:** ${stats.total}\n- **Passed:** ${stats.passed}\n- **Failed:** ${stats.failed}\n`
-            if (stats.total > 0) {
-              response += `- **Pass rate:** ${Math.round((stats.passed / stats.total) * 100)}%\n`
-            }
-            response += `\nThis data helps gauge the regulatory environment you'll be operating in.`
-          } else if (message.toLowerCase().includes('competition') || message.toLowerCase().includes('business')) {
-            const licenses = neighborhoodData?.licenses || []
-            response = `There are **${licenses.length}** active business licenses in ${nb}.\n\n`
-            if (licenses.length > 0) {
-              response += 'Nearby businesses include:\n'
-              response += licenses.slice(0, 5).map(l => {
-                const r = l.metadata?.raw_record || {} as Record<string, string>
-                return `- ${r.doing_business_as_name || r.legal_name || 'Unknown'} (${r.license_description || 'Business'})`
-              }).join('\n')
-            }
-          } else {
-            const total = (neighborhoodData?.inspection_stats.total || 0) + (neighborhoodData?.permit_count || 0) + (neighborhoodData?.license_count || 0)
-            response = `Here's what I found about **${nb}** for a ${biz}:\n\n`
-            response += `We analyzed **${total}** data points across food inspections, building permits, and business licenses.\n\n`
-            if (riskScore) {
-              response += `**Risk score:** ${riskScore.overall_score}/10 (${riskScore.overall_score <= 4 ? 'low' : riskScore.overall_score <= 7 ? 'moderate' : 'high'} risk)\n\n`
-            }
-            response += 'Ask me about specific topics: permits, inspections, competition, or zoning.'
-          }
-
-          processLogs.current.push(`\n--- response (local fallback) ---\n${response}`)
-          setMessages(prev => {
-            const updated = [...prev]
-            updated[updated.length - 1] = { role: 'assistant', content: response, timestamp: new Date() }
-            return updated
-          })
-          setChatLoading(false)
-        },
-      }, userId)
-    } catch {
-      setIsStreaming(false)
-      setChatLoading(false)
-      setAgentActive(false)
-      setProcessStage('complete')
-    }
-  }
+  const riskBrief = useMemo(() => {
+    if (!neighborhoodData) return null
+    return buildRiskBrief(profile, neighborhoodData, riskScore)
+  }, [profile, neighborhoodData, riskScore])
 
   const allTabs: { key: Tab; label: string; count?: number; isEmpty?: () => boolean }[] = [
     { key: 'overview', label: 'Overview' },
@@ -369,7 +260,7 @@ export default function Dashboard({ profile, onReset }: Props) {
     { key: 'market', label: 'Market', count: (neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0), isEmpty: () => !((neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0)) },
     { key: 'models', label: 'Models' },
   ]
-  const tabs = useMemo(
+  const tabs: Array<{ key: Tab; label: string; count?: number; isEmpty?: () => boolean }> = useMemo(
     () => allTabs.filter(t => !t.isEmpty || !(t.isEmpty?.() ?? false)),
     [
       neighborhoodData?.inspection_stats.total,
@@ -383,7 +274,7 @@ export default function Dashboard({ profile, onReset }: Props) {
       neighborhoodData?.realestate?.length,
     ]
   )
-  const visibleTabKeys = useMemo(() => tabs.map(t => t.key), [tabs])
+  const visibleTabKeys = useMemo(() => tabs.map((t: { key: Tab }) => t.key), [tabs])
 
   useEffect(() => {
     if (!visibleTabKeys.includes(activeTab)) {
@@ -461,7 +352,7 @@ export default function Dashboard({ profile, onReset }: Props) {
 
           {/* Tabs */}
           <div className="flex gap-0 border-b border-white/[0.06]">
-            {tabs.map(tab => (
+            {tabs.map((tab: { key: Tab; label: string; count?: number }) => (
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
@@ -613,8 +504,44 @@ export default function Dashboard({ profile, onReset }: Props) {
           )}
         </div>
 
-        {/* Right: Chat */}
+        {/* Right: Risk Summary */}
         <div className="w-96 border-l border-white/[0.06] p-4">
+          <div className="border border-white/[0.08] bg-white/[0.02] p-5 space-y-4">
+            <div>
+              <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-white/30">Neighborhood Brief</p>
+              <h3 className="mt-2 text-sm font-semibold text-white/90">
+                {riskBrief?.headline ?? `${profile.business_type} in ${profile.neighborhood}`}
+              </h3>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="border border-white/[0.06] bg-black/20 p-3">
+                <p className="text-[10px] font-mono uppercase tracking-wider text-white/30">Risk Tolerance</p>
+                <p className="mt-1 text-sm font-semibold text-white capitalize">{riskBrief?.riskTolerance ?? 'medium'}</p>
+              </div>
+              <div className="border border-white/[0.06] bg-black/20 p-3">
+                <p className="text-[10px] font-mono uppercase tracking-wider text-white/30">Risk Band</p>
+                <p className="mt-1 text-sm font-semibold text-white capitalize">{riskBrief?.riskBand ?? 'moderate'}</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-white/75 leading-relaxed">
+              {riskBrief?.highlight ?? 'Loading operating signal highlights...'}
+            </p>
+            <p className="text-xs text-white/65 leading-relaxed">
+              {riskBrief?.summary ?? 'Loading risk summary...'}
+            </p>
+
+            <div className="border border-emerald-500/20 bg-emerald-500/[0.06] p-3">
+              <p className="text-[10px] font-mono uppercase tracking-wider text-emerald-300/70">Recommendation</p>
+              <p className="mt-1 text-xs text-emerald-200/90 leading-relaxed">
+                {riskBrief?.recommendation ?? 'Recommendation will appear once neighborhood metrics are loaded.'}
+              </p>
+            </div>
+          </div>
+
+          {/*
+          Chatbox disabled per request. Kept here intentionally (do not delete).
           <ChatPanel
             messages={messages}
             onSend={handleChat}
@@ -628,6 +555,7 @@ export default function Dashboard({ profile, onReset }: Props) {
             chatQuestion={chatQuestion}
             processLogs={processLogs.current}
           />
+          */}
         </div>
       </div>
     </div>

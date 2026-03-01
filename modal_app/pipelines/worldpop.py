@@ -19,6 +19,7 @@ import hashlib
 
 import modal
 
+from modal_app.common import SourceType, build_document
 from modal_app.volume import app, volume, VOLUME_MOUNT, RAW_DATA_PATH
 
 # ---------- Image with Earth Engine SDK ----------
@@ -221,7 +222,7 @@ def ingest_worldpop_demographics():
     _init_ee()
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    out_dir = Path(RAW_DATA_PATH) / "demographics" / "worldpop"
+    out_dir = Path(RAW_DATA_PATH) / "worldpop" / today
     out_dir.mkdir(parents=True, exist_ok=True)
 
     results = {}
@@ -242,12 +243,12 @@ def ingest_worldpop_demographics():
                     f"{demo['working_age_pct']}% working age, {demo['young_adult_pct']}% young adults (15-29). "
                     f"Sex ratio (M/F): {demo['sex_ratio']}."
                 ),
-                "source": "worldpop",
+                "source": SourceType.WORLDPOP.value,
                 "timestamp": f"2020-01-01T00:00:00Z",
-                "ingested_at": datetime.now(timezone.utc).isoformat(),
                 "geo": {
                     "neighborhood": neighborhood,
                     "lat": lat,
+                    "lng": lon,
                     "lon": lon,
                     "city": "Chicago",
                     "state": "IL",
@@ -258,12 +259,14 @@ def ingest_worldpop_demographics():
                     "year": 2020,
                     "source_collection": "WorldPop/GP/100m/pop_age_sex",
                     "demographics": demo,
+                    "ingested_at": datetime.now(timezone.utc).isoformat(),
                 },
+                "status": "raw",
             }
 
             # Write to volume
             out_path = out_dir / f"{neighborhood.lower().replace(' ', '_')}.json"
-            out_path.write_text(json.dumps(doc, indent=2))
+            out_path.write_text(build_document(doc).model_dump_json(indent=2))
 
             results[neighborhood] = {
                 "population": demo["total_population"],

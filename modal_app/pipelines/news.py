@@ -14,7 +14,7 @@ import feedparser
 import httpx
 import modal
 
-from modal_app.common import Document, SourceType, detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit
+from modal_app.common import SourceType, build_document, detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
 from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
@@ -208,10 +208,12 @@ async def news_ingester():
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M")
     out_dir = Path(RAW_DATA_PATH) / "news" / date_str
     out_dir.mkdir(parents=True, exist_ok=True)
+    ingested_at = datetime.now(timezone.utc).isoformat()
 
     for doc_data in new_docs:
         doc_data["status"] = "raw"
-        doc = Document(**{k: v for k, v in doc_data.items() if k != "timestamp"})
+        doc_data.setdefault("metadata", {})["ingested_at"] = ingested_at
+        doc = build_document(doc_data)
         fpath = out_dir / f"{doc.id}.json"
         fpath.write_text(doc.model_dump_json(indent=2))
         seen.add(doc_data["id"])

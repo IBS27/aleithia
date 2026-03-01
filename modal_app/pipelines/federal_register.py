@@ -11,7 +11,7 @@ from pathlib import Path
 import httpx
 import modal
 
-from modal_app.common import Document, SourceType, detect_neighborhood, safe_volume_commit
+from modal_app.common import SourceType, build_document, detect_neighborhood, safe_queue_push, safe_volume_commit
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
 from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
@@ -75,7 +75,7 @@ async def _fetch_federal_register(since_days: int = 7) -> list[dict]:
 
                     docs.append({
                         "id": f"fed-{result.get('document_number', '')}",
-                        "source": SourceType.POLITICS.value,
+                        "source": SourceType.FEDERAL_REGISTER.value,
                         "title": title,
                         "content": abstract,
                         "url": result.get("html_url", ""),
@@ -128,7 +128,7 @@ async def _fetch_federal_register_fallback() -> list[dict]:
 
                     docs.append({
                         "id": f"fed-{result.get('document_number', '')}",
-                        "source": SourceType.POLITICS.value,
+                        "source": SourceType.FEDERAL_REGISTER.value,
                         "title": title,
                         "content": abstract,
                         "url": result.get("html_url", ""),
@@ -168,7 +168,7 @@ async def federal_register_ingester():
 
     # Dedup: skip already-seen documents
     seen = SeenSet("federal_register")
-    new_docs = [d for d in all_docs if not seen.contains(d["id"])]
+    new_docs = [d for d in all_docs if not seen.contains(d["id"], max_age_hours=24)]
     print(f"Federal Register: {len(all_docs)} fetched, {len(new_docs)} new (deduped {len(all_docs) - len(new_docs)})")
 
     if not new_docs:
@@ -181,13 +181,18 @@ async def federal_register_ingester():
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     out_dir = Path(RAW_DATA_PATH) / "federal_register" / date_str
     out_dir.mkdir(parents=True, exist_ok=True)
+    ingested_at = datetime.now(timezone.utc).isoformat()
 
     for doc_data in new_docs:
         doc_data["status"] = "raw"
-        doc = Document(**{k: v for k, v in doc_data.items() if k != "timestamp"})
+        doc_data.setdefault("metadata", {})["ingested_at"] = ingested_at
+        doc = build_document(doc_data)
         fpath = out_dir / f"{doc.id}.json"
         fpath.write_text(doc.model_dump_json(indent=2))
         seen.add(doc_data["id"])
+
+    from modal_app.classify import doc_queue
+    await safe_queue_push(doc_queue, new_docs, "federal_register")
 
     seen.save()
     await safe_volume_commit(volume, "federal_register")

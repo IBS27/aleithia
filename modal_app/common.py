@@ -12,12 +12,14 @@ from pydantic import BaseModel, Field
 class SourceType(str, Enum):
     NEWS = "news"
     POLITICS = "politics"
+    FEDERAL_REGISTER = "federal_register"
     REDDIT = "reddit"
     YELP = "yelp"
     GOOGLE_PLACES = "google_places"
     PUBLIC_DATA = "public_data"
     DEMOGRAPHICS = "demographics"
-    REAL_ESTATE = "real_estate"
+    REAL_ESTATE = "realestate"
+    WORLDPOP = "worldpop"
     VISION = "vision"
     TRAFFIC = "traffic"
     TIKTOK = "tiktok"
@@ -35,6 +37,75 @@ class Document(BaseModel):
     metadata: dict = Field(default_factory=dict)
     geo: dict = Field(default_factory=dict)  # neighborhood, ward, lat/lng
     status: str = "raw"  # lifecycle: "raw" → "enriched" → "graphed"
+
+
+# Canonical non-sensor sources used by API status/metrics/source endpoints.
+NON_SENSOR_PIPELINE_SOURCES = [
+    "news",
+    "politics",
+    "federal_register",
+    "public_data",
+    "demographics",
+    "reddit",
+    "reviews",
+    "realestate",
+    "tiktok",
+]
+
+
+# Legacy/variant source names normalized to canonical SourceType values.
+_SOURCE_NORMALIZATION = {
+    "real_estate": SourceType.REAL_ESTATE.value,
+    "federal": SourceType.FEDERAL_REGISTER.value,
+}
+
+
+def parse_timestamp(value: Any) -> datetime | None:
+    """Parse heterogeneous timestamp inputs into timezone-aware UTC datetime."""
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=timezone.utc)
+
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        try:
+            dt = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            # Handle simple YYYY-MM-DD timestamps from some upstream APIs.
+            try:
+                dt = datetime.strptime(candidate, "%Y-%m-%d")
+                return dt.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return None
+
+    return None
+
+
+def build_document(doc_data: dict) -> Document:
+    """Construct a Document while preserving source event timestamp when available."""
+    payload = dict(doc_data)
+
+    raw_source = payload.get("source", "")
+    if isinstance(raw_source, str):
+        payload["source"] = _SOURCE_NORMALIZATION.get(raw_source, raw_source)
+
+    parsed_ts = parse_timestamp(payload.pop("timestamp", None))
+    if parsed_ts is not None:
+        payload["timestamp"] = parsed_ts
+
+    payload.setdefault("status", "raw")
+    payload.setdefault("metadata", {})
+    payload.setdefault("geo", {})
+
+    return Document(**payload)
 
 
 class RiskFactor(BaseModel):

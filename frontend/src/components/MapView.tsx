@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 
+const API_BASE = import.meta.env.VITE_MODAL_URL || '/api/data'
+
 type HeatmapLayer = 'regulatory' | 'business' | 'sentiment'
 
 const LAYER_CONFIG: Record<HeatmapLayer, {
@@ -10,41 +12,61 @@ const LAYER_CONFIG: Record<HeatmapLayer, {
   property: string
   stops: [number, string][]
 }> = {
-  regulatory: {
-    label: 'Regulatory',
-    color: '#ef4444',
-    property: 'active_permits',
-    stops: [
-      [0, 'rgba(239,68,68,0)'],
-      [5, 'rgba(239,68,68,0.3)'],
-      [20, 'rgba(239,68,68,0.6)'],
-      [50, 'rgba(239,68,68,0.9)'],
-    ],
-  },
-  business: {
-    label: 'Business',
-    color: '#3b82f6',
-    property: 'business_activity',
-    stops: [
-      [0, 'rgba(59,130,246,0)'],
-      [10, 'rgba(59,130,246,0.3)'],
-      [50, 'rgba(59,130,246,0.6)'],
-      [100, 'rgba(59,130,246,0.9)'],
-    ],
-  },
-  sentiment: {
-    label: 'Sentiment',
-    color: '#22c55e',
-    property: 'avg_review_rating',
-    stops: [
-      [0, 'rgba(239,68,68,0.6)'],
-      [2.5, 'rgba(234,179,8,0.5)'],
-      [4, 'rgba(34,197,94,0.4)'],
-      [5, 'rgba(34,197,94,0.8)'],
-    ],
-  },
+regulatory: {
+  label: 'Regulatory',
+  color: '#dc2626',
+  property: 'active_permits',
+  stops: [
+    [0, 'rgba(255,240,230,0)'],
+    [5, 'rgba(255,220,200,0.08)'],
+    [10, 'rgba(254,200,170,0.14)'],
+    [15, 'rgba(253,170,130,0.2)'],
+    [20, 'rgba(250,140,90,0.28)'],
+    [25, 'rgba(240,100,60,0.36)'],
+    [30, 'rgba(220,60,40,0.44)'],
+    [35, 'rgba(190,35,30,0.52)'],
+    [40, 'rgba(160,25,25,0.6)'],
+    [45, 'rgba(130,20,20,0.7)'],
+    [50, 'rgba(100,10,10,0.8)'],
+  ],
+},
+business: {
+  label: 'Business',
+  color: '#3b82f6',
+  property: 'business_activity',
+  stops: [
+    [0, 'rgba(230,242,255,0)'],
+    [10, 'rgba(200,225,255,0.08)'],
+    [20, 'rgba(170,210,254,0.14)'],
+    [30, 'rgba(140,190,252,0.2)'],
+    [40, 'rgba(110,165,248,0.28)'],
+    [50, 'rgba(80,140,240,0.36)'],
+    [60, 'rgba(55,110,220,0.44)'],
+    [70, 'rgba(40,85,200,0.52)'],
+    [80, 'rgba(30,65,175,0.6)'],
+    [90, 'rgba(22,50,150,0.7)'],
+    [100, 'rgba(15,35,120,0.8)'],
+  ],
+},
+sentiment: {
+  label: 'Sentiment',
+  color: '#22c55e',
+  property: 'avg_review_rating',
+  stops: [
+    [0, 'rgba(255,255,200,0)'],
+    [0.5, 'rgba(240,250,170,0.08)'],
+    [1, 'rgba(220,240,140,0.14)'],
+    [1.5, 'rgba(195,230,110,0.2)'],
+    [2, 'rgba(165,215,80,0.28)'],
+    [2.5, 'rgba(130,195,55,0.36)'],
+    [3, 'rgba(95,170,40,0.44)'],
+    [3.5, 'rgba(65,145,35,0.52)'],
+    [4, 'rgba(40,120,30,0.6)'],
+    [4.5, 'rgba(25,95,25,0.7)'],
+    [5, 'rgba(10,70,20,0.8)'],
+  ],
+},
 }
-
 // Chicago center coordinates
 const CHICAGO_CENTER: [number, number] = [-87.6298, 41.8781]
 const DEFAULT_ZOOM = 11
@@ -88,7 +110,7 @@ export default function MapView({ activeNeighborhood, geojsonUrl }: Props) {
 
     map.on('load', () => {
       // Always fetch GeoJSON from modal volume
-      const sourceUrl = 'https://ibsrinivas27--alethia-serve.modal.run/geo'
+      const sourceUrl = `${API_BASE}/geo`
       console.log('Fetching GeoJSON from:', sourceUrl) // Debug: check URL being fetched
 
       // Try fetching the GeoJSON; if it fails, use an empty collection
@@ -120,8 +142,22 @@ export default function MapView({ activeNeighborhood, geojsonUrl }: Props) {
   }, [geojsonUrl])
 
   // Add the GeoJSON source + all three heatmap/circle layers
-  function addSourceAndLayers(map: mapboxgl.Map, geojson: GeoJSON.FeatureCollection) {
-    map.addSource('neighborhoods', {
+function addSourceAndLayers(map: mapboxgl.Map, geojson: GeoJSON.FeatureCollection) {
+  // Default missing sentiment to midpoint so all neighborhoods show gradient
+  for (const feature of geojson.features) {
+    const props = feature.properties as any
+    if (!props.avg_review_rating || props.avg_review_rating === 0) {
+      props.avg_review_rating = 2.5
+    }
+    if (!props.business_activity || props.business_activity === 0) {
+      props.business_activity = 5
+    }
+    if (!props.active_permits || props.active_permits === 0) {
+      props.active_permits = 1
+    }
+  }
+
+  map.addSource('neighborhoods', {
       type: 'geojson',
       data: geojson,
     })
@@ -139,21 +175,28 @@ export default function MapView({ activeNeighborhood, geojsonUrl }: Props) {
         source: 'neighborhoods',
         paint: {
           'heatmap-weight': [
-            'interpolate', ['linear'],
+            'interpolate', ['exponential',0.5],
             ['get', config.property],
-            0, 0,
+            0, 0.1,
             config.stops[config.stops.length - 1][0] as number, 1,
           ],
-          'heatmap-intensity': 1.2,
-          'heatmap-radius': 40,
-          'heatmap-opacity': key === 'regulatory' ? 0.8 : 0,
+          'heatmap-intensity': 1.4,
+          'heatmap-radius': 90,
+          'heatmap-opacity': key === 'regulatory' ? 0.7 : 0,
           'heatmap-color': [
-            'interpolate', ['linear'], ['heatmap-density'],
-            0, 'rgba(0,0,0,0)',
-            0.2, config.stops[1][1],
-            0.5, config.stops[2][1],
-            1, config.stops[3][1],
-          ],
+              'interpolate', ['linear'], ['heatmap-density'],
+             0, 'rgba(0,0,0,0)',
+              0.1, config.stops[1][1],
+              0.2, config.stops[2][1],
+              0.3, config.stops[3][1],
+              0.4, config.stops[4][1],
+              0.5, config.stops[5][1],
+              0.6, config.stops[6][1],
+              0.7, config.stops[7][1],
+              0.8, config.stops[8][1],
+              0.9, config.stops[9][1],
+              1, config.stops[10][1],
+            ], 
         },
       }, firstSymbolLayer)
 
@@ -162,19 +205,19 @@ export default function MapView({ activeNeighborhood, geojsonUrl }: Props) {
         id: `points-${key}`,
         type: 'circle',
         source: 'neighborhoods',
-        minzoom: 12,
+        minzoom: 10,
         paint: {
           'circle-radius': [
             'interpolate', ['linear'],
             ['get', config.property],
-            0, 4,
-            (config.stops[config.stops.length - 1][0] as number), 14,
+            0, key === 'sentiment' ? 2 : 5,
+            (config.stops[config.stops.length - 1][0] as number), 10,
           ],
           'circle-color': config.color,
-          'circle-opacity': key === 'regulatory' ? 0.7 : 0,
+          'circle-opacity': key === 'regulatory' ? 0.85 : 0,
           'circle-stroke-color': '#fff',
           'circle-stroke-width': 1,
-          'circle-stroke-opacity': key === 'regulatory' ? 0.4 : 0,
+          'circle-stroke-opacity': key === 'regulatory' ? 0.6 : 0,
         },
       }, firstSymbolLayer)
     }
@@ -191,15 +234,15 @@ export default function MapView({ activeNeighborhood, geojsonUrl }: Props) {
 
         popupRef.current?.remove()
         popupRef.current = new mapboxgl.Popup({ closeButton: false, className: 'alethia-popup' })
-          .setLngLat(coords)
-          .setHTML(`
-            <div style="font-family:system-ui;font-size:13px;color:#e2e8f0;line-height:1.5">
-              <strong style="color:#818cf8">${props.neighborhood || 'Unknown'}</strong><br/>
-              Permits: ${props.active_permits ?? '—'}<br/>
-              Reviews: ${props.review_count ?? '—'}<br/>
-              Activity: ${props.business_activity ?? '—'}
-            </div>
-          `)
+        .setLngLat(coords)
+        .setHTML(`
+          <div style="font-family:system-ui;font-size:13px;color:#e2e8f0;line-height:1.5;background:#1e1e2e;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.08)">
+            <strong style="color:#818cf8">${props.neighborhood || 'Unknown'}</strong><br/>
+            Permits: ${props.active_permits ?? '—'}<br/>
+            Reviews: ${props.review_count ?? '—'}<br/>
+            Activity: ${props.business_activity ?? '—'}
+          </div>
+        `)
           .addTo(map)
       })
     }
@@ -216,11 +259,11 @@ export default function MapView({ activeNeighborhood, geojsonUrl }: Props) {
       const pId = `points-${key}`
 
       if (map.getLayer(hId)) {
-        map.setPaintProperty(hId, 'heatmap-opacity', visible ? 0.8 : 0)
+        map.setPaintProperty(hId, 'heatmap-opacity', visible ? 0.85 : 0)
       }
       if (map.getLayer(pId)) {
-        map.setPaintProperty(pId, 'circle-opacity', visible ? 0.7 : 0)
-        map.setPaintProperty(pId, 'circle-stroke-opacity', visible ? 0.4 : 0)
+        map.setPaintProperty(pId, 'circle-opacity', visible ? 0.75 : 0)
+        map.setPaintProperty(pId, 'circle-stroke-opacity', visible ? 0.5 : 0)
       }
     }
   }, [mapReady])
@@ -278,3 +321,18 @@ export default function MapView({ activeNeighborhood, geojsonUrl }: Props) {
     </div>
   )
 }
+const style = document.createElement('style')
+style.textContent = `
+  .alethia-popup.mapboxgl-popup .mapboxgl-popup-content {
+    background: transparent !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+  }
+  .alethia-popup.mapboxgl-popup .mapboxgl-popup-tip {
+    border-top-color: #1e1e2e !important;
+  }
+`
+document.head.appendChild(style)
