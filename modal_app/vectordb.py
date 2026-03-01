@@ -254,16 +254,28 @@ class VectorDBService:
     @modal.method()
     def search_neighborhood(self, query_embedding: list[float], neighborhood: str, top_k: int = 50) -> list[dict]:
         """Convenience: search enriched collection filtered by neighborhood."""
-        return self.search.local(
-            query_embedding=query_embedding,
-            collection="enriched",
-            top_k=top_k,
-            filter_dict={"neighborhood": neighborhood},
-        )
+        span_ctx = self._tracer.start_as_current_span("vectordb.search_neighborhood") if self._tracer else None
+        span = span_ctx.__enter__() if span_ctx else None
+        try:
+            results = self.search.local(
+                query_embedding=query_embedding,
+                collection="enriched",
+                top_k=top_k,
+                filter_dict={"neighborhood": neighborhood},
+            )
+            if span:
+                span.set_attribute("vectordb.neighborhood", neighborhood)
+                span.set_attribute("vectordb.results_count", len(results))
+            return results
+        finally:
+            if span_ctx:
+                span_ctx.__exit__(None, None, None)
 
     @modal.method()
     def health_check(self) -> dict:
         """Return health status and collection stats."""
+        span_ctx = self._tracer.start_as_current_span("vectordb.health_check") if self._tracer else None
+        span = span_ctx.__enter__() if span_ctx else None
         try:
             self._client.health_check()
             stats = {}
@@ -273,6 +285,14 @@ class VectorDBService:
                     stats[name] = count
                 except Exception:
                     stats[name] = -1
+            if span:
+                span.set_attribute("vectordb.status", "healthy")
             return {"status": "healthy", "collections": stats}
         except Exception as e:
+            if span:
+                span.set_attribute("vectordb.status", "unhealthy")
+                span.set_attribute("error", str(e))
             return {"status": "unhealthy", "error": str(e)}
+        finally:
+            if span_ctx:
+                span_ctx.__exit__(None, None, None)
