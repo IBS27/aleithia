@@ -10,9 +10,10 @@ An AI-powered regulatory intelligence platform that aggregates live Chicago-area
 - **Classification:** bart-large-mnli (zero-shot) + roberta (sentiment) on T4 GPUs
 - **Vision:** YOLOv8n (pedestrian/vehicle detection) on T4 GPUs
 - **Parking:** SegFormer-b5 (semantic segmentation) + YOLOv8m + SAHI (satellite parking lot detection) on T4 GPUs
+- **Vector Search:** Actian VectorAI DB (local HNSW vector search via gRPC) + all-MiniLM-L6-v2 embeddings (384d) — complements Supermemory
 - **Impact Analysis:** Recursive Lead Analyst + E2B sandbox workers for proactive intelligence
-- **Compute:** Modal (33+ serverless functions — pipelines, GPU inference, web API, agents, lead analyst, reconciler)
-- **Memory:** Supermemory (RAG context, user profiles, doc sync)
+- **Compute:** Modal (35+ serverless functions — pipelines, GPU inference, web API, agents, lead analyst, reconciler, vector search)
+- **Memory:** Supermemory (cloud RAG context, user profiles, doc sync) + VectorAI DB (local semantic search)
 - **Tracing:** Arize AX via OpenTelemetry (connected spans across Modal containers, auto-instrumented OpenAI calls)
 - **Data:** 14 pipelines ingesting 1,889+ documents across 47 Chicago neighborhoods
 
@@ -20,9 +21,9 @@ An AI-powered regulatory intelligence platform that aggregates live Chicago-area
 
 1. **Ingestion layer** — 14 Modal cron/on-demand functions scrape/poll heterogeneous sources (RSS, Chicago Data Portal, Reddit, Yelp/Google, Legistar, Federal Register, LoopNet, Census, TikTok, TomTom traffic, IDOT CCTV, YouTube, WorldPop, Mapbox satellite) and normalize into a common `Document` schema. See `data_sources.md` for full catalog.
 2. **Event bus** — `modal.Queue` connects pipelines to GPU classifiers. Pipelines push via `await doc_queue.put.aio()`.
-3. **Enrichment layer** — `DocClassifier` (bart-large-mnli) + `SentimentAnalyzer` (roberta) on T4 GPUs classify documents into categories (regulatory, economic, safety, etc.) with sentiment scores. Batch processing via `@modal.batched` + `asyncio.gather()`.
+3. **Enrichment layer** — `DocClassifier` (bart-large-mnli) + `SentimentAnalyzer` (roberta) on T4 GPUs classify documents into categories (regulatory, economic, safety, etc.) with sentiment scores. Batch processing via `@modal.batched` + `asyncio.gather()`. After enrichment, documents are embedded with all-MiniLM-L6-v2 and upserted to VectorAI DB for semantic retrieval.
 4. **LLM layer** — Qwen3 8B AWQ (INT4) via vLLM on H100 for streaming chat responses and intelligence briefs. 20 concurrent inputs via `@modal.concurrent`. GPU memory snapshots for fast cold starts.
-5. **Agent swarm** — 4 agent types (neighborhood intel, regulatory, comparison, synthesis) fan out via `.spawn()` for query-time parallel intelligence gathering. W3C trace context propagation links spans across containers. Regulatory agent enriches regulations with GPT-4o impact summaries when available.
+5. **Agent swarm** — 4 agent types (neighborhood intel, regulatory, comparison, synthesis) fan out via `.spawn()` for query-time parallel intelligence gathering. Agents query VectorAI DB for fast semantic retrieval (with fallback to JSON file scan) + Supermemory in parallel. Query embedding computed once and shared across all agent spawns. W3C trace context propagation links spans across containers. Regulatory agent enriches regulations with GPT-4o impact summaries when available.
 6. **Self-healing** — Reconciler runs every 5 min, checks pipeline freshness, auto-restarts stale ingesters. Cost tracking via `modal.Dict`.
 7. **Vision layer** — CCTV pipeline ingests IDOT highway camera frames, YOLOv8n detects vehicles for highway traffic density scoring (not street-level foot traffic). Vision pipeline trains custom detectors from YouTube walking tours and persists per-neighborhood analysis results to `/data/processed/vision/analysis/`. Walk-in potential is sourced from CTA L-station ridership data instead. Parking pipeline analyzes Mapbox satellite tiles via SegFormer-b5 (lot segmentation) + YOLOv8m + SAHI (vehicle detection) for parking occupancy estimation.
 8. **Observability** — Arize AX tracing with OpenTelemetry. Connected spans across web → orchestrator → agents → LLM. OpenAI auto-instrumentor for all OpenAI calls (GPT-4o hybrid layer + GPT-4V vision labeling).
@@ -49,6 +50,7 @@ modal_app/              — Modal functions (all compute runs here)
   web.py                — FastAPI web app served via @modal.asgi_app() (22+ endpoints, incl. /analyze, /vision/assess, /parking/*)
   lead_analyst.py       — Recursive agent: impact scoring, E2B worker dispatch, synthesis (5-min cron + manual trigger)
   e2b_utils.py          — Shared E2B sandbox factory: e2b_available(), create_sandbox()
+  vectordb.py           — VectorAI DB service: embed (MiniLM-L6-v2), upsert, search, health check, backfill + vectordb_available() guard
   reconciler.py         — Self-healing pipeline monitor + cost tracking
   supermemory.py        — Supermemory client + data sync
   scaling_demo.py       — Fan-out demo for generating Arize traces
@@ -95,8 +97,9 @@ docs/                   — Design docs, setup guide, plans
 
 - **Document schema** (`common.py`): All pipelines normalize to `Document(id, source, title, content, url, timestamp, metadata, geo, status)`.
 - **Ingestion flow**: `_fetch_*()` → `FallbackChain` → `SeenSet` dedup → save to volume → push to `doc_queue` → `classify.py` enriches.
-- **Volume paths**: raw at `/data/raw/{source}/{date}/`, enriched at `/data/processed/enriched/`, cache at `/data/cache/`, dedup at `/data/dedup/`, vision analysis at `/data/processed/vision/analysis/`, parking analysis at `/data/processed/parking/analysis/`, parking annotated images at `/data/processed/parking/annotated/`, impact briefs at `/data/processed/impact_briefs/`.
+- **Volume paths**: raw at `/data/raw/{source}/{date}/`, enriched at `/data/processed/enriched/`, cache at `/data/cache/`, dedup at `/data/dedup/`, vision analysis at `/data/processed/vision/analysis/`, parking analysis at `/data/processed/parking/analysis/`, parking annotated images at `/data/processed/parking/annotated/`, impact briefs at `/data/processed/impact_briefs/`, vectordb at `/data/vectordb/`.
 - **OpenAI hybrid**: `openai_utils.py` provides `openai_available()` guard + `get_openai_client()` factory. All GPT-4o features check availability and fall back gracefully.
+- **VectorAI DB**: `vectordb.py` provides `vectordb_available()` guard + `VectorDBService` Modal class. Agents query VectorAI DB for semantic retrieval, falling back to JSON file scan if unavailable. Enrichment pipeline upserts to VectorDB after classification. `backfill_vectordb()` for one-time indexing of existing data.
 - **Two APIs**: `web.py` is the production Modal-hosted API. `backend/` is a local dev proxy.
 - **Reasoning**: `orchestrate_query()` fans out 4 agents via `.spawn()`, gathers results, synthesizes with LLM.
 
@@ -107,7 +110,7 @@ docs/                   — Design docs, setup guide, plans
 
 ## Implementation Status
 
-- **Deployed**: All 14 pipelines (incl. parking), enrichment (classify.py), reasoning (agents.py + llm.py), OpenAI hybrid layer (openai_utils.py), recursive agent architecture (lead_analyst.py + e2b_utils.py), compression, reconciler, Supermemory, web API, Arize tracing with connected spans.
+- **Deployed**: All 14 pipelines (incl. parking), enrichment (classify.py), reasoning (agents.py + llm.py), OpenAI hybrid layer (openai_utils.py), recursive agent architecture (lead_analyst.py + e2b_utils.py), VectorAI DB (vectordb.py — local semantic search), compression, reconciler, Supermemory, web API, Arize tracing with connected spans.
 - **Frontend complete**: Streaming chat (with follow-up suggestion chips), pipeline monitor, agent visualization, ProcessFlow trace diagram with copy-logs, highway traffic stat card, CTA transit scoring, demographics card, Deep Dive analysis panel (GPT-4o enhanced), professional "Investment Committee" PDF export (9-section proposal format), streetscape intelligence with GPT-4o AI assessment, satellite parking detection display.
 - **Not built**: City graph (NetworkX multigraph described in architecture.md — agents read raw/enriched JSON directly). Trend/anomaly detection.
 
@@ -137,7 +140,8 @@ cd frontend && npm run dev         # Frontend dev server at localhost:5173
 - **6 cron jobs** (news 30min, reddit 1hr, public_data daily, classifier 2min, reconciler 5min, lead_analyst 5min)
 - **11 on-demand pipelines** (politics, demographics, reviews, realestate, federal_register, tiktok, traffic, cctv, vision, parking, worldpop)
 - **5 GPU classes** (AlethiaLLM H100, DocClassifier T4, SentimentAnalyzer T4, TrafficAnalyzer T4, ParkingAnalyzer T4)
-- **Warm containers** (`min_containers=1`): AlethiaLLM (H100), TrafficAnalyzer (T4), serve (CPU). Classifiers use `scaledown_window` only (incompatible with `@modal.batched`).
+- **1 VectorDB service** (VectorDBService CPU — Actian VectorAI DB + MiniLM-L6-v2 embedder)
+- **Warm containers** (`min_containers=1`): AlethiaLLM (H100), TrafficAnalyzer (T4), VectorDBService (CPU), serve (CPU). Classifiers use `scaledown_window` only (incompatible with `@modal.batched`).
 - **GPU memory snapshots** enabled on all 5 GPU classes for fast cold starts
 
 ## Modal Features Used (21)
