@@ -5,12 +5,14 @@ import { MemoryGraph, injectStyles } from '@supermemory/memory-graph'
 import '@supermemory/memory-graph/styles.css'
 import type { DocumentWithMemories } from '@supermemory/memory-graph'
 import CityGlobe from './CityGlobe'
+import LogoLoop from './LogoLoop'
 import { api } from '../api.ts'
 
 injectStyles()
 
 interface Props {
   onGetStarted: () => void
+  onViewSource?: () => void
 }
 
 function makeStatic(app: Application) {
@@ -55,14 +57,14 @@ const DATA_PILLARS = [
   },
 ]
 
-export default function LandingPage({ onGetStarted }: Props) {
+export default function LandingPage({ onGetStarted, onViewSource }: Props) {
   const [graphDocs, setGraphDocs] = useState<DocumentWithMemories[]>([])
   const [graphLoading, setGraphLoading] = useState(true)
   const [graphError, setGraphError] = useState<Error | null>(null)
 
   useEffect(() => {
     api
-      .graph({ page: 1, limit: 500 })
+      .graph({ page: 1, limit: 200 })
       .then((data) => {
         const raw = (data as { documents?: Record<string, unknown>[] }).documents ?? []
         const normalized: DocumentWithMemories[] = raw.map((doc) => ({
@@ -133,14 +135,12 @@ export default function LandingPage({ onGetStarted }: Props) {
                 >
                   Analyze a Neighborhood
                 </button>
-                <a
-                  href="https://github.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="pointer-events-auto px-8 py-3.5 text-sm font-semibold border border-white/20 text-white/70 hover:text-white hover:border-white/40 transition-colors"
+                <button
+                  onClick={onViewSource}
+                  className="pointer-events-auto px-8 py-3.5 text-sm font-semibold border border-white/20 text-white/70 hover:text-white hover:border-white/40 transition-colors cursor-pointer"
                 >
-                  View Source
-                </a>
+                  How It Works
+                </button>
               </div>
             </div>
           </div>
@@ -227,6 +227,8 @@ export default function LandingPage({ onGetStarted }: Props) {
             isLoading={graphLoading}
             error={graphError}
             variant="console"
+            maxNodes={50}
+            showSpacesSelector
           >
             <div className="flex items-center justify-center h-full">
               <p className="text-sm font-mono text-white/20">No documents ingested yet</p>
