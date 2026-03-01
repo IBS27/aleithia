@@ -260,7 +260,7 @@ export default function CityGraph({ activeNeighborhood, interactive = false }: P
         )}
         {interactive && interactiveGraphData && interactiveGraphData.nodes.length > 0 ? (
           <ForceGraph2D
-            ref={fgRef}
+            ref={fgRef as any}
             graphData={interactiveGraphData}
             width={dimensions.width}
             height={dimensions.height}

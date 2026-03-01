@@ -17,7 +17,7 @@ const PIPELINE_TRACE = [
   { step: 'arize.export', latencyMs: 12, span: 'otel' },
 ]
 
-export default function CCTVCameraDrawer({ open, onClose, camera, cctv }: Props) {
+export default function CCTVCameraDrawer({ open, onClose, camera, cctv: _cctv }: Props) {
   if (!camera) return null
 
   return (
@@ -87,7 +87,7 @@ export default function CCTVCameraDrawer({ open, onClose, camera, cctv }: Props)
             Pipeline Trace (OTel)
           </div>
           <div className="space-y-1.5">
-            {PIPELINE_TRACE.map((t, i) => (
+            {PIPELINE_TRACE.map((t) => (
               <div
                 key={t.step}
                 className="flex items-center justify-between px-3 py-1.5 border border-white/[0.06] rounded text-[10px] font-mono"

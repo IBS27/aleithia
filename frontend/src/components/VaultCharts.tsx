@@ -1,9 +1,7 @@
 import {
   AreaChart,
   Area,
-  BarChart,
   Bar,
-  LineChart,
   Line,
   XAxis,
   YAxis,
@@ -158,9 +156,9 @@ export function TopViolationsPareto({ inspections }: TopViolationsParetoProps) {
             <YAxis yAxisId="right" orientation="right" tick={{ fill: 'rgba(147,197,253,0.7)', fontSize: 9 }} domain={[0, 100]} />
             <Tooltip
               contentStyle={{ background: '#0f1419', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 4 }}
-              formatter={(val: number, name: string, props: { payload?: { name: string; count: number; cumPct: number } }) => {
-                const p = props?.payload
-                if (!p) return String(val)
+              formatter={(val, _name, props) => {
+                const p = (props as { payload?: { name: string; count: number; cumPct: number } })?.payload
+                if (!p) return String(val ?? '')
                 return `${p.name}: ${p.count} · cumulative ${p.cumPct}%`
               }}
             />
@@ -197,7 +195,7 @@ const SOURCE_LABELS: Record<string, string> = {
 }
 
 export function AlertHoursStackedArea({ data }: AlertHoursStackedAreaProps) {
-  const byDate: Record<string, Record<string, number>> = {}
+  const byDate: Record<string, Record<string, number | string>> = {}
 
   const addDoc = (doc: Document, sourceKey: string) => {
     const d = docDate(doc)
@@ -206,7 +204,7 @@ export function AlertHoursStackedArea({ data }: AlertHoursStackedAreaProps) {
       byDate[d] = { date: d, inspections: 0, permits: 0, federal: 0, news: 0, politics: 0, other: 0 }
     }
     const k = (['inspections', 'permits', 'federal', 'news', 'politics'] as const).includes(sourceKey as never) ? sourceKey : 'other'
-    byDate[d][k] = (byDate[d][k] ?? 0) + 1
+    byDate[d][k] = (Number(byDate[d][k]) || 0) + 1
   }
 
   ;(data.inspections ?? []).forEach((d) => addDoc(d, 'inspections'))
@@ -215,7 +213,7 @@ export function AlertHoursStackedArea({ data }: AlertHoursStackedAreaProps) {
   ;(data.news ?? []).forEach((d) => addDoc(d, 'news'))
   ;(data.politics ?? []).forEach((d) => addDoc(d, 'politics'))
 
-  const dataArr = Object.values(byDate).sort((a, b) => (a.date as string).localeCompare(b.date as string))
+  const dataArr = Object.values(byDate).sort((a, b) => String(a.date).localeCompare(String(b.date)))
   const hasData = dataArr.some((row) => Object.keys(row).some((k) => k !== 'date' && (row[k] as number) > 0))
 
   if (!hasData || dataArr.length === 0) return null
@@ -253,7 +251,7 @@ export function AlertHoursStackedArea({ data }: AlertHoursStackedAreaProps) {
               contentStyle={{ background: '#0f1419', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 4 }}
               labelFormatter={(v) => new Date(v).toLocaleDateString()}
             />
-            <Legend wrapperStyle={{ fontSize: 9 }} formatter={(v) => SOURCE_LABELS[v] ?? v} />
+            <Legend wrapperStyle={{ fontSize: 9 }} formatter={(v) => SOURCE_LABELS[String(v)] ?? String(v)} />
             {sources.map((src, i) => (
               <Area
                 key={src}

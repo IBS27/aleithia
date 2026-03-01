@@ -94,7 +94,7 @@ export default function BlurText({
 
   const Wrapper = Component
   return (
-    <Wrapper ref={ref as React.RefObject<HTMLElement>} className={className} style={{ display: 'flex', flexWrap: 'wrap' }}>
+    <Wrapper ref={ref as React.Ref<HTMLParagraphElement>} className={className} style={{ display: 'flex', flexWrap: 'wrap' }}>
       {elements.map((segment, index) => {
         const animateKeyframes = buildKeyframes(
           fromSnapshot as Record<string, string | number>,
