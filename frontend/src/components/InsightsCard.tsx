@@ -100,7 +100,7 @@ export default function InsightsCard({ data, profile }: Props) {
       {/* Header */}
       <div className="px-5 pt-5 pb-3 flex items-center justify-between">
         <div className="text-[10px] font-mono uppercase tracking-wider text-white/30">
-          Business Intelligence Score
+          Risk Assessment Score
         </div>
         <div className="flex gap-0 border border-white/[0.08] rounded overflow-hidden">
           {PROFILES.map(p => (

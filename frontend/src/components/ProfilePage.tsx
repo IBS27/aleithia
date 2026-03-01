@@ -7,6 +7,8 @@ interface Props {
   onClose?: () => void
   token?: string | null
   onProfileUpdate?: () => void
+  /** When true, used inside Drawer - compact layout, no nav */
+  embedded?: boolean
 }
 
 const NEIGHBORHOODS = [
@@ -24,7 +26,7 @@ const BUSINESS_TYPES = [
   'Professional Services', 'Food Truck', 'Bakery',
 ]
 
-export default function ProfilePage({ onClose, token, onProfileUpdate }: Props) {
+export default function ProfilePage({ onClose, token, onProfileUpdate, embedded = false }: Props) {
   const { user } = useUser()
   const { getToken } = useAuth()
   const [businessType, setBusinessType] = useState('')
@@ -114,24 +116,27 @@ export default function ProfilePage({ onClose, token, onProfileUpdate }: Props) 
   }
 
   return (
-    <div className="min-h-screen bg-[#06080d] text-white p-6">
+    <div className={`bg-[#06080d] text-white p-6 ${embedded ? '' : 'min-h-screen'}`}>
       <div className="max-w-2xl mx-auto">
-        <div className="mb-8">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold mb-2">Profile</h1>
-              <p className="text-white/40">{user.primaryEmailAddress?.emailAddress}</p>
+        {embedded && <p className="text-xs font-mono text-white/40 mb-4">{user.primaryEmailAddress?.emailAddress}</p>}
+        {!embedded && (
+          <div className="mb-8">
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-3xl font-bold mb-2">Profile</h1>
+                <p className="text-white/40">{user.primaryEmailAddress?.emailAddress}</p>
+              </div>
+              {onClose && (
+                <button
+                  onClick={onClose}
+                  className="text-white/40 hover:text-white/60 transition-colors cursor-pointer"
+                >
+                  ✕
+                </button>
+              )}
             </div>
-            {onClose && (
-              <button
-                onClick={onClose}
-                className="text-white/40 hover:text-white/60 transition-colors cursor-pointer"
-              >
-                ✕
-              </button>
-            )}
           </div>
-        </div>
+        )}
 
         {loading ? (
           <div className="border border-white/10 p-8 rounded">
@@ -207,7 +212,7 @@ export default function ProfilePage({ onClose, token, onProfileUpdate }: Props) 
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex-1 bg-white text-[#06080d] disabled:bg-white/30 disabled:text-white/40 font-semibold py-3 text-sm transition-colors cursor-pointer"
+                  className="flex-1 !bg-white !text-[#06080d] disabled:!bg-white/30 disabled:!text-white/40 font-semibold py-3 text-sm transition-colors hover:!bg-white/90 cursor-pointer"
                 >
                   {saving ? 'Saving...' : 'Save Profile'}
                 </button>

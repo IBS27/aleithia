@@ -7,6 +7,7 @@ import LandingPage from './components/LandingPage.tsx'
 import OnboardingForm from './components/OnboardingForm.tsx'
 import Dashboard from './components/Dashboard.tsx'
 import ProfilePage from './components/ProfilePage.tsx'
+import Drawer from './components/Drawer.tsx'
 
 // Lazy-load pages that import @supermemory/memory-graph (its CSS has a global
 // button reset that conflicts with Tailwind's bg-white utility)
@@ -19,6 +20,7 @@ function App() {
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [savedProfile, setSavedProfile] = useState<UserProfile | null>(null)
   const [token, setToken] = useState<string | null>(null)
+  const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -46,6 +48,7 @@ function App() {
 
   const handleProfileSubmit = async (p: UserProfile) => {
     setProfile(p)
+    setSessionDrawerOpen(false)
     navigate('/analysis')
 
     if (isSignedIn && user && token) {
@@ -66,18 +69,48 @@ function App() {
     <Routes>
       <Route path="/how-it-works" element={<Suspense fallback={<div className="min-h-screen bg-[#06080d]" />}><HowItWorks onBack={() => navigate('/')} /></Suspense>} />
       <Route path="/memory-graph" element={<Suspense fallback={<div className="min-h-screen bg-[#06080d]" />}><MemoryGraphPage onBack={() => navigate('/')} /></Suspense>} />
-      <Route path="/profile" element={<ProfilePage token={token} onClose={() => navigate('/')} onProfileUpdate={() => setSavedProfile(null)} />} />
       <Route
-        path="/"
+        path="/profile"
         element={
-          <LandingPage
-            onGetStarted={() => navigate('/onboarding')}
-            onViewSource={() => navigate('/how-it-works')}
-          />
+          (profile ?? savedProfile) ? (
+            <Dashboard
+              profile={profile ?? savedProfile!}
+              onReset={() => { setProfile(null); navigate('/') }}
+              token={token}
+              onProfileUpdate={() => setSavedProfile(null)}
+              initialProfileDrawerOpen
+            />
+          ) : (
+            <ProfilePage token={token} onClose={() => navigate('/')} onProfileUpdate={() => setSavedProfile(null)} />
+          )
         }
       />
       <Route
-        path="/onboarding"
+        path="/"
+        element={
+          <>
+            <LandingPage
+              onGetStarted={() => setSessionDrawerOpen(true)}
+              onViewSource={() => navigate('/how-it-works')}
+            />
+            <Drawer
+              open={sessionDrawerOpen}
+              onClose={() => setSessionDrawerOpen(false)}
+              title="Initialize Session"
+              width="max-w-md"
+            >
+              <OnboardingForm
+                onSubmit={handleProfileSubmit}
+                onCancel={() => setSessionDrawerOpen(false)}
+                initialProfile={savedProfile}
+                embedded
+              />
+            </Drawer>
+          </>
+        }
+      />
+      <Route
+        path="/start"
         element={
           <OnboardingForm
             onSubmit={handleProfileSubmit}
@@ -93,6 +126,8 @@ function App() {
             <Dashboard
               profile={profile ?? savedProfile!}
               onReset={() => { setProfile(null); navigate('/') }}
+              token={token}
+              onProfileUpdate={() => setSavedProfile(null)}
             />
           ) : (
             <OnboardingForm

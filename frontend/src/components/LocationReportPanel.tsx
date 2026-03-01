@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf'
 import type { NeighborhoodData, RiskScore, UserProfile } from '../types/index.ts'
+import { computeInsights } from '../insights.ts'
 
 interface AgentInfo {
   agents_deployed: number
@@ -25,135 +26,223 @@ type Signal = {
   detail: string
 }
 
-function buildAdvantages(data: NeighborhoodData | null): Signal[] {
-  if (!data) return []
-
-  const items: Signal[] = []
-  const stats = data.inspection_stats
-  const passRate = stats.total > 0 ? stats.passed / stats.total : null
-  const avgRating = data.metrics?.avg_review_rating ?? 0
-
-  if (passRate !== null && passRate >= 0.8 && stats.total >= 5) {
-    items.push({
-      title: 'Strong compliance baseline',
-      detail: `${Math.round(passRate * 100)}% pass rate across ${stats.total} nearby food inspections can reduce early operational friction.`,
-    })
-  }
-
-  if (avgRating >= 4.0 && (data.reviews?.length || 0) >= 5) {
-    items.push({
-      title: 'Healthy customer sentiment',
-      detail: `Area businesses average ${avgRating.toFixed(1)}/5 across ${data.reviews?.length || 0} reviews, indicating active demand with positive sentiment.`,
-    })
-  }
-
-  if (data.cctv && data.cctv.cameras.length > 0 && (data.cctv.density === 'high' || data.cctv.density === 'medium')) {
-    items.push({
-      title: 'Consistent street activity',
-      detail: `${data.cctv.cameras.length} nearby cameras report ${data.cctv.density} foot traffic (avg ${data.cctv.avg_pedestrians} pedestrians), supporting walk-in potential.`,
-    })
-  }
-
-  if (data.permit_count >= 8) {
-    items.push({
-      title: 'Growth and reinvestment signal',
-      detail: `${data.permit_count} active permits suggest ongoing neighborhood investment and business momentum.`,
-    })
-  }
-
-  if (items.length === 0) {
-    items.push({
-      title: 'Balanced baseline indicators',
-      detail: 'Core public-data coverage is present, enabling a measured launch with targeted validation before expansion.',
-    })
-  }
-
-  return items.slice(0, 2)
+const CATEGORY_TITLES: Record<string, string> = {
+  regulatory: 'Regulatory environment',
+  economic: 'Economic momentum',
+  market: 'Market demand and competition',
+  demographic: 'Demographic fit',
+  safety: 'Safety and access',
+  community: 'Community momentum',
 }
 
-function buildRisks(data: NeighborhoodData | null): Signal[] {
-  if (!data) return []
+// Extract granular, business-specific advantages from raw data
+function extractGranularAdvantage(data: NeighborhoodData, profile: UserProfile): Signal | null {
+  const isServiceBusiness = ['Salon', 'Barbershop', 'Gym'].includes(profile.business_type)
+  const isFoodBusiness = ['Restaurant', 'Coffee Shop', 'Bar', 'Cafe'].includes(profile.business_type)
 
-  const items: Signal[] = []
-  const stats = data.inspection_stats
-  const failRate = stats.total > 0 ? stats.failed / stats.total : null
-  const avgRating = data.metrics?.avg_review_rating ?? 0
-  const congestedCount = (data.traffic || []).filter(t => {
-    const level = (t.metadata?.congestion_level as string | undefined)?.toLowerCase()
-    return level === 'heavy' || level === 'blocked'
-  }).length
-
-  if (failRate !== null && failRate >= 0.25 && stats.total >= 4) {
-    items.push({
-      title: 'Elevated compliance risk',
-      detail: `${stats.failed} failed inspections out of ${stats.total} records (${Math.round(failRate * 100)}%) may signal stricter enforcement or operational complexity.`,
-    })
+  // Service businesses: check for good population base
+  if (isServiceBusiness && data.demographics) {
+    const d = data.demographics
+    if (d.total_population && d.total_population > 5000) {
+      return {
+        title: 'Strong resident base supports repeat customer potential',
+        detail: `Neighborhood has ~${Math.round(d.total_population / 1000)}K residents, creating a stable foundation for walk-in and repeat service business.`,
+      }
+    }
   }
 
-  if (data.license_count >= 20) {
-    items.push({
-      title: 'High local competition',
-      detail: `${data.license_count} active business licenses in the area indicate a crowded market and a higher differentiation burden.`,
-    })
+  // Check for recent real estate activity (indicates neighborhood momentum)
+  const realestate = (data.realestate?.length || 0)
+  if (realestate > 3) {
+    return {
+      title: 'Recent real estate activity signals neighborhood growth',
+      detail: `${realestate} active real estate listings indicate ongoing residential or commercial interest in the area.`,
+    }
   }
 
-  if (congestedCount >= 2) {
-    items.push({
-      title: 'Traffic friction',
-      detail: `${congestedCount} nearby heavily congested zones can affect delivery reliability and customer convenience.`,
-    })
+  // Food/beverage: check for social/news visibility
+  if (isFoodBusiness) {
+    const newsCount = (data.news?.length || 0)
+    if (newsCount > 5) {
+      return {
+        title: 'Neighborhood has visible media presence',
+        detail: `${newsCount} recent local news mentions indicate visitor traffic potential and community awareness.`,
+      }
+    }
   }
 
-  if (avgRating > 0 && avgRating < 3.8) {
-    items.push({
-      title: 'Mixed consumer sentiment',
-      detail: `Average local rating is ${avgRating.toFixed(1)}/5, suggesting quality expectations may be difficult to exceed consistently.`,
-    })
+  // Check for diverse license ecosystem (indicates commercial vitality)
+  const uniqueLicenseTypes = new Set(
+    data.licenses.map(l => (l.metadata?.raw_record as Record<string, unknown>)?.license_description || '').filter(Boolean)
+  )
+  if (uniqueLicenseTypes.size > 15) {
+    return {
+      title: 'Diverse business ecosystem suggests commercial stability',
+      detail: `${uniqueLicenseTypes.size} different business types operate in the neighborhood, indicating established commercial infrastructure.`,
+    }
   }
 
-  if (items.length === 0) {
-    items.push({
-      title: 'No dominant red flag detected',
-      detail: 'Current signals do not show an extreme downside driver, but category-specific diligence is still recommended.',
-    })
-  }
-
-  return items.slice(0, 2)
+  return null
 }
 
-function buildSummary(profile: UserProfile, data: NeighborhoodData | null, riskScore: RiskScore | null): string {
-  if (!data) {
-    return `Preparing a location report for ${profile.business_type} in ${profile.neighborhood}.`
+// Extract granular, business-specific risks from raw data
+function extractGranularRisk(data: NeighborhoodData, profile: UserProfile): Signal | null {
+  const isServiceBusiness = ['Salon', 'Barbershop', 'Gym'].includes(profile.business_type)
+  const isFoodBusiness = ['Restaurant', 'Coffee Shop', 'Bar', 'Cafe'].includes(profile.business_type)
+
+  // Service businesses: check for low foot traffic
+  if (isServiceBusiness && data.cctv) {
+    const cameras = data.cctv.cameras || []
+    const avgPeds = data.cctv.avg_pedestrians || 0
+    
+    if (cameras.length > 0 && avgPeds < 5) {
+      return {
+        title: 'Observed foot traffic too low for walk-in service business',
+        detail: `Average pedestrian count ~${Math.round(avgPeds)}/observation across ${cameras.length} cameras; service businesses typically need 10+ for sustainable walk-in volume.`,
+      }
+    }
   }
 
-  const totalSignals =
-    data.inspection_stats.total +
-    data.permit_count +
-    data.license_count +
-    (data.news.length || 0) +
-    (data.politics.length || 0) +
-    (data.reviews?.length || 0) +
-    (data.traffic?.length || 0)
+  // Service businesses: check for income mismatch
+  if (isServiceBusiness && data.demographics && data.demographics.median_household_income) {
+    const income = data.demographics.median_household_income
+    if (income < 30000) {
+      return {
+        title: 'Local income levels may limit premium service demand',
+        detail: `Median household income ~$${Math.round(income / 1000)}K suggests predominantly price-sensitive customer base; premium services may struggle.`,
+      }
+    }
+  }
 
-  const posture = riskScore
-    ? riskScore.overall_score <= 4
-      ? 'favorable'
-      : riskScore.overall_score <= 7
-        ? 'mixed'
-        : 'higher-risk'
-    : 'mixed'
+  // Food businesses: check for stale/declining review activity
+  if (isFoodBusiness && data.reviews && data.reviews.length > 0) {
+    const recentReviews = data.reviews.filter(r => {
+      const metadata = r.metadata as Record<string, unknown>
+      const raw = metadata?.raw_record as Record<string, unknown>
+      const reviewDate = raw?.review_date || raw?.date
+      if (!reviewDate) return false
+      const daysSince = (Date.now() - new Date(reviewDate as string).getTime()) / (1000 * 60 * 60 * 24)
+      return daysSince < 90
+    }).length
 
-  return `${profile.neighborhood} looks ${posture} for a ${profile.business_type.toLowerCase()} launch based on ${totalSignals} local signals. Prioritize quick validation on the highlighted risks while leveraging the strongest demand/compliance advantages.`
+    const totalReviews = data.reviews.length
+    const recentPct = (recentReviews / totalReviews) * 100
+    
+    if (recentPct < 25 && totalReviews > 5) {
+      return {
+        title: 'Review activity declining; weak market engagement signal',
+        detail: `Only ${recentReviews} of ${totalReviews} reviews are recent (< 90 days); suggests weakening customer interest or market presence.`,
+      }
+    }
+  }
+
+  // Generic: check for extreme competitor density
+  const competitors = data.licenses.length
+  if (competitors > 30) {
+    return {
+      title: 'Very high competitor density may compress profit margins',
+      detail: `${competitors} active business licenses suggest intense local competition; differentiation becomes critical for viability.`,
+    }
+  }
+
+  // Check for very low inspection pass rate (food safety risk)
+  if (isFoodBusiness && data.inspection_stats.total > 0) {
+    const passRate = data.inspection_stats.passed / data.inspection_stats.total
+    if (passRate < 0.6) {
+      return {
+        title: 'Area shows low food safety compliance baseline',
+        detail: `Only ${Math.round(passRate * 100)}% of ${data.inspection_stats.total} inspections passed; suggests regulatory compliance challenges in the market.`,
+      }
+    }
+  }
+
+  return null
+}
+
+function buildAdvantages(data: NeighborhoodData | null, profile: UserProfile): Signal[] {
+  if (!data) return []
+
+  // Try to extract a granular, data-driven advantage first
+  const granularAdvantage = extractGranularAdvantage(data, profile)
+  if (granularAdvantage) {
+    return [granularAdvantage]
+  }
+
+  // Fall back to BIS-driven advantage
+  const insights = computeInsights(data, profile, 'conservative')
+  const positive = insights.categories
+    .filter(cat => cat.signal !== 'negative')
+    .sort((a, b) => b.score - a.score)
+
+  if (positive.length > 0) {
+    const strongest = positive[0]
+    return [{
+      title: CATEGORY_TITLES[strongest.id] ?? strongest.name,
+      detail: `${strongest.claim} (Business Intelligence Score: ${strongest.score}/100).`,
+    }]
+  }
+
+  return [{
+    title: 'Limited favorable evidence',
+    detail: 'Not enough scored categories show a strong upside signal yet; collect more ground-truth data before scaling.',
+  }]
+}
+
+function buildRisks(data: NeighborhoodData | null, profile: UserProfile): Signal[] {
+  if (!data) return []
+
+  // Try to extract a granular, data-driven risk first
+  const granularRisk = extractGranularRisk(data, profile)
+  
+  const insights = computeInsights(data, profile, 'conservative')
+  
+  // High-severity score-driven risks (actual negative/concerning scores)
+  const scoreDrivenRisks = insights.categories
+    .filter(cat => cat.signal === 'negative' || cat.score < 40)
+    .sort((a, b) => a.score - b.score)
+
+  // If we found a granular risk AND there are significant score-driven concerns, 
+  // prioritize the score-driven one (real data > inference)
+  if (scoreDrivenRisks.length > 0) {
+    return [{
+      title: CATEGORY_TITLES[scoreDrivenRisks[0].id] ?? scoreDrivenRisks[0].name,
+      detail: `${scoreDrivenRisks[0].claim} (Business Intelligence Score: ${scoreDrivenRisks[0].score}/100).`,
+    }]
+  }
+
+  // If no score-driven risks but granular risk found, use it
+  if (granularRisk) {
+    return [granularRisk]
+  }
+
+  // Fall back to neutral/monitoring signal
+  const weakerSignals = insights.categories
+    .filter(cat => cat.signal === 'neutral')
+    .sort((a, b) => a.score - b.score)
+
+  if (weakerSignals.length > 0) {
+    return [{
+      title: `${CATEGORY_TITLES[weakerSignals[0].id] ?? weakerSignals[0].name} requires validation`,
+      detail: `${weakerSignals[0].claim} (Business Intelligence Score: ${weakerSignals[0].score}/100).`,
+    }]
+  }
+
+  return [{
+    title: 'No dominant risk detected',
+    detail: 'No high-severity downside signal is currently dominant, but continue monitoring for data drift and execution risk.',
+  }]
 }
 
 function safeNumber(value: number | undefined): string {
   return typeof value === 'number' ? `${value}` : 'N/A'
 }
 
-export default function LocationReportPanel({ profile, neighborhoodData, riskScore, loading, agentInfo }: Props) {
-  const advantages = buildAdvantages(neighborhoodData)
-  const risks = buildRisks(neighborhoodData)
-  const summary = buildSummary(profile, neighborhoodData, riskScore)
+export default function LocationReportPanel({ profile, neighborhoodData, riskScore, loading, agentInfo: _agentInfo }: Props) {
+  const advantages = buildAdvantages(neighborhoodData, profile)
+  const risks = buildRisks(neighborhoodData, profile)
+  const conservativeInsights = neighborhoodData
+    ? computeInsights(neighborhoodData, profile, 'conservative')
+    : null
 
   const handleDownloadPdf = () => {
     if (loading) return
@@ -201,45 +290,6 @@ export default function LocationReportPanel({ profile, neighborhoodData, riskSco
     }
 
     const dateLabel = new Date().toLocaleString()
-    const rating = neighborhoodData?.metrics?.avg_review_rating
-    const stats = neighborhoodData?.inspection_stats
-    const passRate = stats && stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : null
-    const failRate = stats && stats.total > 0 ? Math.round((stats.failed / stats.total) * 100) : null
-    const congestedCount = (neighborhoodData?.traffic || []).filter((t) => {
-      const level = (t.metadata?.congestion_level as string | undefined)?.toLowerCase()
-      return level === 'heavy' || level === 'blocked'
-    }).length
-
-    const detailedAdvantages = [
-      passRate !== null && stats
-        ? `Regulatory baseline: ${stats.passed} of ${stats.total} inspections passed (${passRate}%), which may support smoother launch operations.`
-        : null,
-      typeof rating === 'number' && rating > 0
-        ? `Demand signal: local review sentiment averages ${rating.toFixed(1)}/5 across ${neighborhoodData?.reviews?.length || 0} records.`
-        : null,
-      neighborhoodData?.cctv?.cameras.length
-        ? `Street activity: ${neighborhoodData.cctv.cameras.length} nearby CCTV points report ${neighborhoodData.cctv.density} traffic density with ~${neighborhoodData.cctv.avg_pedestrians} average pedestrians.`
-        : null,
-      neighborhoodData && neighborhoodData.permit_count > 0
-        ? `Investment velocity: ${neighborhoodData.permit_count} active permits suggest current reinvestment in the area.`
-        : null,
-    ].filter((v): v is string => Boolean(v))
-
-    const detailedRisks = [
-      failRate !== null && stats
-        ? `Compliance exposure: ${stats.failed} failed inspections out of ${stats.total} (${failRate}%) may indicate tighter enforcement expectations.`
-        : null,
-      neighborhoodData && neighborhoodData.license_count > 0
-        ? `Competitive pressure: ${neighborhoodData.license_count} active licenses increase the need for differentiation and pricing discipline.`
-        : null,
-      congestedCount > 0
-        ? `Mobility friction: ${congestedCount} congested traffic zones may affect logistics, delivery times, and customer access.`
-        : null,
-      typeof rating === 'number' && rating > 0 && rating < 3.8
-        ? `Consumer expectation risk: average rating at ${rating.toFixed(1)}/5 can imply stricter quality benchmarks for new entrants.`
-        : null,
-    ].filter((v): v is string => Boolean(v))
-
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(18)
     doc.text('Aleithia Report Summary', marginX, y)
@@ -252,34 +302,36 @@ export default function LocationReportPanel({ profile, neighborhoodData, riskSco
     doc.text(`Generated: ${dateLabel}`, marginX, y)
     y += 16
 
-    addHeading('Executive Summary')
-    addParagraph(summary)
-
-    addHeading('Agent Intelligence')
-    if (agentInfo) {
-      addParagraph(`Agents deployed: ${agentInfo.agents_deployed} | Neighborhoods analyzed: ${agentInfo.neighborhoods.length} | Data points: ${agentInfo.data_points}`)
-      if (agentInfo.agent_summaries.length > 0) {
-        addParagraph('Top contributing agents:')
-        agentInfo.agent_summaries.slice(0, 8).forEach((agent) => {
-          addBullet(`${agent.name}: ${agent.data_points} points${agent.sources?.length ? ` (${agent.sources.join(', ')})` : ''}`)
-        })
-      }
+    addHeading('Business Intelligence Score (Conservative Profile)')
+    if (conservativeInsights) {
+      addParagraph(`Overall score: ${conservativeInsights.overall}/100 across ${conservativeInsights.coverageCount} of 6 categories.`)
     } else {
-      addParagraph('Agent summary unavailable for this run. Pipeline metrics are shown from loaded neighborhood signals.')
+      addParagraph('Business Intelligence Score is unavailable because neighborhood data has not loaded.')
     }
 
-    addHeading('Detailed Advantages')
-    if (detailedAdvantages.length > 0) {
-      detailedAdvantages.forEach(addBullet)
+    addHeading('Top Advantages (BIS-Driven)')
+    if (advantages.length > 0) {
+      advantages.forEach((item) => addBullet(`${item.title}: ${item.detail}`))
     } else {
       addBullet('No strong upside concentration detected; proceed with controlled pilot testing.')
     }
 
-    addHeading('Detailed Risks')
-    if (detailedRisks.length > 0) {
-      detailedRisks.forEach(addBullet)
+    addHeading('Top Risks (BIS-Driven)')
+    if (risks.length > 0) {
+      risks.forEach((item) => addBullet(`${item.title}: ${item.detail}`))
     } else {
       addBullet('No single dominant risk detected; continue validation for category-specific constraints.')
+    }
+
+    addHeading('Category Breakdown')
+    if (conservativeInsights && conservativeInsights.categories.length > 0) {
+      const ranked = [...conservativeInsights.categories].sort((a, b) => b.score - a.score)
+      ranked.forEach((cat) => {
+        const label = CATEGORY_TITLES[cat.id] ?? cat.name
+        addBullet(`${label}: ${cat.score}/100 (${cat.signalLabel}) — ${cat.claim}`)
+      })
+    } else {
+      addBullet('No category-level Business Intelligence Scores are available for this location yet.')
     }
 
     addHeading('Data Snapshot')
@@ -320,37 +372,6 @@ export default function LocationReportPanel({ profile, neighborhoodData, riskSco
           <div className="text-xs text-white/40 font-mono">Generating report from live pipeline signals…</div>
         ) : (
           <>
-            {agentInfo && (
-              <div className="border border-cyan-500/20 bg-cyan-500/[0.04] p-3">
-                <p className="text-[10px] font-mono uppercase tracking-wider text-cyan-200/75 mb-2">Agent Intelligence</p>
-                <div className="grid grid-cols-3 gap-2 mb-3">
-                  <div>
-                    <p className="text-[10px] font-mono text-white/35 uppercase">Agents</p>
-                    <p className="text-sm font-semibold text-white">{agentInfo.agents_deployed}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-mono text-white/35 uppercase">Neighborhoods</p>
-                    <p className="text-sm font-semibold text-white">{agentInfo.neighborhoods.length}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-mono text-white/35 uppercase">Data points</p>
-                    <p className="text-sm font-semibold text-white">{agentInfo.data_points}</p>
-                  </div>
-                </div>
-
-                {agentInfo.agent_summaries.length > 0 && (
-                  <div className="space-y-1.5">
-                    {agentInfo.agent_summaries.slice(0, 4).map((agent) => (
-                      <div key={agent.name} className="flex items-center justify-between text-[11px] border border-white/10 px-2 py-1.5">
-                        <span className="text-white/70 capitalize">{agent.name}</span>
-                        <span className="font-mono text-white/85">{agent.data_points}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
             <div>
               <p className="text-[10px] font-mono uppercase tracking-wider text-emerald-300/70 mb-2">Advantages</p>
               <div className="space-y-2">
@@ -373,11 +394,6 @@ export default function LocationReportPanel({ profile, neighborhoodData, riskSco
                   </div>
                 ))}
               </div>
-            </div>
-
-            <div className="border border-white/[0.08] bg-black/20 p-3">
-              <p className="text-[10px] font-mono uppercase tracking-wider text-white/35 mb-2">Brief summary</p>
-              <p className="text-[11px] text-white/75 leading-relaxed">{summary}</p>
             </div>
           </>
         )}

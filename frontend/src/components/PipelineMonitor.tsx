@@ -58,8 +58,9 @@ export default function PipelineMonitor() {
 
   const pipelines = Object.entries(status.pipelines)
 
+  const hasRunning = Object.values(status.gpu_status).some((s) => s === 'available')
   return (
-    <div className="border border-white/[0.06] bg-white/[0.01] overflow-hidden">
+    <div className={`border overflow-hidden transition-shadow ${hasRunning ? 'border-[#2B95D6]/30 bg-white/[0.01]' : 'border-white/[0.06] bg-white/[0.01]'}`} style={hasRunning ? { boxShadow: '0 0 16px rgba(43, 149, 214, 0.12)' } : undefined}>
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition-colors cursor-pointer"

@@ -1442,7 +1442,7 @@ async def graph(page: int = 1, limit: int = 200):
         import httpx
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                "https://api.supermemory.ai/v3/documents/documents",
+                "https://api.supermemory.ai/v3/documents/list",
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {api_key}",

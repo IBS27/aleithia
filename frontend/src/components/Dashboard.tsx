@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { SignedIn, SignedOut, SignInButton, SignUpButton, useClerk, useUser } from '@clerk/clerk-react'
 import type { UserProfile, NeighborhoodData, DataSources, RiskScore } from '../types/index.ts'
 import { api } from '../api.ts'
@@ -20,6 +20,8 @@ import MLMonitor from './MLMonitor.tsx'
 import CCTVFeedCard from './CCTVFeedCard.tsx'
 import InsightsCard from './InsightsCard.tsx'
 import LocationReportPanel from './LocationReportPanel.tsx'
+import Drawer from './Drawer.tsx'
+import ProfilePage from './ProfilePage.tsx'
 
 /*
   Legacy chat imports intentionally commented out (not deleted):
@@ -189,12 +191,19 @@ function computeRiskScore(data: NeighborhoodData, profile: UserProfile): RiskSco
 interface Props {
   profile: UserProfile
   onReset: () => void
+  token?: string | null
+  onProfileUpdate?: () => void
+  initialProfileDrawerOpen?: boolean
 }
 
-export default function Dashboard({ profile, onReset }: Props) {
+export default function Dashboard({ profile, onReset, token, onProfileUpdate, initialProfileDrawerOpen = false }: Props) {
   const { signOut } = useClerk()
   const { user } = useUser()
   const navigate = useNavigate()
+  const location = useLocation()
+  const [profileDrawerOpen, setProfileDrawerOpen] = useState(
+    (initialProfileDrawerOpen || (location.state as { openProfileDrawer?: boolean } | null)?.openProfileDrawer) ?? false,
+  )
   const [neighborhoodData, setNeighborhoodData] = useState<NeighborhoodData | null>(null)
   const [sources, setSources] = useState<DataSources | null>(null)
   const [riskScore, setRiskScore] = useState<RiskScore | null>(null)
@@ -481,19 +490,19 @@ export default function Dashboard({ profile, onReset }: Props) {
           <SignedOut>
             <SignInButton mode="modal">
               <button className="text-[10px] font-mono uppercase tracking-wider text-white/30 hover:text-white/60 transition-colors cursor-pointer">
-                Log in
+                Auth
               </button>
             </SignInButton>
             <SignUpButton mode="modal">
-              <button className="text-[10px] font-mono uppercase tracking-wider text-white/30 hover:text-white/60 transition-colors cursor-pointer">
-                Sign up
+              <button className="text-[10px] font-mono uppercase tracking-wider text-white hover:text-white/80 transition-colors cursor-pointer">
+                Initialize
               </button>
             </SignUpButton>
           </SignedOut>
 
           <SignedIn>
             {user && <span className="text-[10px] font-mono text-white/25">{user.primaryEmailAddress?.emailAddress}</span>}
-            <button onClick={() => navigate('/profile')} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
+            <button onClick={() => setProfileDrawerOpen(true)} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
               Profile
             </button>
             <button onClick={() => signOut()} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
@@ -557,21 +566,25 @@ export default function Dashboard({ profile, onReset }: Props) {
             <>
               {activeTab === 'overview' && (
                 <div className="space-y-4">
-                  <div className="h-[300px]">
-                    <MapView activeNeighborhood={profile.neighborhood} />
+                  {/* HUD quadrant grid: Map + Risk | Demographics */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="h-[280px] min-h-0">
+                      <MapView activeNeighborhood={profile.neighborhood} />
+                    </div>
+                    <div className="min-h-0">
+                      {riskScore ? <RiskCard score={riskScore} /> : <div className="h-full border border-white/[0.06] bg-white/[0.01] p-6 flex items-center justify-center"><span className="text-[10px] font-mono text-white/20">Loading risk assessment</span></div>}
+                    </div>
                   </div>
 
-                  {/* Risk + Demographics side by side */}
+                  {/* Quadrant 2: Demographics + Insights */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    {riskScore && <RiskCard score={riskScore} />}
                     {neighborhoodData?.metrics && (
                       <DemographicsCard metrics={neighborhoodData.metrics} demographics={neighborhoodData.demographics} cctv={neighborhoodData.cctv} />
                     )}
+                    {neighborhoodData && (
+                      <InsightsCard data={neighborhoodData} profile={profile} />
+                    )}
                   </div>
-
-                  {neighborhoodData && (
-                    <InsightsCard data={neighborhoodData} profile={profile} />
-                  )}
 
                   {neighborhoodData?.traffic && neighborhoodData.traffic.length > 0 && (
                     <TrafficCard data={neighborhoodData.traffic} />
@@ -678,7 +691,7 @@ export default function Dashboard({ profile, onReset }: Props) {
         </div>
 
         {/* Right: Report */}
-        <div className="w-96 border-l border-white/[0.06] p-4">
+        <div className="w-96 border-l-2 border-[#2B95D6]/40 p-4" style={{ boxShadow: '-4px 0 24px rgba(43, 149, 214, 0.08)' }}>
           {/*
             <ChatPanel
               messages={messages}
@@ -703,6 +716,20 @@ export default function Dashboard({ profile, onReset }: Props) {
           />
         </div>
       </div>
+
+      <Drawer
+        open={profileDrawerOpen}
+        onClose={() => setProfileDrawerOpen(false)}
+        title="Profile"
+        width="max-w-md"
+      >
+        <ProfilePage
+          token={token}
+          onClose={() => setProfileDrawerOpen(false)}
+          onProfileUpdate={onProfileUpdate}
+          embedded
+        />
+      </Drawer>
     </div>
   )
 }

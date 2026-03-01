@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { MemoryGraph } from '@supermemory/memory-graph'
 import type { DocumentWithMemories } from '@supermemory/memory-graph'
 import { api } from '../api.ts'
@@ -10,19 +11,38 @@ interface Props {
 }
 
 function normalizeDocs(raw: Record<string, unknown>[]): DocumentWithMemories[] {
-  return raw.map((doc) => ({
-    ...doc,
-    memoryEntries: (doc.memoryEntries ?? []) as DocumentWithMemories['memoryEntries'],
-    contentHash: (doc.contentHash ?? null) as string | null,
-    orgId: (doc.orgId ?? '') as string,
-    userId: (doc.userId ?? '') as string,
-    status: (doc.status ?? 'done') as DocumentWithMemories['status'],
-    createdAt: (doc.createdAt ?? new Date().toISOString()) as string,
-    updatedAt: (doc.updatedAt ?? new Date().toISOString()) as string,
-  })) as DocumentWithMemories[]
+  return raw.map((doc) => {
+    const entries = (doc.memoryEntries ?? doc.memories ?? []) as DocumentWithMemories['memoryEntries']
+    const docId = String(doc.id ?? doc.customId ?? `doc-${Math.random().toString(36).slice(2)}`)
+    const createdAt = typeof doc.createdAt === 'string' ? doc.createdAt : new Date().toISOString()
+    const updatedAt = typeof doc.updatedAt === 'string' ? doc.updatedAt : createdAt
+    const containerTags = doc.containerTags as string[] | undefined
+    // If no memory entries, create one from the document so the graph can render document nodes
+    const memoryEntries = entries.length > 0 ? entries : [{
+      id: `${docId}-m0`,
+      documentId: docId,
+      content: (doc.content ?? doc.summary ?? '') as string | null,
+      title: (doc.title ?? null) as string | null,
+      createdAt,
+      updatedAt,
+      metadata: (doc.metadata ?? null) as Record<string, string | number | boolean> | null,
+    }]
+    return {
+      ...doc,
+      id: docId,
+      memoryEntries,
+      contentHash: (doc.contentHash ?? null) as string | null,
+      orgId: String(doc.orgId ?? ''),
+      userId: String(doc.userId ?? containerTags?.[0] ?? ''),
+      status: (doc.status ?? 'done') as DocumentWithMemories['status'],
+      createdAt,
+      updatedAt,
+    } as DocumentWithMemories
+  })
 }
 
 export default function MemoryGraphPage({ onBack }: Props) {
+  const navigate = useNavigate()
   const [documents, setDocuments] = useState<DocumentWithMemories[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
@@ -34,8 +54,6 @@ export default function MemoryGraphPage({ onBack }: Props) {
   const [searchQuery, setSearchQuery] = useState('')
   const [highlightsVisible, setHighlightsVisible] = useState(false)
 
-  // Space filter
-  const [selectedSpace, setSelectedSpace] = useState('')
 
   // Slideshow
   const [slideshowActive, setSlideshowActive] = useState(false)
@@ -45,15 +63,37 @@ export default function MemoryGraphPage({ onBack }: Props) {
     api
       .graph({ page: 1, limit: PAGE_SIZE })
       .then((data) => {
-        const raw = (data as { documents?: Record<string, unknown>[]; pagination?: { totalPages: number } }).documents ?? []
-        const pagination = (data as { pagination?: { totalPages: number } }).pagination
+        const d = data as Record<string, unknown>
+        const pagination = d.pagination as { totalPages?: number } | undefined
+        let raw: Record<string, unknown>[] | undefined
+        const top = d.documents ?? d.memories ?? d.data ?? d.result
+        if (Array.isArray(top)) {
+          raw = top
+        } else if (top && typeof top === 'object' && !Array.isArray(top)) {
+          const inner = (top as Record<string, unknown>).documents ?? (top as Record<string, unknown>).memories ?? (top as Record<string, unknown>).items
+          raw = Array.isArray(inner) ? inner : []
+        } else {
+          raw = []
+        }
+        if (import.meta.env.DEV && raw.length === 0) {
+          // eslint-disable-next-line no-console
+          console.debug('[MemoryGraph] 0 docs parsed; raw response keys:', Object.keys(d))
+        }
         setDocuments(normalizeDocs(raw))
         setHasMore(pagination ? pagination.totalPages > 1 : false)
         setPage(1)
         setIsLoading(false)
       })
       .catch((err) => {
-        setError(err instanceof Error ? err : new Error(String(err)))
+        // On 500 or API failure, show empty graph instead of harsh error
+        const msg = err instanceof Error ? err.message : String(err)
+        if (msg.includes('500') || msg.includes('API error')) {
+          setDocuments([])
+          setHasMore(false)
+          setError(null)
+        } else {
+          setError(err instanceof Error ? err : new Error(String(err)))
+        }
         setIsLoading(false)
       })
   }, [])
@@ -65,8 +105,18 @@ export default function MemoryGraphPage({ onBack }: Props) {
     setIsLoadingMore(true)
     try {
       const data = await api.graph({ page: nextPage, limit: PAGE_SIZE })
-      const raw = (data as { documents?: Record<string, unknown>[]; pagination?: { totalPages: number } }).documents ?? []
-      const pagination = (data as { pagination?: { totalPages: number } }).pagination
+      const d = data as Record<string, unknown>
+      const pagination = d.pagination as { totalPages?: number } | undefined
+      let raw: Record<string, unknown>[] | undefined
+      const top = d.documents ?? d.memories ?? d.data ?? d.result
+      if (Array.isArray(top)) {
+        raw = top
+      } else if (top && typeof top === 'object' && !Array.isArray(top)) {
+        const inner = (top as Record<string, unknown>).documents ?? (top as Record<string, unknown>).memories ?? (top as Record<string, unknown>).items
+        raw = Array.isArray(inner) ? inner : []
+      } else {
+        raw = []
+      }
       setDocuments((prev) => [...prev, ...normalizeDocs(raw)])
       setHasMore(pagination ? nextPage < pagination.totalPages : false)
       setPage(nextPage)
@@ -141,7 +191,7 @@ export default function MemoryGraphPage({ onBack }: Props) {
           onClick={() => setSlideshowActive((prev) => !prev)}
           className={`px-4 py-1.5 text-sm font-medium border transition-colors cursor-pointer ${
             slideshowActive
-              ? 'bg-white text-[#06080d] border-white'
+              ? '!bg-white !text-[#06080d] border-white'
               : 'border-white/20 text-white/60 hover:text-white hover:border-white/40'
           }`}
         >
@@ -160,10 +210,8 @@ export default function MemoryGraphPage({ onBack }: Props) {
           isLoading={isLoading}
           error={error}
           variant="console"
-          maxNodes={80}
-          showSpacesSelector
-          selectedSpace={selectedSpace}
-          onSpaceChange={setSelectedSpace}
+          maxNodes={200}
+          showSpacesSelector={false}
           hasMore={hasMore}
           loadMoreDocuments={loadMore}
           isLoadingMore={isLoadingMore}
@@ -174,7 +222,25 @@ export default function MemoryGraphPage({ onBack }: Props) {
           isSlideshowActive={slideshowActive}
           onSlideshowNodeChange={() => {}}
           onSlideshowStop={() => setSlideshowActive(false)}
-        />
+        >
+          {!isLoading && documents.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-64 gap-4 text-center">
+              <p className="text-sm font-mono text-white/40">
+                No documents in the knowledge graph yet.
+              </p>
+              <p className="text-xs font-mono text-white/25 max-w-sm">
+                Run analysis and ask a question in the chat to ingest documents.
+              </p>
+              <button
+                type="button"
+                onClick={() => navigate('/start')}
+                className="pointer-events-auto px-6 py-2.5 text-sm font-medium !bg-white !text-[#06080d] hover:!bg-white/90 transition-colors cursor-pointer"
+              >
+                Initialize Session
+              </button>
+            </div>
+          )}
+        </MemoryGraph>
       </div>
     </div>
   )

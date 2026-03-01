@@ -1,8 +1,20 @@
 @import "tailwindcss";
 
+/* Palantir/Blueprint intent tokens */
 @theme {
-  --font-sans: 'Space Grotesk', system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Code', monospace;
+  /* Blueprint-style intent colors */
+  --color-intent-primary: #2B95D6;
+  --color-intent-primary-hover: #48AFF0;
+  --color-intent-success: #29A634;
+  --color-intent-warning: #D99E0B;
+  --color-intent-danger: #DB3737;
+  /* HUD accent glow */
+  --glow-primary: 0 0 20px rgba(43, 149, 214, 0.35);
+  --glow-success: 0 0 12px rgba(41, 166, 52, 0.3);
+  --glow-warning: 0 0 12px rgba(217, 158, 11, 0.3);
+  --glow-danger: 0 0 12px rgba(219, 55, 55, 0.3);
 }
 
 @layer base {
@@ -32,6 +44,12 @@
   .animate-scroll-x {
     animation: scroll-x 30s linear infinite;
   }
+  /* HUD glow accents */
+  .glow-primary { box-shadow: var(--glow-primary); }
+  .glow-success { box-shadow: var(--glow-success); }
+  .glow-warning { box-shadow: var(--glow-warning); }
+  .glow-danger { box-shadow: var(--glow-danger); }
+  .border-glow-primary { box-shadow: 0 0 0 1px rgba(43, 149, 214, 0.4), var(--glow-primary); }
 }
 
 @keyframes scroll-x {
