@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Routes, Route, useNavigate } from 'react-router-dom'
 import { useUser, useAuth } from '@clerk/clerk-react'
 import type { UserProfile } from './types/index.ts'
@@ -6,9 +6,12 @@ import { api } from './api.ts'
 import LandingPage from './components/LandingPage.tsx'
 import OnboardingForm from './components/OnboardingForm.tsx'
 import Dashboard from './components/Dashboard.tsx'
-import HowItWorks from './components/HowItWorks.tsx'
-import MemoryGraphPage from './components/MemoryGraphPage.tsx'
 import ProfilePage from './components/ProfilePage.tsx'
+
+// Lazy-load pages that import @supermemory/memory-graph (its CSS has a global
+// button reset that conflicts with Tailwind's bg-white utility)
+const HowItWorks = lazy(() => import('./components/HowItWorks.tsx'))
+const MemoryGraphPage = lazy(() => import('./components/MemoryGraphPage.tsx'))
 
 function App() {
   const { isLoaded, isSignedIn, user } = useUser()
@@ -61,8 +64,8 @@ function App() {
 
   return (
     <Routes>
-      <Route path="/how-it-works" element={<HowItWorks onBack={() => navigate('/')} />} />
-      <Route path="/memory-graph" element={<MemoryGraphPage onBack={() => navigate('/')} />} />
+      <Route path="/how-it-works" element={<Suspense fallback={<div className="min-h-screen bg-[#06080d]" />}><HowItWorks onBack={() => navigate('/')} /></Suspense>} />
+      <Route path="/memory-graph" element={<Suspense fallback={<div className="min-h-screen bg-[#06080d]" />}><MemoryGraphPage onBack={() => navigate('/')} /></Suspense>} />
       <Route path="/profile" element={<ProfilePage token={token} onClose={() => navigate('/')} onProfileUpdate={() => setSavedProfile(null)} />} />
       <Route
         path="/"

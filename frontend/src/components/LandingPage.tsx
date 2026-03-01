@@ -1,14 +1,8 @@
-import { Suspense, useEffect, useState } from 'react'
+import { Suspense } from 'react'
 import Spline from '@splinetool/react-spline'
 import type { Application } from '@splinetool/runtime'
-import { MemoryGraph, injectStyles } from '@supermemory/memory-graph'
-import '@supermemory/memory-graph/styles.css'
-import type { DocumentWithMemories } from '@supermemory/memory-graph'
 import CityGlobe from './CityGlobe'
 import LogoLoop from './LogoLoop'
-import { api } from '../api.ts'
-
-injectStyles()
 
 interface Props {
   onGetStarted: () => void
@@ -75,34 +69,6 @@ const DATA_PILLARS = [
 ]
 
 export default function LandingPage({ onGetStarted, onViewSource }: Props) {
-  const [graphDocs, setGraphDocs] = useState<DocumentWithMemories[]>([])
-  const [graphLoading, setGraphLoading] = useState(true)
-  const [graphError, setGraphError] = useState<Error | null>(null)
-
-  useEffect(() => {
-    api
-      .graph({ page: 1, limit: 200 })
-      .then((data) => {
-        const raw = (data as { documents?: Record<string, unknown>[] }).documents ?? []
-        const normalized: DocumentWithMemories[] = raw.map((doc) => ({
-          ...doc,
-          memoryEntries: (doc.memoryEntries ?? doc.memories ?? []) as DocumentWithMemories['memoryEntries'],
-          contentHash: (doc.contentHash ?? null) as string | null,
-          orgId: (doc.orgId ?? '') as string,
-          userId: (doc.userId ?? '') as string,
-          status: (doc.status ?? 'done') as DocumentWithMemories['status'],
-          createdAt: (doc.createdAt ?? new Date().toISOString()) as string,
-          updatedAt: (doc.updatedAt ?? new Date().toISOString()) as string,
-        })) as DocumentWithMemories[]
-        setGraphDocs(normalized)
-        setGraphLoading(false)
-      })
-      .catch((err) => {
-        setGraphError(err instanceof Error ? err : new Error(String(err)))
-        setGraphLoading(false)
-      })
-  }, [])
-
   return (
     <div className="bg-[#06080d] text-white">
       {/* ── Hero ── */}
@@ -154,7 +120,7 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
                 </button>
                 <button
                   onClick={onViewSource}
-                  className="pointer-events-auto px-8 py-3.5 text-sm font-semibold bg-white text-[#06080d] hover:bg-gray-200 transition-colors cursor-pointer"
+                  className="pointer-events-auto px-8 py-3.5 text-sm font-semibold border border-white/20 text-white/70 hover:text-white hover:border-white/40 transition-colors cursor-pointer"
                 >
                   How It Works
                 </button>
@@ -265,30 +231,22 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
 
       {/* ── Memory Graph ── */}
       <section className="relative border-t border-white/[0.04]">
-        <div className="px-10 pt-20 pb-6 max-w-7xl mx-auto">
+        <div className="px-10 py-20 max-w-7xl mx-auto text-center">
           <p className="text-xs font-mono font-medium uppercase tracking-[0.3em] text-white/30 mb-4">
             Knowledge layer
           </p>
           <h2 className="text-4xl sm:text-5xl font-bold tracking-tight text-white leading-[1.1] mb-4">
             Memory Graph
           </h2>
-          <p className="text-base text-white/50 mb-8 max-w-2xl">
+          <p className="text-base text-white/50 mb-10 max-w-2xl mx-auto">
             Every ingested document is stored in Supermemory and connected by semantic similarity. Explore the knowledge graph powering Alethia's intelligence.
           </p>
-        </div>
-        <div className="h-[700px] w-full">
-          <MemoryGraph
-            documents={graphDocs}
-            isLoading={graphLoading}
-            error={graphError}
-            variant="console"
-            maxNodes={50}
-            showSpacesSelector
+          <button
+            onClick={onViewSource}
+            className="pointer-events-auto px-8 py-3.5 text-sm font-semibold bg-white text-[#06080d] hover:bg-gray-200 transition-colors cursor-pointer"
           >
-            <div className="flex items-center justify-center h-full">
-              <p className="text-sm font-mono text-white/20">No documents ingested yet</p>
-            </div>
-          </MemoryGraph>
+            Explore the Graph
+          </button>
         </div>
       </section>
 
