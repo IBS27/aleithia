@@ -380,7 +380,7 @@ export default function MLMonitor() {
             <div className="text-[10px] font-mono text-white/15 space-y-0.5">
               <div>1. Load raw documents from /data/raw/*.json</div>
               <div>2. Generate questions via vLLM (Chicago business advisor persona)</div>
-              <div>3. Generate answers with source context (Alethia persona)</div>
+              <div>3. Generate answers with source context (Aleithia persona)</div>
               <div>4. Filter pairs (q &gt; 10 chars, a &gt; 20 chars) &rarr; {TRAINING_DATA.outputPath}</div>
             </div>
           </div>

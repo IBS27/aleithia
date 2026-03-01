@@ -123,7 +123,7 @@ export default function HowItWorks({ onBack }: Props) {
           onClick={onBack}
           className="text-lg font-semibold tracking-tight text-white uppercase hover:text-white/80 transition-colors cursor-pointer"
         >
-          Alethia
+          Aleithia
         </button>
         <button
           type="button"
@@ -140,7 +140,7 @@ export default function HowItWorks({ onBack }: Props) {
           Architecture & Backend Logic
         </h1>
         <p className="text-base text-white/50 mb-16">
-          Alethia ingests Chicago-area data, enriches it with GPU models, and delivers insights through an agent swarm. All compute runs on Modal.
+          Aleithia ingests Chicago-area data, enriches it with GPU models, and delivers insights through an agent swarm. All compute runs on Modal.
         </p>
 
         {/* Architecture overview */}
@@ -209,7 +209,7 @@ export default function HowItWorks({ onBack }: Props) {
             Batch processing via <span className={CODE}>@modal.batched</span> + <span className={CODE}>asyncio.gather()</span>. Enriched docs saved to <span className={CODE}>/data/processed/enriched/</span>.
           </p>
           <p className={`${BODY} mt-4`}>
-            <span className={CODE}>modal_app/llm.py</span> — AlethiaLLM runs Qwen3 8B via vLLM on H100 for streaming chat and intelligence briefs. 20 concurrent inputs via <span className={CODE}>@modal.concurrent</span>.
+            <span className={CODE}>modal_app/llm.py</span> — AleithiaLLM runs Qwen3 8B via vLLM on H100 for streaming chat and intelligence briefs. 20 concurrent inputs via <span className={CODE}>@modal.concurrent</span>.
           </p>
         </section>
 

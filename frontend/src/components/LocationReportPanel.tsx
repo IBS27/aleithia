@@ -242,7 +242,7 @@ export default function LocationReportPanel({ profile, neighborhoodData, riskSco
 
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(18)
-    doc.text('Alethia Report Summary', marginX, y)
+    doc.text('Aleithia Report Summary', marginX, y)
     y += 22
 
     doc.setFont('helvetica', 'normal')

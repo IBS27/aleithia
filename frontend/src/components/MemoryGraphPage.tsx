@@ -106,7 +106,7 @@ export default function MemoryGraphPage({ onBack }: Props) {
           onClick={onBack}
           className="text-lg font-semibold tracking-tight text-white uppercase hover:text-white/80 transition-colors cursor-pointer"
         >
-          Alethia
+          Aleithia
         </button>
         <button
           type="button"

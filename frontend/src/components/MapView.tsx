@@ -233,7 +233,7 @@ function addSourceAndLayers(map: mapboxgl.Map, geojson: GeoJSON.FeatureCollectio
         const coords = (e.features[0].geometry as GeoJSON.Point).coordinates.slice() as [number, number]
 
         popupRef.current?.remove()
-        popupRef.current = new mapboxgl.Popup({ closeButton: false, className: 'alethia-popup' })
+        popupRef.current = new mapboxgl.Popup({ closeButton: false, className: 'aleithia-popup' })
         .setLngLat(coords)
         .setHTML(`
           <div style="font-family:system-ui;font-size:13px;color:#e2e8f0;line-height:1.5;background:#1e1e2e;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.08)">
@@ -323,7 +323,7 @@ function addSourceAndLayers(map: mapboxgl.Map, geojson: GeoJSON.FeatureCollectio
 }
 const style = document.createElement('style')
 style.textContent = `
-  .alethia-popup.mapboxgl-popup .mapboxgl-popup-content {
+  .aleithia-popup.mapboxgl-popup .mapboxgl-popup-content {
     background: transparent !important;
     padding: 0 !important;
     box-shadow: none !important;
@@ -331,7 +331,7 @@ style.textContent = `
     border-radius: 0 !important;
     margin: 0 !important;
   }
-  .alethia-popup.mapboxgl-popup .mapboxgl-popup-tip {
+  .aleithia-popup.mapboxgl-popup .mapboxgl-popup-tip {
     border-top-color: #1e1e2e !important;
   }
 `

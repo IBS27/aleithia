@@ -51,7 +51,7 @@ export default function OnboardingForm({ onSubmit, onCancel, initialProfile }: P
             onClick={() => onCancel?.()}
             className="text-xs font-mono font-medium uppercase tracking-[0.3em] text-white/30 hover:text-white/50 transition-colors cursor-pointer mb-4 block"
           >
-            Alethia
+            Aleithia
           </button>
           <h1 className="text-3xl font-bold tracking-tight text-white mb-2">
             Configure analysis.

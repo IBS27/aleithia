@@ -86,7 +86,7 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
           {/* Translucent nav */}
           <nav className="flex items-center justify-between px-10 py-5 bg-white/[0.03] backdrop-blur-md border-b border-white/[0.06]">
             <span className="text-lg font-semibold tracking-tight text-white uppercase">
-              Alethia
+              Aleithia
             </span>
             <button
               onClick={onGetStarted}
@@ -239,7 +239,7 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
             Memory Graph
           </h2>
           <p className="text-base text-white/50 mb-10 max-w-2xl mx-auto">
-            Every ingested document is stored in Supermemory and connected by semantic similarity. Explore the knowledge graph powering Alethia's intelligence.
+            Every ingested document is stored in Supermemory and connected by semantic similarity. Explore the knowledge graph powering Aleithia's intelligence.
           </p>
           <button
             onClick={onViewSource}
