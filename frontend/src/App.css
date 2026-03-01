@@ -1,1 +1,7 @@
-/* App-specific styles — Tailwind handles most styling */
+.alethia-popup .mapboxgl-popup-content {
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+  border: none;
+  border-radius: 0;
+}

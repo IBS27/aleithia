@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 import modal
 
-from modal_app.common import Document, SourceType, detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit
+from modal_app.common import SourceType, build_document, detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
 from modal_app.volume import app, volume, politics_image, RAW_DATA_PATH
@@ -256,7 +256,7 @@ async def politics_ingester():
 
     # Dedup: skip already-seen documents
     seen = SeenSet("politics")
-    new_docs = [d for d in all_docs if not seen.contains(d["id"])]
+    new_docs = [d for d in all_docs if not seen.contains(d["id"], max_age_hours=24)]
     print(f"Politics: {len(all_docs)} fetched, {len(new_docs)} new (deduped {len(all_docs) - len(new_docs)})")
 
     if not new_docs:
@@ -269,10 +269,12 @@ async def politics_ingester():
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     out_dir = Path(RAW_DATA_PATH) / "politics" / date_str
     out_dir.mkdir(parents=True, exist_ok=True)
+    ingested_at = datetime.now(timezone.utc).isoformat()
 
     for doc_data in new_docs:
         doc_data["status"] = "raw"
-        doc = Document(**{k: v for k, v in doc_data.items() if k != "timestamp"})
+        doc_data.setdefault("metadata", {})["ingested_at"] = ingested_at
+        doc = build_document(doc_data)
         fpath = out_dir / f"{doc.id}.json"
         fpath.write_text(doc.model_dump_json(indent=2))
         seen.add(doc_data["id"])

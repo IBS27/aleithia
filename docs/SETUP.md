@@ -65,7 +65,7 @@ modal deploy -m modal_app
 #                            federal_register, tiktok, traffic, cctv, vision, worldpop
 # - GPU inference: AlethiaLLM (H100), DocClassifier (T4), SentimentAnalyzer (T4), CCTVDetector (T4)
 # - Agent swarm: neighborhood_intel_agent, regulatory_agent, orchestrate_query
-# - Web API: https://gt12889--alethia-serve.modal.run (17 endpoints)
+# - Web API: https://ibsrinivas27--alethia-serve.modal.run (17 endpoints)
 # - Utilities: compress, supermemory sync, model download, scaling_demo
 # - Tracing: Arize AX via OpenTelemetry (if arize-secrets configured)
 ```
@@ -98,16 +98,16 @@ modal run -m modal_app.classify::process_queue_batch
 
 ```bash
 # Check API health
-curl https://gt12889--alethia-serve.modal.run/health
+curl https://ibsrinivas27--alethia-serve.modal.run/health
 
 # Check metrics (doc counts, sources, neighborhoods)
-curl https://gt12889--alethia-serve.modal.run/metrics
+curl https://ibsrinivas27--alethia-serve.modal.run/metrics
 
 # Check pipeline status (freshness, GPU status, costs)
-curl https://gt12889--alethia-serve.modal.run/status
+curl https://ibsrinivas27--alethia-serve.modal.run/status
 
 # Check data sources
-curl https://gt12889--alethia-serve.modal.run/sources
+curl https://ibsrinivas27--alethia-serve.modal.run/sources
 
 # Check volume contents
 modal volume ls alethia-data /raw/
@@ -140,7 +140,7 @@ cd frontend
 npm install
 npm run dev
 # Runs at http://localhost:5173
-# Point API calls to: https://gt12889--alethia-serve.modal.run
+# Point API calls to: https://ibsrinivas27--alethia-serve.modal.run
 ```
 
 ## Architecture Overview

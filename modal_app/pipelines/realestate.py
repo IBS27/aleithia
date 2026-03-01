@@ -13,7 +13,7 @@ from pathlib import Path
 import httpx
 import modal
 
-from modal_app.common import Document, SourceType, CHICAGO_NEIGHBORHOODS, detect_neighborhood, gather_with_limit, safe_volume_commit
+from modal_app.common import SourceType, CHICAGO_NEIGHBORHOODS, build_document, detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
 from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
@@ -193,7 +193,7 @@ async def realestate_ingester():
 
     # Dedup: skip already-seen documents
     seen = SeenSet("realestate")
-    new_docs = [d for d in all_docs if not seen.contains(d["id"])]
+    new_docs = [d for d in all_docs if not seen.contains(d["id"], max_age_hours=168)]
     print(f"Real estate: {len(all_docs)} fetched, {len(new_docs)} new (deduped {len(all_docs) - len(new_docs)})")
 
     if not new_docs:
@@ -206,13 +206,18 @@ async def realestate_ingester():
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     out_dir = Path(RAW_DATA_PATH) / "realestate" / date_str
     out_dir.mkdir(parents=True, exist_ok=True)
+    ingested_at = datetime.now(timezone.utc).isoformat()
 
     for doc_data in new_docs:
         doc_data["status"] = "raw"
-        doc = Document(**{k: v for k, v in doc_data.items() if k != "timestamp"})
+        doc_data.setdefault("metadata", {})["ingested_at"] = ingested_at
+        doc = build_document(doc_data)
         fpath = out_dir / f"{doc.id}.json"
         fpath.write_text(doc.model_dump_json(indent=2))
         seen.add(doc_data["id"])
+
+    from modal_app.classify import doc_queue
+    await safe_queue_push(doc_queue, new_docs, "realestate")
 
     seen.save()
     await safe_volume_commit(volume, "realestate")

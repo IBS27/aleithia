@@ -16,7 +16,7 @@ import httpx
 import modal
 
 from modal_app.common import (
-    Document, SourceType, SOCRATA_DATASETS, COMMUNITY_AREA_MAP,
+    SourceType, SOCRATA_DATASETS, COMMUNITY_AREA_MAP, build_document,
     detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit,
 )
 from modal_app.dedup import SeenSet
@@ -162,7 +162,7 @@ async def public_data_ingester():
 
     # Dedup: skip already-seen documents
     seen = SeenSet("public_data")
-    new_docs = [d for d in all_docs if not seen.contains(d["id"])]
+    new_docs = [d for d in all_docs if not seen.contains(d["id"], max_age_hours=24)]
     print(f"Public data: {len(all_docs)} fetched, {len(new_docs)} new (deduped {len(all_docs) - len(new_docs)})")
 
     if not new_docs:
@@ -175,10 +175,12 @@ async def public_data_ingester():
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     out_dir = Path(RAW_DATA_PATH) / "public_data" / date_str
     out_dir.mkdir(parents=True, exist_ok=True)
+    ingested_at = datetime.now(timezone.utc).isoformat()
 
     for doc_data in new_docs:
         doc_data["status"] = "raw"
-        doc = Document(**{k: v for k, v in doc_data.items() if k != "timestamp"})
+        doc_data.setdefault("metadata", {})["ingested_at"] = ingested_at
+        doc = build_document(doc_data)
         fpath = out_dir / f"{doc.id}.json"
         fpath.write_text(doc.model_dump_json(indent=2))
         seen.add(doc_data["id"])

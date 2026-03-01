@@ -193,7 +193,10 @@ export const api = {
   sources: () => fetchJSON<DataSources>('/sources'),
   geo: () => fetchJSON<GeoJSON>('/geo'),
   summary: () => fetchJSON<Record<string, unknown>>('/summary'),
-  neighborhood: (name: string) => fetchJSON<NeighborhoodData>(`/neighborhood/${encodeURIComponent(name)}`),
+  neighborhood: (name: string, businessType?: string) => {
+    const qs = businessType ? `?business_type=${encodeURIComponent(businessType)}` : ''
+    return fetchJSON<NeighborhoodData>(`/neighborhood/${encodeURIComponent(name)}${qs}`)
+  },
   inspections: (opts?: { neighborhood?: string; result?: string }) => {
     const params = new URLSearchParams()
     if (opts?.neighborhood) params.set('neighborhood', opts.neighborhood)

@@ -118,7 +118,7 @@ cd frontend && npm run dev         # Frontend dev server at localhost:5173
 
 ## Deployment
 
-- **Live API:** `https://gt12889--alethia-serve.modal.run`
+- **Live API:** `https://ibsrinivas27--alethia-serve.modal.run`
 - **Deploy command:** `modal deploy -m modal_app`
 - **28+ Modal functions** deployed, **21 Modal features** used
 - **5 cron jobs** (news 30min, reddit 1hr, public_data daily, classifier 2min, reconciler 5min)

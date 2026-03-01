@@ -2,7 +2,7 @@
 
 **Goal:** Build an AI-powered regulatory intelligence platform on Modal with self-hosted LLM, GPU classification, agent swarm, Supermemory RAG, and streaming chat.
 
-**Live URL:** `https://gt12889--alethia-serve.modal.run`
+**Live URL:** `https://ibsrinivas27--alethia-serve.modal.run`
 **Branch:** `main`
 **28+ Modal functions deployed** | **1,889+ documents ingested** | **13 pipelines** | **47 neighborhoods covered**
 
@@ -201,7 +201,7 @@ await doc_queue.put.aio(doc_data)  # was: doc_queue.put(doc_data)
 
 ## Phase 5: Modal-Hosted Web API — COMPLETE
 
-**Status: DEPLOYED** | File: `modal_app/web.py` | URL: `https://gt12889--alethia-serve.modal.run`
+**Status: DEPLOYED** | File: `modal_app/web.py` | URL: `https://ibsrinivas27--alethia-serve.modal.run`
 
 **Verified endpoints:**
 - `GET /health` — returns `{"status": "healthy"}`
@@ -387,7 +387,7 @@ def serve():
 2. **Classification:** DocClassifier + SentimentAnalyzer on T4, async queue batch processing
 3. **Supermemory:** Client + push function deployed
 4. **Agent swarm:** 4 agent types with .spawn() fan-out
-5. **Web API:** `https://gt12889--alethia-serve.modal.run` — all endpoints verified returning real data
+5. **Web API:** `https://ibsrinivas27--alethia-serve.modal.run` — all endpoints verified returning real data
 6. **Reconciler:** Auto-detected 2 stale sources, restarted 1 — confirmed in logs
 7. **Federal Register:** Pipeline deployed with Retries
 8. **AsyncUsageWarnings:** Fixed in classify.py, reconciler.py, web.py, 4 pipeline files
