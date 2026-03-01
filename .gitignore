@@ -73,6 +73,9 @@ htmlcov/
 # Downloaded data (from Modal Volume)
 backend/data/
 
+# SQLite (local dev)
+backend/test.db
+
 # Markdown docs — only keep planning docs and CLAUDE.md
 *.md
 !CLAUDE.md

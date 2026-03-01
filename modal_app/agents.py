@@ -9,12 +9,20 @@ import asyncio
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import modal
 
 from modal_app.common import compute_freshness, neighborhood_to_ca
+from modal_app.pipelines.reddit import (
+    FALLBACK_BUDGET_MS,
+    merge_rank_reddit_docs,
+    rank_reddit_docs,
+    reddit_docs_are_weak,
+    search_reddit_fallback_runtime,
+)
 from modal_app.volume import app, volume, base_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
 
 ADJACENT_NEIGHBORHOODS = {
@@ -198,24 +206,71 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
         # Read local volume data
         for source in ["public_data", "news", "politics", "federal_register", "demographics", "reddit", "reviews", "realestate", "tiktok", "cctv"]:
             source_dir = Path(RAW_DATA_PATH) / source
-            if not source_dir.exists():
+            if not source_dir.exists() and source != "reddit":
                 continue
 
             docs = []
-            for json_file in sorted(source_dir.rglob("*.json"), reverse=True)[:100]:
-                try:
-                    doc = json.loads(json_file.read_text())
-                    if not isinstance(doc, dict):
+            if source_dir.exists():
+                for json_file in sorted(source_dir.rglob("*.json"), reverse=True)[:100]:
+                    try:
+                        doc = json.loads(json_file.read_text())
+                        if not isinstance(doc, dict):
+                            continue
+                        geo = doc.get("geo", {})
+                        doc_neighborhood = geo.get("neighborhood", "")
+                        doc_ca = geo.get("community_area", "")
+                        if doc_neighborhood.lower() == neighborhood.lower():
+                            docs.append(doc)
+                        elif nb_community_area and doc_ca == nb_community_area:
+                            docs.append(doc)
+                    except Exception:
                         continue
-                    geo = doc.get("geo", {})
-                    doc_neighborhood = geo.get("neighborhood", "")
-                    doc_ca = geo.get("community_area", "")
-                    if doc_neighborhood.lower() == neighborhood.lower():
-                        docs.append(doc)
-                    elif nb_community_area and doc_ca == nb_community_area:
-                        docs.append(doc)
-                except Exception:
-                    continue
+
+            if source == "reddit":
+                docs = rank_reddit_docs(
+                    docs,
+                    business_type=business_type or "small business",
+                    neighborhood=neighborhood,
+                    min_score=0,
+                )
+                if reddit_docs_are_weak(
+                    docs,
+                    business_type=business_type or "small business",
+                    neighborhood=neighborhood,
+                    min_count=3,
+                    median_threshold=2.0,
+                ):
+                    start_ms = int(time.time() * 1000)
+                    fallback_docs = await search_reddit_fallback_runtime(
+                        business_type=business_type or "small business",
+                        neighborhood=neighborhood,
+                        budget_ms=FALLBACK_BUDGET_MS,
+                    )
+                    latency_ms = int(time.time() * 1000) - start_ms
+                    print(
+                        "reddit_fallback_triggered",
+                        {
+                            "agent": "neighborhood_intel_agent",
+                            "neighborhood": neighborhood,
+                            "business_type": business_type or "small business",
+                            "fallback_latency_ms": latency_ms,
+                            "fallback_docs_found": len(fallback_docs),
+                            "adapter_used": (fallback_docs[0].get("metadata", {}) or {}).get("retrieval_method", "") if fallback_docs else "",
+                        },
+                    )
+                    if fallback_docs:
+                        try:
+                            persist_fn = modal.Function.from_name("alethia", "persist_reddit_fallback_batch")
+                            await persist_fn.spawn.aio(docs=fallback_docs)
+                        except Exception as exc:
+                            print(f"Reddit fallback persist spawn failed (agent): {exc}")
+                        docs = merge_rank_reddit_docs(
+                            docs,
+                            fallback_docs,
+                            business_type=business_type or "small business",
+                            neighborhood=neighborhood,
+                            min_score=0,
+                        )
 
             if docs:
                 # Compute freshness from newest doc timestamp

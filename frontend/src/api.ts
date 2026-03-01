@@ -248,12 +248,35 @@ export const api = {
   },
   news: () => fetchJSON<Document[]>('/news'),
   politics: () => fetchJSON<Document[]>('/politics'),
-  graph: (opts?: { page?: number; limit?: number }) => {
+  graphFull: async () => {
+    const url = `${API_BASE}/graph/full`
+    console.log('[api.graphFull] GET', url)
+    const res = await fetch(url)
+    const text = await res.text()
+    console.log('[api.graphFull] status', res.status, 'nodes:', text.includes('"nodes"') ? 'yes' : 'no')
+    if (!res.ok) throw new Error(`API error ${res.status}: ${text}`)
+    return JSON.parse(text) as { nodes: Array<{ id: string; label?: string; type?: string }>; edges: Array<{ source: string; target: string }> }
+  },
+  graph: async (opts?: { page?: number; limit?: number }) => {
     const params = new URLSearchParams()
     if (opts?.page) params.set('page', String(opts.page))
     if (opts?.limit) params.set('limit', String(opts.limit))
     const qs = params.toString()
-    return fetchJSON<Record<string, unknown>>(`/graph${qs ? `?${qs}` : ''}`)
+    const path = `/graph${qs ? `?${qs}` : ''}`
+    const url = `${API_BASE}${path}`
+    console.log('[api.graph] GET', url)
+    const res = await fetch(url)
+    const text = await res.text()
+    console.log('[api.graph] status', res.status, 'body length', text.length, 'body preview', text.slice(0, 200))
+    if (!res.ok) {
+      throw new Error(`API error ${res.status}: ${text}`)
+    }
+    try {
+      return JSON.parse(text) as Record<string, unknown>
+    } catch {
+      console.error('[api.graph] Invalid JSON:', text.slice(0, 500))
+      throw new Error('Invalid JSON response from /graph')
+    }
   },
   
   // User profile endpoints (require Clerk token)

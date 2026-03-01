@@ -52,7 +52,7 @@ modal secret create tiktok-scraper-secrets \
 | Key | Where to get it | Required? |
 |-----|----------------|-----------|
 | `NEWSAPI_KEY` | [newsapi.org](https://newsapi.org) | Optional — RSS feeds work without it |
-| `REDDIT_CLIENT_ID` / `SECRET` | [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps/) | Optional — JSON fallback works |
+| `REDDIT_CLIENT_ID` / `SECRET` | [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps/) | Optional — improves reliability; otherwise RSS fallback is used |
 | `YELP_API_KEY` | [yelp.com/developers](https://www.yelp.com/developers) | Optional |
 | `GOOGLE_PLACES_API_KEY` | [Google Cloud Console](https://console.cloud.google.com/) | Optional |
 | `SOCRATA_APP_TOKEN` | [data.cityofchicago.org](https://data.cityofchicago.org/profile/edit/developer_settings) | Optional — public access works |

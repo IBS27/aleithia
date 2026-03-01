@@ -487,7 +487,7 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
             onClick={onReset}
             className="text-sm font-semibold text-white uppercase tracking-wide hover:text-white/80 transition-colors cursor-pointer"
           >
-            Alethia
+            Aleithia
           </button>
           <div className="h-3.5 w-px bg-white/10" />
           <span className="text-xs font-mono text-white/30">
@@ -675,7 +675,7 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
                       </div>
                       <div className="text-xs font-mono text-white/10">vs</div>
                       <div className="text-center">
-                        <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mb-1">Alethia</div>
+                        <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mb-1">Aleithia</div>
                         <div className="text-lg font-bold text-white font-mono">$0</div>
                         <div className="text-[10px] font-mono text-white/30">seconds</div>
                       </div>

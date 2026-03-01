@@ -260,33 +260,130 @@ def _empty_graph_response():
     return {"documents": [], "pagination": {"currentPage": 1, "totalPages": 0}}
 
 
+def _transform_doc_for_graph(doc: dict) -> dict:
+    """Transform Supermemory API doc to DocumentWithMemories format. Preserves all fields for graph viz."""
+    memories = doc.get("memories", doc.get("memoryEntries", []))
+    memory_entries = []
+    for m in memories:
+        rels = m.get("memoryRelations")
+        if isinstance(rels, dict):
+            rels = [{"targetMemoryId": k, "relationType": v} for k, v in rels.items() if v in ("updates", "extends", "derives")]
+        entry = {
+            "id": m.get("id", ""),
+            "documentId": doc.get("id", ""),
+            "content": m.get("memory", m.get("content")),
+            "summary": m.get("summary"),
+            "title": m.get("title"),
+            "createdAt": m.get("createdAt", m.get("created_at")),
+            "updatedAt": m.get("updatedAt", m.get("updated_at")),
+            "isLatest": m.get("isLatest", True),
+            "isForgotten": m.get("isForgotten"),
+            "forgetAfter": m.get("forgetAfter"),
+            "relation": m.get("relation") or m.get("changeType"),
+            "memoryRelations": rels if isinstance(rels, list) else m.get("memoryRelations"),
+            "updatesMemoryId": m.get("updatesMemoryId"),
+            "nextVersionId": m.get("nextVersionId"),
+            "parentMemoryId": m.get("parentMemoryId"),
+            "rootMemoryId": m.get("rootMemoryId"),
+            "metadata": m.get("metadata"),
+            "spaceId": m.get("spaceId"),
+            "spaceContainerTag": m.get("spaceContainerTag"),
+        }
+        memory_entries.append(entry)
+    out = {
+        "id": doc.get("id", ""),
+        "customId": doc.get("customId"),
+        "title": doc.get("title"),
+        "content": doc.get("content"),
+        "summary": doc.get("summary"),
+        "url": doc.get("url"),
+        "source": doc.get("source"),
+        "type": doc.get("type", doc.get("documentType")),
+        "status": doc.get("status", "done"),
+        "metadata": doc.get("metadata"),
+        "createdAt": doc.get("createdAt", doc.get("created_at")),
+        "updatedAt": doc.get("updatedAt", doc.get("updated_at")),
+        "memoryEntries": memory_entries,
+    }
+    if doc.get("x") is not None:
+        out["x"] = doc["x"]
+    if doc.get("y") is not None:
+        out["y"] = doc["y"]
+    if doc.get("summaryEmbedding") is not None:
+        out["summaryEmbedding"] = doc["summaryEmbedding"]
+    return out
+
+
 @router.get("/graph")
 async def get_graph(page: int = Query(1, ge=1), limit: int = Query(500, ge=1, le=500)):
-    """Proxy to Supermemory list documents for Memory Graph. Requires SUPERMEMORY_API_KEY."""
+    """Proxy to Supermemory for Memory Graph. Tries graph/viewport first, then documents/list."""
     api_key = os.environ.get("SUPERMEMORY_API_KEY", "")
+    key_preview = f"{api_key[:6]}...{api_key[-4:]}" if len(api_key) > 10 else "(empty)"
+    print(f"[graph] SUPERMEMORY_API_KEY: {key_preview} (len={len(api_key)})")
     if not api_key:
+        print("[graph] No API key, returning empty")
         return _empty_graph_response()
 
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=30) as client:
+    import httpx
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        # 1. Graph viewport
+        url1 = "https://api.supermemory.ai/v3/graph/viewport"
+        try:
+            print(f"[graph] Trying {url1}")
             resp = await client.post(
-                "https://api.supermemory.ai/v3/documents/list",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}",
+                url1,
+                headers=headers,
+                json={
+                    "viewport": {"minX": 0, "maxX": 1000000, "minY": 0, "maxY": 1000000},
+                    "limit": min(limit, 500),
                 },
-                json={"page": page, "limit": limit, "sort": "createdAt", "order": "desc"},
             )
-            if resp.status_code in (401, 403):
-                return _empty_graph_response()
-            resp.raise_for_status()
-            data = resp.json()
-            if "memories" in data and "documents" not in data:
-                data["documents"] = data["memories"]
-            return data
-    except Exception:
-        return _empty_graph_response()
+            print(f"[graph] {url1} -> status={resp.status_code}, body_len={len(resp.text)}")
+            if resp.status_code != 200:
+                print(f"[graph] {url1} response: {resp.text[:500]}")
+            if resp.status_code == 200:
+                data = resp.json()
+                raw_docs = data.get("documents", [])
+                docs = [_transform_doc_for_graph(d) for d in raw_docs]
+                total = data.get("totalCount", len(docs))
+                print(f"[graph] SUCCESS viewport: {len(docs)} docs, totalCount={total}")
+                return {
+                    "documents": docs,
+                    "pagination": {"currentPage": 1, "totalPages": max(1, (total + limit - 1) // limit)},
+                }
+        except Exception as e:
+            print(f"[graph] {url1} exception: {type(e).__name__}: {e}")
+
+        # 2. Documents list - fallback
+        payload = {"page": page, "limit": limit, "sort": "createdAt", "order": "desc"}
+        for url in [
+            "https://api.supermemory.ai/v3/documents/list",
+            "https://api.supermemory.ai/v3/documents/documents",
+        ]:
+            try:
+                print(f"[graph] Trying {url}")
+                resp = await client.post(url, headers=headers, json=payload)
+                print(f"[graph] {url} -> status={resp.status_code}, body_len={len(resp.text)}")
+                if resp.status_code in (401, 403):
+                    print(f"[graph] {url} auth error: {resp.text[:300]}")
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                raw_docs = data.get("documents") or data.get("memories") or []
+                docs = [_transform_doc_for_graph(d) for d in raw_docs]
+                pagination = data.get("pagination", {})
+                print(f"[graph] SUCCESS {url}: {len(docs)} docs")
+                return {"documents": docs, "pagination": pagination}
+            except Exception as e:
+                print(f"[graph] {url} exception: {type(e).__name__}: {e}")
+                continue
+    print("[graph] All endpoints failed, returning empty")
+    return _empty_graph_response()
 
 
 @router.get("/summary")

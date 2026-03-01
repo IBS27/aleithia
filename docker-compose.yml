@@ -5,6 +5,8 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+    env_file:
+      - .env
     environment:
       - MODAL_TOKEN_ID=${MODAL_TOKEN_ID:-}
       - MODAL_TOKEN_SECRET=${MODAL_TOKEN_SECRET:-}

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Coroutine
@@ -517,13 +518,75 @@ SOCRATA_DATASETS = {
     "zoning": "unjd-c2ca",
 }
 
-# Reddit subreddits to monitor
+# Reddit subreddits to monitor (curated Chicago-focused set).
 REDDIT_SUBREDDITS = [
     "chicago",
+    "AskChicago",
     "chicagofood",
+    "chicagofitness",
     "ChicagoNWside",
     "SouthSideChicago",
+    "chicagoapartments",
+    "ChicagoSuburbs",
+    "westloop",
+    "chicagojobs",
 ]
+
+# High-signal subreddits used for relevance boosts.
+REDDIT_SIGNAL_SUBREDDITS = {
+    "askchicago",
+    "chicago",
+    "chicagofitness",
+    "chicagoapartments",
+}
+
+# Business-type keyword expansion for Reddit query building and relevance scoring.
+REDDIT_BUSINESS_SYNONYMS: dict[str, list[str]] = {
+    "small business": [
+        "small business", "business", "shop", "store", "opening", "closing",
+        "permit", "license", "zoning", "inspection",
+    ],
+    "fitness center": ["fitness center", "gym", "fitness", "health club", "workout"],
+    "fitness studio": ["fitness studio", "gym", "fitness", "health club", "workout"],
+    "restaurant": ["restaurant", "food", "dining", "eatery", "cafe", "bar"],
+    "coffee shop": ["coffee shop", "coffee", "cafe", "espresso"],
+    "bar / nightlife": ["bar", "nightlife", "pub", "tavern", "cocktail"],
+    "retail store": ["retail", "store", "boutique", "shopping"],
+    "grocery / convenience": ["grocery", "convenience store", "market", "bodega"],
+    "salon / barbershop": ["salon", "barbershop", "hair", "beauty"],
+    "professional services": ["professional services", "consulting", "office", "legal", "accounting"],
+}
+
+
+def reddit_business_terms(business_type: str) -> list[str]:
+    """Return normalized business phrase + Reddit-friendly synonym expansion."""
+    raw = (business_type or "").strip().lower()
+    if not raw:
+        raw = "small business"
+
+    normalized = re.sub(r"[/_]+", " ", raw)
+    normalized = re.sub(r"[^a-z0-9\s-]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip() or "small business"
+
+    terms = [normalized]
+    for key, values in REDDIT_BUSINESS_SYNONYMS.items():
+        key_norm = re.sub(r"\s+", " ", key.strip().lower())
+        if normalized == key_norm:
+            terms.extend(values)
+
+    # Heuristic fallback for variants like "gym in loop", "fitness centre", etc.
+    if ("fitness" in normalized or "gym" in normalized) and "health club" not in terms:
+        terms.extend(["gym", "fitness", "health club", "workout", "fitness center"])
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        t = re.sub(r"\s+", " ", term.strip().lower())
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        deduped.append(t)
+    return deduped
 
 
 def detect_neighborhood(text: str) -> str:

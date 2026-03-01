@@ -58,17 +58,19 @@ Chicago-focused data source collectors, each running as Modal functions. All out
 
 **File:** `modal_app/pipelines/reddit.py`
 **Schedule:** Every 1 hour (cron)
-**Pattern:** async + FallbackChain (asyncpraw → JSON API → cache)
+**Pattern:** Hybrid retrieval + FallbackChain (asyncpraw listings/search → RSS search/hot → cache)
 
 **Sources:**
-- r/chicago, r/chicagofood, r/ChicagoNWside, r/SouthSideChicago
+- r/chicago, r/AskChicago, r/chicagofood, r/chicagofitness
+- r/ChicagoNWside, r/SouthSideChicago, r/chicagoapartments
+- r/ChicagoSuburbs, r/westloop, r/chicagojobs
 
 **What we collect:**
 - Post title, body, score, comment count, created timestamp
-- Top-level comments
-- Subreddit, flair/tags
+- Subreddit, flair/tags, retrieval metadata
+- Query-time fallback hits are persisted into normal `/raw/reddit/...` flow and enqueued for classification
 
-**Note:** Requires Reddit API credentials (`REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`). Falls back to Reddit JSON API (may return 403).
+**Note:** Reddit API credentials (`REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`) improve reliability and search quality. Without creds, RSS fallback is used and may rate-limit (HTTP 429) under burst traffic.
 
 ### 3b. Review Platforms — `review_ingester`
 
