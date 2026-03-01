@@ -296,3 +296,59 @@ class VectorDBService:
         finally:
             if span_ctx:
                 span_ctx.__exit__(None, None, None)
+
+
+@app.function(
+    image=vectordb_image,
+    volumes={"/data": volume},
+    secrets=[modal.Secret.from_name("arize-secrets")],
+    timeout=600,
+)
+async def backfill_vectordb():
+    """One-time backfill: read all enriched docs from volume and upsert to VectorAI DB.
+
+    Run manually after initial deployment:
+        modal run -m modal_app modal_app.vectordb::backfill_vectordb
+    """
+    import json
+    from pathlib import Path
+
+    enriched_dir = Path("/data/processed/enriched")
+    if not enriched_dir.exists():
+        print("No enriched directory found")
+        return 0
+
+    json_files = list(enriched_dir.rglob("*.json"))
+    print(f"Backfill: found {len(json_files)} enriched documents")
+
+    vdb = VectorDBService()
+    batch_size = 32
+    total_upserted = 0
+
+    for i in range(0, len(json_files), batch_size):
+        batch_files = json_files[i:i + batch_size]
+        docs = []
+        for f in batch_files:
+            try:
+                doc = json.loads(f.read_text())
+                if isinstance(doc, dict):
+                    docs.append(doc)
+            except Exception:
+                continue
+
+        if not docs:
+            continue
+
+        texts = [build_embed_text(d) for d in docs]
+        embeddings = vdb.embed_batch.remote(texts)
+        doc_ids = [d.get("id", f"backfill-{i+j}") for j, d in enumerate(docs)]
+        payloads = [
+            build_payload(d, d.get("classification", {}), d.get("sentiment", {}))
+            for d in docs
+        ]
+        vdb.batch_upsert_docs.remote(doc_ids, embeddings, payloads, "enriched")
+        total_upserted += len(docs)
+        print(f"Backfill: {total_upserted}/{len(json_files)} upserted")
+
+    print(f"Backfill complete: {total_upserted} documents indexed")
+    return total_upserted
