@@ -137,7 +137,7 @@ export default function ChatPanel({ messages, onSend, loading, isStreaming, agen
                 <div
                   className={`px-4 py-2.5 text-xs leading-relaxed ${
                     msg.role === 'user'
-                      ? 'bg-white text-[#06080d]'
+                      ? '!bg-white !text-[#06080d]'
                       : 'bg-white/[0.04] border border-white/[0.06] text-white/70'
                   }`}
                 >
@@ -227,7 +227,7 @@ export default function ChatPanel({ messages, onSend, loading, isStreaming, agen
           <button
             type="submit"
             disabled={!input.trim() || loading}
-            className="bg-white text-[#06080d] disabled:bg-white/[0.06] disabled:text-white/20 disabled:cursor-not-allowed px-4 py-2.5 text-xs font-medium transition-colors cursor-pointer"
+            className="!bg-white !text-[#06080d] disabled:!bg-white/[0.06] disabled:!text-white/20 disabled:cursor-not-allowed px-4 py-2.5 text-xs font-medium transition-colors cursor-pointer"
           >
             Send
           </button>

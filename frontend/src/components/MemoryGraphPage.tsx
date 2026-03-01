@@ -191,7 +191,7 @@ export default function MemoryGraphPage({ onBack }: Props) {
           onClick={() => setSlideshowActive((prev) => !prev)}
           className={`px-4 py-1.5 text-sm font-medium border transition-colors cursor-pointer ${
             slideshowActive
-              ? 'bg-white text-[#06080d] border-white'
+              ? '!bg-white !text-[#06080d] border-white'
               : 'border-white/20 text-white/60 hover:text-white hover:border-white/40'
           }`}
         >
@@ -234,9 +234,9 @@ export default function MemoryGraphPage({ onBack }: Props) {
               <button
                 type="button"
                 onClick={() => navigate('/start')}
-                className="pointer-events-auto px-6 py-2.5 text-sm font-medium bg-white text-[#06080d] hover:bg-gray-200 transition-colors cursor-pointer"
+                className="pointer-events-auto px-6 py-2.5 text-sm font-medium !bg-white !text-[#06080d] hover:!bg-white/90 transition-colors cursor-pointer"
               >
-                Get Started
+                Initialize Session
               </button>
             </div>
           )}

@@ -26,8 +26,9 @@ function scoreBg(score: number): string {
 export default function RiskCard({ score }: Props) {
   const [expanded, setExpanded] = useState(false)
 
+  const glowStyle = score.overall_score <= 3 ? '0 0 12px rgba(41, 166, 52, 0.15)' : score.overall_score <= 6 ? '0 0 12px rgba(217, 158, 11, 0.15)' : '0 0 12px rgba(219, 55, 55, 0.15)'
   return (
-    <div className="border border-white/[0.06] bg-white/[0.01] overflow-hidden">
+    <div className="border border-white/[0.06] bg-white/[0.01] overflow-hidden" style={{ boxShadow: glowStyle }}>
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full p-5 text-left hover:bg-white/[0.02] transition-colors cursor-pointer"

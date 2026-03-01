@@ -135,7 +135,7 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
         aria-hidden={isReady}
       >
         <p className="text-xs font-mono font-medium uppercase tracking-[0.3em] text-white/40 mb-4">
-          Business Intelligence Platform
+          Chicago Data Platform
         </p>
         <h1 className="text-4xl sm:text-6xl font-bold tracking-tight mb-6">
           ALETHIA
@@ -154,38 +154,40 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
 
         <div className="absolute inset-0 z-10 bg-gradient-to-b from-[#06080d]/80 via-[#06080d]/40 to-[#06080d]/90 pointer-events-none" />
 
-        <div className="relative z-20 min-h-screen flex flex-col pointer-events-none">
-          {/* Translucent nav */}
-          <nav className="flex items-center justify-between px-10 py-5 bg-white/[0.03] backdrop-blur-md border-b border-white/[0.06]">
-            <span className="text-lg font-semibold tracking-tight text-white uppercase">
+        <div className="relative z-20 min-h-screen grid grid-cols-[1fr_auto_1fr] grid-rows-[auto_1fr_auto] pointer-events-none">
+          {/* HUD-style quadrant nav: top-left */}
+          <div className="col-start-1 row-start-1 flex items-center px-6 lg:px-10 py-5">
+            <span className="text-lg font-semibold tracking-tight text-white uppercase font-mono">
               Alethia
             </span>
-            <div className="flex items-center gap-3">
-              <SignedOut>
-                <SignInButton mode="modal">
-                  <button className="pointer-events-auto px-4 py-2 text-sm font-medium text-white/80 hover:text-white transition-colors cursor-pointer">
-                    Log in
-                  </button>
-                </SignInButton>
-                <SignUpButton mode="modal">
-                  <button className="pointer-events-auto px-6 py-2 text-sm font-medium bg-white text-[#06080d] hover:bg-gray-200 transition-colors cursor-pointer">
-                    Get Started
-                  </button>
-                </SignUpButton>
-              </SignedOut>
-              <SignedIn>
-                <span className="text-xs font-mono text-white/40 mr-2">{user?.primaryEmailAddress?.emailAddress}</span>
-                <button
-                  onClick={onGetStarted}
-                  className="pointer-events-auto px-6 py-2 text-sm font-medium bg-white text-[#06080d] hover:bg-gray-200 transition-colors cursor-pointer"
-                >
-                  Get Started
+          </div>
+          {/* HUD-style quadrant nav: top-right */}
+          <div className="col-start-3 row-start-1 flex items-center justify-end gap-3 px-6 lg:px-10 py-5">
+            <SignedOut>
+              <SignInButton mode="modal">
+                <button className="pointer-events-auto px-4 py-2 text-sm font-medium text-white/80 hover:text-white transition-colors cursor-pointer font-mono uppercase text-[10px] tracking-wider">
+                  Auth
                 </button>
-              </SignedIn>
-            </div>
-          </nav>
+              </SignInButton>
+              <SignUpButton mode="modal">
+                <button className="pointer-events-auto px-6 py-2 text-sm font-medium !bg-white !text-[#06080d] hover:!bg-white/90 transition-colors cursor-pointer">
+                  Initialize Session
+                </button>
+              </SignUpButton>
+            </SignedOut>
+            <SignedIn>
+              <span className="text-xs font-mono text-white/40 mr-2">{user?.primaryEmailAddress?.emailAddress}</span>
+              <button
+                onClick={onGetStarted}
+                className="pointer-events-auto px-6 py-2 text-sm font-medium !bg-white !text-[#06080d] hover:!bg-white/90 transition-colors cursor-pointer"
+              >
+                Initialize Session
+              </button>
+            </SignedIn>
+          </div>
 
-          <div className="flex-1 flex items-center justify-center px-10">
+          {/* Hero: center viewport */}
+          <div className="col-span-3 col-start-1 row-start-2 flex items-center justify-center px-10">
             <div className="max-w-3xl text-center">
               <p className="text-xs font-mono font-medium uppercase tracking-[0.3em] text-white/40 mb-6">
                  Business Intelligence Platform
@@ -202,21 +204,22 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
               <div className="flex items-center justify-center gap-4">
                 <button
                   onClick={onGetStarted}
-                  className="pointer-events-auto px-8 py-3.5 text-sm font-semibold bg-white text-[#06080d] hover:bg-gray-200 transition-colors cursor-pointer"
+                  className="pointer-events-auto px-8 py-3.5 text-sm font-semibold !bg-white !text-[#06080d] hover:!bg-white/90 transition-colors cursor-pointer"
                 >
-                  Analyze a Neighborhood
+                  Analyze Neighborhood
                 </button>
                 <button
                   onClick={onViewSource}
                   className="pointer-events-auto px-8 py-3.5 text-sm font-semibold border border-white/20 text-white/70 hover:text-white hover:border-white/40 transition-colors cursor-pointer"
                 >
-                  How It Works
+                  Architecture
                 </button>
               </div>
             </div>
           </div>
 
-          {/* Floating scroll arrow */}
+          {/* HUD bottom: scroll cue */}
+          <div className="col-span-3 col-start-1 row-start-3 flex justify-center pb-8">
           <button
             type="button"
             onClick={() => document.getElementById('next')?.scrollIntoView({ behavior: 'smooth' })}
@@ -231,6 +234,7 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
               <path d="M7 10l5 6 5-6H7z" />
             </svg>
           </button>
+          </div>
         </div>
       </section>
 
@@ -270,7 +274,7 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
         <div className="relative z-10 max-w-7xl mx-auto px-10">
           <div className="mb-16">
             <p className="text-xs font-mono font-medium uppercase tracking-[0.3em] text-white/30 mb-4">
-              How it works
+              Pipeline Overview
             </p>
             <h2 className="text-4xl sm:text-5xl font-bold tracking-tight text-white leading-[1.1]">
               One city.<br />
@@ -356,9 +360,9 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
           </p>
           <button
             onClick={onViewSource}
-            className="pointer-events-auto px-8 py-3.5 text-sm font-semibold bg-white text-[#06080d] hover:bg-gray-200 transition-colors cursor-pointer"
+            className="pointer-events-auto px-8 py-3.5 text-sm font-semibold !bg-white !text-[#06080d] hover:!bg-white/90 transition-colors cursor-pointer"
           >
-            Explore the Graph
+            Explore Graph
           </button>
         </div>
       </section>
@@ -370,7 +374,7 @@ export default function LandingPage({ onGetStarted, onViewSource }: Props) {
             Built at HackIllinois 2026
           </p>
           <p className="text-xs font-mono text-white/20">
-            Democratizing business intelligence.
+            Mission-critical city intelligence.
           </p>
         </div>
       </footer>

@@ -20,9 +20,11 @@ interface Props {
   onSubmit: (profile: UserProfile) => void
   onCancel?: () => void
   initialProfile?: UserProfile | null
+  /** When true, used inside Drawer - compact layout, no nav */
+  embedded?: boolean
 }
 
-export default function OnboardingForm({ onSubmit, onCancel, initialProfile }: Props) {
+export default function OnboardingForm({ onSubmit, onCancel, initialProfile, embedded = false }: Props) {
   const [businessType, setBusinessType] = useState(initialProfile?.business_type ?? '')
   const [neighborhood, setNeighborhood] = useState(initialProfile?.neighborhood ?? '')
 
@@ -43,7 +45,8 @@ export default function OnboardingForm({ onSubmit, onCancel, initialProfile }: P
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#06080d]">
+    <div className={`flex flex-col bg-[#06080d] ${embedded ? '' : 'min-h-screen'}`}>
+      {!embedded && (
       <nav className="flex items-center justify-between px-10 py-5 bg-white/[0.03] backdrop-blur-md border-b border-white/[0.06] shrink-0">
         <button
           type="button"
@@ -62,15 +65,16 @@ export default function OnboardingForm({ onSubmit, onCancel, initialProfile }: P
           </button>
         )}
       </nav>
+      )}
 
-      <div className="flex-1 flex items-center justify-center p-6">
+      <div className={`flex items-center justify-center p-6 ${embedded ? '' : 'flex-1'}`}>
         <div className="max-w-md w-full">
           <div className="mb-12">
             <h1 className="text-3xl font-bold tracking-tight text-white mb-2">
-                Configure analysis.
+                Initialize session
             </h1>
-            <p className="text-sm text-white/40 leading-relaxed">
-              Select your business type and target neighborhood to begin.
+            <p className="text-sm text-white/40 leading-relaxed font-mono">
+              Set business type and target neighborhood to run analysis.
             </p>
           </div>
 
@@ -111,9 +115,9 @@ export default function OnboardingForm({ onSubmit, onCancel, initialProfile }: P
             <button
               type="submit"
               disabled={!businessType || !neighborhood}
-              className="w-full bg-white text-[#06080d] disabled:bg-white/[0.06] disabled:text-white/20 disabled:cursor-not-allowed disabled:hover:bg-white/[0.06] font-semibold py-3.5 text-sm tracking-wide transition-colors hover:bg-gray-200 cursor-pointer"
+              className="w-full !bg-white !text-[#06080d] disabled:!bg-white/[0.06] disabled:!text-white/20 disabled:cursor-not-allowed disabled:hover:!bg-white/[0.06] font-semibold py-3.5 text-sm tracking-wide transition-colors hover:!bg-white/90 cursor-pointer"
             >
-              Run Analysis
+              Execute
             </button>
             </div>
 
