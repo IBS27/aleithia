@@ -375,7 +375,11 @@ async def _get_tiktok_refresh_lock(key: str) -> asyncio.Lock:
 async def _dict_get_float_aio(d: modal.Dict, key: str, default: float = 0.0) -> float:
     """Async-safe float lookup for modal.Dict values."""
     try:
-        value = await d.__getitem__.aio(key)
+        getter_aio = getattr(d.__getitem__, "aio", None)
+        if callable(getter_aio):
+            value = await getter_aio(key)
+        else:
+            value = d[key]
     except KeyError:
         return default
     except Exception:
@@ -384,6 +388,15 @@ async def _dict_get_float_aio(d: modal.Dict, key: str, default: float = 0.0) -> 
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+async def _dict_put_value_aio(d: modal.Dict, key: str, value: float) -> None:
+    """Set modal.Dict key using async API when available, sync fallback otherwise."""
+    put_aio = getattr(getattr(d, "put", None), "aio", None)
+    if callable(put_aio):
+        await put_aio(key, value)
+    else:
+        d[key] = value
 
 
 def _is_low_quality_tiktok_doc(doc: dict) -> bool:
@@ -1163,22 +1176,31 @@ async def _maybe_spawn_tiktok_profile_refresh(
             status["cooldown_seconds_remaining"] = int(inflight_until - now_epoch)
             return status
 
-        await tiktok_refresh_inflight_dict.put.aio(key, now_epoch + TIKTOK_REFRESH_INFLIGHT_SECONDS)
+        await _dict_put_value_aio(tiktok_refresh_inflight_dict, key, now_epoch + TIKTOK_REFRESH_INFLIGHT_SECONDS)
 
         try:
             from modal_app.pipelines.tiktok import ingest_tiktok_for_profile
 
-            await ingest_tiktok_for_profile.spawn.aio(
-                business_type=business_type or "small business",
-                neighborhood=neighborhood,
-                transcribe=False,
-            )
-            await tiktok_refresh_dict.put.aio(key, now_epoch)
+            spawn_aio = getattr(ingest_tiktok_for_profile.spawn, "aio", None)
+            if callable(spawn_aio):
+                await spawn_aio(
+                    business_type=business_type or "small business",
+                    neighborhood=neighborhood,
+                    transcribe=False,
+                )
+            else:
+                ingest_tiktok_for_profile.spawn(
+                    business_type=business_type or "small business",
+                    neighborhood=neighborhood,
+                    transcribe=False,
+                )
+
+            await _dict_put_value_aio(tiktok_refresh_dict, key, now_epoch)
             status["requested"] = True
             status["reason"] = "stale" if stale else "insufficient"
         except Exception as exc:
             # Allow quick retry if spawn itself failed.
-            await tiktok_refresh_inflight_dict.put.aio(key, 0.0)
+            await _dict_put_value_aio(tiktok_refresh_inflight_dict, key, 0.0)
             status["reason"] = f"spawn_error:{exc}"
 
     return status
@@ -1366,13 +1388,24 @@ async def neighborhood(name: str, business_type: str = ""):
         tiktok_docs = _rank_tiktok_docs(all_tiktok_profile, business_type, name)
         federal_docs = _filter_politics_relevance(_filter_by_neighborhood(all_federal, name), business_type)
         profile_count, local_count, freshest_epoch = _profile_tiktok_freshness(all_tiktok_profile, business_type, name)
-        tiktok_refresh = await _maybe_spawn_tiktok_profile_refresh(
-            neighborhood=name,
-            business_type=business_type or "small business",
-            profile_count=profile_count,
-            local_count=local_count,
-            freshest_epoch=freshest_epoch,
-        )
+        try:
+            tiktok_refresh = await _maybe_spawn_tiktok_profile_refresh(
+                neighborhood=name,
+                business_type=business_type or "small business",
+                profile_count=profile_count,
+                local_count=local_count,
+                freshest_epoch=freshest_epoch,
+            )
+        except Exception as exc:
+            # Neighborhood response should still succeed even if background refresh scheduling fails.
+            print(f"tiktok_refresh_error: {exc}")
+            tiktok_refresh = {
+                "requested": False,
+                "reason": f"refresh_error:{exc}",
+                "cooldown_seconds_remaining": 0,
+                "profile_docs": profile_count,
+                "local_docs": local_count,
+            }
         # Traffic/CCTV temporarily disabled — pipelines not yet fully implemented
         traffic_docs: list[dict] = []
 
@@ -1459,7 +1492,7 @@ async def neighborhood(name: str, business_type: str = ""):
         cctv_analysis = await _load_cctv_for_neighborhood(name)
         if cctv_analysis.get("cameras"):
             cam_ids = [c["camera_id"] for c in cctv_analysis["cameras"]]
-            ts = _aggregate_timeseries_for_neighborhood(name, camera_ids=cam_ids)
+            ts = await _aggregate_timeseries_for_neighborhood(name, camera_ids=cam_ids)
             if ts.get("hours"):
                 cctv_analysis["peak_hour"] = ts["peak_hour"]
                 cctv_analysis["peak_pedestrians"] = ts["peak_pedestrians"]
@@ -1827,10 +1860,14 @@ async def cctv_frame(camera_id: str):
     return Response(content=frame_bytes, media_type="image/jpeg")
 
 
-def _aggregate_timeseries_for_neighborhood(name: str, camera_ids: list[str] | None = None) -> dict:
+async def _aggregate_timeseries_for_neighborhood(name: str, camera_ids: list[str] | None = None) -> dict:
     """Aggregate per-camera timeseries into hourly buckets for a neighborhood."""
     from zoneinfo import ZoneInfo
 
+    if camera_ids is None:
+        volume.reload()
+        cctv_data = await _load_cctv_for_neighborhood(name)
+        camera_ids = [c["camera_id"] for c in cctv_data.get("cameras", [])]
     if not camera_ids:
         return {"hours": [], "peak_hour": 0, "peak_pedestrians": 0, "camera_count": 0}
 
@@ -1898,7 +1935,7 @@ async def cctv_timeseries(neighborhood: str):
     """24h rolling timeseries aggregated by hour for a neighborhood's cameras."""
     cctv = await _load_cctv_for_neighborhood(neighborhood)
     cam_ids = [c["camera_id"] for c in cctv.get("cameras", [])]
-    return _aggregate_timeseries_for_neighborhood(neighborhood, camera_ids=cam_ids)
+    return await _aggregate_timeseries_for_neighborhood(neighborhood, camera_ids=cam_ids)
 
 
 @web_app.get("/vision/streetscape/{neighborhood}")
