@@ -128,7 +128,8 @@ def _timestamp_to_sort_key(timestamp: object) -> float:
 
 def _build_business_clause(business_type: str) -> str:
     terms = reddit_business_terms(business_type)
-    escaped = [f'"{t.replace("\"", "")}"' for t in terms if t]
+    cleaned_terms = [t.replace('"', "").strip() for t in terms if t]
+    escaped = [f'"{t}"' for t in cleaned_terms if t]
     if not escaped:
         escaped = ['"small business"']
     return " OR ".join(escaped[:8])
@@ -143,11 +144,12 @@ def _build_fallback_queries(business_type: str, neighborhood: str) -> list[str]:
     biz_clause = _build_business_clause(business_type)
     nb = _collapse_whitespace(neighborhood)
     nb_clause = f'"{nb}" OR "West Loop" OR "South Loop"' if nb else '"West Loop" OR "South Loop"'
+    nb_exact = f'"{nb}" ' if nb else ""
     scoped = _build_scoped_subreddit_clause()
 
     return [
         f"({biz_clause}) ({nb_clause}) chicago ({scoped})",
-        f"({biz_clause}) {'"' + nb + '" ' if nb else ''}chicago subreddit:AskChicago".strip(),
+        f"({biz_clause}) {nb_exact}chicago subreddit:AskChicago".strip(),
         f"({biz_clause}) chicago",
     ]
 
