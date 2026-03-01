@@ -342,19 +342,18 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
                 AI that deploys AI.
               </h2>
               <p className="text-base text-white/45 leading-relaxed mb-6">
-                A Lead Analyst agent monitors every enriched document in real time.
-                When it detects a high-impact event, it autonomously spawns 4 specialized
-                worker agents — real estate, legal, economic, and community sentiment —
-                each running in isolated cloud sandboxes. Workers investigate in parallel,
-                return findings, and the Lead Analyst synthesizes a single impact brief.
-                No human triggers any of this.
+                Qwen3-8B scores every enriched document. High-impact events
+                spawn 4 parallel worker agents into E2B cloud sandboxes.
+                Findings are synthesized into a single actionable brief — autonomously, every 5 minutes.
               </p>
               <div className="flex items-center gap-6 text-[10px] font-mono text-white/25 uppercase tracking-wider">
-                <span>5-min scan cycle</span>
+                <span>Qwen3-8B</span>
                 <span className="text-white/10">|</span>
-                <span>4 parallel workers</span>
+                <span>E2B Sandboxes</span>
                 <span className="text-white/10">|</span>
-                <span>E2B sandboxed</span>
+                <span>Modal .spawn()</span>
+                <span className="text-white/10">|</span>
+                <span>5-min cron</span>
               </div>
             </div>
 
