@@ -18,7 +18,7 @@ import TrafficCard from './TrafficCard.tsx'
 import DemographicsCard from './DemographicsCard.tsx'
 import PipelineMonitor from './PipelineMonitor.tsx'
 import MLMonitor from './MLMonitor.tsx'
-import CCTVFeedCard from './CCTVFeedCard.tsx'
+// import CCTVFeedCard from './CCTVFeedCard.tsx'
 
 type Tab = 'overview' | 'inspections' | 'permits' | 'licenses' | 'news' | 'community' | 'market' | 'models'
 
