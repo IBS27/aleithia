@@ -164,6 +164,16 @@ Format your response with clear sections:
 - Recommendation (with confidence: high/medium/low)"""
 
 
+def _aggregate_categories(vectordb_results: list[dict]) -> dict:
+    """Aggregate category counts from VectorDB search results."""
+    counts: dict[str, int] = {}
+    for r in vectordb_results:
+        cat = r.get("payload", {}).get("category", "")
+        if cat:
+            counts[cat] = counts.get(cat, 0) + 1
+    return dict(sorted(counts.items(), key=lambda x: x[1], reverse=True)[:5])
+
+
 @app.function(
     image=base_image,
     volumes={"/data": volume},
@@ -202,6 +212,30 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
             span.set_attribute("agent.business_type", business_type)
 
         nb_community_area = neighborhood_to_ca(neighborhood)
+
+        # --- VectorAI DB semantic retrieval (fast path) ---
+        vectordb_docs = []
+        try:
+            from modal_app.vectordb import vectordb_available
+            if vectordb_available():
+                vdb_cls = modal.Cls.from_name("alethia", "VectorDBService")
+                vdb = vdb_cls()
+
+                query_text = f"{business_type} {neighborhood} {' '.join(focus_areas or [])}"
+                query_embedding = vdb.embed_text.remote(query_text)
+                vectordb_docs = vdb.search_neighborhood.remote(query_embedding, neighborhood, top_k=50)
+
+                if vectordb_docs:
+                    report["findings"]["vectordb"] = {
+                        "count": len(vectordb_docs),
+                        "avg_score": round(sum(d["score"] for d in vectordb_docs) / len(vectordb_docs), 4),
+                        "top_categories": _aggregate_categories(vectordb_docs),
+                    }
+                    report["data_points"] += len(vectordb_docs)
+                    if span:
+                        span.set_attribute("agent.vectordb_results", len(vectordb_docs))
+        except Exception as e:
+            print(f"VectorDB query failed (falling back to file scan): {e}")
 
         # Read local volume data
         for source in ["public_data", "news", "politics", "federal_register", "demographics", "reddit", "reviews", "realestate", "tiktok", "cctv"]:
