@@ -10,6 +10,7 @@ interface ModelCard {
   maxBatch?: number
   contextLen?: number
   gpuKey: string
+  warmContainer?: boolean
 }
 
 const MODELS: ModelCard[] = [
@@ -21,6 +22,7 @@ const MODELS: ModelCard[] = [
     params: '8B (INT4)',
     contextLen: 8192,
     gpuKey: 'h100_llm',
+    warmContainer: true,
   },
   {
     name: 'BART-large-MNLI',
@@ -48,6 +50,7 @@ const MODELS: ModelCard[] = [
     params: '3.2M',
     maxBatch: 1,
     gpuKey: 't4_cctv',
+    warmContainer: true,
   },
 ]
 
@@ -73,21 +76,64 @@ function GpuBar({ label, value, max, unit, color }: { label: string; value: numb
   )
 }
 
-function GpuCard({ gpuKey, entry, taskName }: { gpuKey: string; entry: GpuMetricsEntry; taskName: string }) {
+function _formatAgo(seconds?: number): string {
+  if (seconds == null) return ''
+  if (seconds < 60) return `${seconds}s ago`
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`
+  return `${Math.round(seconds / 86400)}d ago`
+}
+
+function GpuCard({ gpuKey, entry, taskName, warm }: { gpuKey: string; entry: GpuMetricsEntry; taskName: string; warm?: boolean }) {
   const gpuLabel = gpuKey.startsWith('h100') ? 'H100' : 'T4'
   const isActive = entry.status === 'active'
+  const isInferred = isActive && entry.inferred
 
   if (!isActive) {
+    const isWarm = warm && entry.status === 'cold'
+    const hasEnrichedData = entry.reason === 'idle' && (entry.enriched_count ?? 0) > 0
+    const coldReason = entry.reason === 'no_data'
+      ? 'no data'
+      : hasEnrichedData
+        ? 'enriched data'
+        : isWarm ? 'warm standby' : 'cold standby'
+    const coldColor = entry.reason === 'no_data'
+      ? 'text-white/15'
+      : hasEnrichedData
+        ? 'text-emerald-400/40'
+        : isWarm ? 'text-amber-400/40' : 'text-white/15'
+    const dotColor = hasEnrichedData
+      ? 'bg-emerald-400/50'
+      : isWarm ? 'bg-amber-400/50' : 'bg-white/15'
     return (
       <div className="px-4 py-3">
         <div className="flex items-center gap-2 mb-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-white/15" />
+          <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
           <span className="text-xs font-mono font-medium text-white/70">{gpuLabel}</span>
         </div>
         <div className="text-[10px] font-mono text-white/25">{taskName}</div>
-        <div className="text-[10px] font-mono mt-1 text-white/15">
-          {entry.status === 'cold' ? 'standby' : 'error'}
+        <div className={`text-[10px] font-mono mt-1 ${coldColor}`}>
+          {coldReason}
         </div>
+        {entry.enriched_count != null && entry.enriched_count > 0 && (
+          <div className="text-[9px] font-mono mt-0.5 text-white/10">
+            {entry.enriched_count} docs enriched
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Inferred active: we know the cron ran recently but can't query nvidia-smi
+  if (isInferred) {
+    return (
+      <div className="px-4 py-3">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-1.5 h-1.5 rounded-full bg-emerald-400/60" />
+          <span className="text-xs font-mono font-medium text-white/70">{entry.gpu_name ?? gpuLabel}</span>
+        </div>
+        <div className="text-[10px] font-mono text-white/25">{taskName}</div>
+        <div className="text-[10px] font-mono mt-1 text-emerald-400/40">recently active</div>
       </div>
     )
   }
@@ -174,12 +220,13 @@ export default function MLMonitor() {
           )}
         </div>
         <div className="grid grid-cols-4 divide-x divide-white/[0.06]">
-          {['h100_llm', 't4_classifier', 't4_sentiment', 't4_cctv'].map(key => (
+          {MODELS.map(model => (
             <GpuCard
-              key={key}
-              gpuKey={key}
-              entry={gpuMetrics?.[key] ?? defaultEntry}
-              taskName={gpuTaskMap[key]}
+              key={model.gpuKey}
+              gpuKey={model.gpuKey}
+              entry={gpuMetrics?.[model.gpuKey] ?? defaultEntry}
+              taskName={gpuTaskMap[model.gpuKey]}
+              warm={model.warmContainer}
             />
           ))}
         </div>
@@ -194,18 +241,38 @@ export default function MLMonitor() {
           {MODELS.map((model) => {
             const liveEntry = gpuMetrics?.[model.gpuKey]
             const isOnline = liveEntry?.status === 'active'
+            const isInferred = isOnline && liveEntry?.inferred
             const isLoading = !gpuMetrics && !error
+
+            const hasEnrichedData = liveEntry?.reason === 'idle' && (liveEntry?.enriched_count ?? 0) > 0
+            const statusLabel = isOnline
+              ? (isInferred ? 'recently active' : 'online')
+              : liveEntry?.reason === 'no_data'
+                ? 'no data'
+                : hasEnrichedData
+                  ? 'enriched data'
+                  : (model.warmContainer ? 'warm standby' : 'cold standby')
+            const statusColor = isOnline
+              ? (isInferred ? 'text-emerald-400/40' : 'text-emerald-400/60')
+              : hasEnrichedData
+                ? 'text-emerald-400/40'
+                : (model.warmContainer ? 'text-amber-400/40' : 'text-white/15')
+            const dotColor = isLoading
+              ? 'bg-amber-400/80 animate-pulse'
+              : isOnline
+                ? (isInferred ? 'bg-emerald-400/60' : 'bg-emerald-400')
+                : hasEnrichedData
+                  ? 'bg-emerald-400/50'
+                  : (model.warmContainer ? 'bg-amber-400/50' : 'bg-white/20')
 
             return (
               <div key={model.name} className="px-4 py-3 flex items-center justify-between">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                      isLoading ? 'bg-amber-400/80 animate-pulse' : isOnline ? 'bg-emerald-400' : 'bg-white/20'
-                    }`} />
+                    <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}`} />
                     <span className="text-xs font-medium text-white/80 truncate">{model.name}</span>
                     <span className="text-[10px] font-mono text-white/15 border border-white/[0.06] px-1.5 py-0.5">{model.gpu}</span>
-                    {isOnline && liveEntry?.gpu_utilization != null && (
+                    {isOnline && !isInferred && liveEntry?.gpu_utilization != null && (
                       <span className={`text-[10px] font-mono px-1.5 py-0.5 border ${
                         liveEntry.gpu_utilization > 80 ? 'text-red-400/70 border-red-400/20' :
                         liveEntry.gpu_utilization > 40 ? 'text-amber-400/70 border-amber-400/20' :
@@ -230,8 +297,8 @@ export default function MLMonitor() {
                       checking…
                     </span>
                   ) : (
-                    <span className={`text-[10px] font-mono ${isOnline ? 'text-emerald-400/60' : 'text-white/15'}`}>
-                      {isOnline ? 'online' : 'standby'}
+                    <span className={`text-[10px] font-mono ${statusColor}`}>
+                      {statusLabel}
                     </span>
                   )}
                 </div>

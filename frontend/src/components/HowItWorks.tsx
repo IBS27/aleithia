@@ -18,22 +18,35 @@ const BODY = 'text-sm text-white/60 leading-relaxed space-y-3'
 const CODE = 'font-mono text-xs bg-white/[0.06] border border-white/[0.08] rounded px-2 py-1 text-white/80'
 const CARD = 'border border-white/[0.06] rounded-lg p-6 bg-white/[0.02]'
 
+function normalizeEntries(docId: string, entries: Record<string, unknown>[]): DocumentWithMemories['memoryEntries'] {
+  return entries.map((e) => ({
+    ...e,
+    id: (e.id ?? '') as string,
+    documentId: (e.documentId ?? docId) as string,
+    content: (e.content ?? e.memory ?? '') as string | null,
+    createdAt: (e.createdAt ?? new Date().toISOString()) as string | Date,
+    updatedAt: (e.updatedAt ?? new Date().toISOString()) as string | Date,
+  })) as DocumentWithMemories['memoryEntries']
+}
+
 function normalizeDocs(raw: Record<string, unknown>[]): DocumentWithMemories[] {
   return raw.map((doc) => {
-    const entries = (doc.memoryEntries ?? doc.memories ?? []) as DocumentWithMemories['memoryEntries']
     const docId = String(doc.id ?? doc.customId ?? `doc-${Math.random().toString(36).slice(2)}`)
     const createdAt = typeof doc.createdAt === 'string' ? doc.createdAt : new Date().toISOString()
     const updatedAt = typeof doc.updatedAt === 'string' ? doc.updatedAt : createdAt
     const containerTags = doc.containerTags as string[] | undefined
-    const memoryEntries = entries.length > 0 ? entries : [{
-      id: `${docId}-m0`,
-      documentId: docId,
-      content: (doc.content ?? doc.summary ?? '') as string | null,
-      title: (doc.title ?? null) as string | null,
-      createdAt,
-      updatedAt,
-      metadata: (doc.metadata ?? null) as Record<string, string | number | boolean> | null,
-    }]
+    const rawEntries = (doc.memoryEntries ?? doc.memories ?? []) as Record<string, unknown>[]
+    const memoryEntries = rawEntries.length > 0
+      ? normalizeEntries(docId, rawEntries)
+      : [{
+          id: `${docId}-m0`,
+          documentId: docId,
+          content: (doc.content ?? doc.summary ?? '') as string | null,
+          title: (doc.title ?? null) as string | null,
+          createdAt,
+          updatedAt,
+          metadata: (doc.metadata ?? null) as Record<string, string | number | boolean> | null,
+        }] as DocumentWithMemories['memoryEntries']
     return {
       ...doc,
       id: docId,

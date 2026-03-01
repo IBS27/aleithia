@@ -125,6 +125,31 @@ export async function streamChat(
   }
 }
 
+export interface DeepDiveResult {
+  code: string
+  result: { title?: string; summary?: string; stats?: Record<string, unknown>; raw_output?: string }
+  chart: string | null
+  stderr: string | null
+}
+
+export async function requestDeepDive(
+  question: string,
+  brief: string,
+  neighborhood: string,
+  businessType: string,
+): Promise<DeepDiveResult> {
+  return fetchJSON<DeepDiveResult>('/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      question,
+      brief,
+      neighborhood,
+      business_type: businessType,
+    }),
+  })
+}
+
 export interface PipelineStatus {
   pipelines: Record<string, { doc_count: number; last_update: string | null; state: string }>
   enriched_docs: number
@@ -143,6 +168,10 @@ export async function fetchMetrics(): Promise<Record<string, number>> {
 
 export interface GpuMetricsEntry {
   status: 'active' | 'cold' | 'error'
+  inferred?: boolean
+  reason?: 'idle' | 'no_data'
+  enriched_count?: number
+  last_run_ago_s?: number
   gpu_utilization?: number
   memory_utilization?: number
   memory_used_mb?: number

@@ -36,7 +36,6 @@ export interface ChatMessage {
 export interface UserProfile {
   business_type: string
   neighborhood: string
-  risk_tolerance?: 'low' | 'medium' | 'high'
 }
 
 // Raw data types from API

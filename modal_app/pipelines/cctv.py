@@ -240,7 +240,7 @@ async def cctv_ingester():
     await safe_volume_commit(volume, "cctv")
 
     # Spawn GPU batch analysis
-    analyze_cctv_batch.spawn()
+    await analyze_cctv_batch.spawn.aio()
 
     print(f"CCTV ingester: {len(cameras)} cameras processed, batch analysis spawned")
     return len(cameras)

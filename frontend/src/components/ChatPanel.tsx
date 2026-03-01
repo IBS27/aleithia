@@ -1,8 +1,11 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import Markdown from 'react-markdown'
 import type { ChatMessage } from '../types/index.ts'
 import ProcessFlow from './ProcessFlow.tsx'
 import type { ProcessStage } from './ProcessFlow.tsx'
+import DeepDivePanel from './DeepDivePanel.tsx'
+import { requestDeepDive } from '../api.ts'
+import type { DeepDiveResult } from '../api.ts'
 
 interface AgentInfo {
   agents_deployed: number
@@ -17,6 +20,13 @@ interface AgentInfo {
   }>
 }
 
+interface DeepDiveState {
+  loading: boolean
+  result: DeepDiveResult | null
+  error: string | null
+  requested: boolean
+}
+
 interface Props {
   messages: ChatMessage[]
   onSend: (message: string) => void
@@ -29,15 +39,53 @@ interface Props {
   processStage?: ProcessStage
   chatQuestion?: string
   processLogs?: string[]
+  neighborhood?: string
+  businessType?: string
 }
 
-export default function ChatPanel({ messages, onSend, loading, isStreaming, agentInfo, agentActive, agentElapsedMs, statusMessage, processStage, chatQuestion, processLogs }: Props) {
+export default function ChatPanel({ messages, onSend, loading, isStreaming, agentInfo, agentActive, agentElapsedMs, statusMessage, processStage, chatQuestion, processLogs, neighborhood, businessType }: Props) {
   const [input, setInput] = useState('')
+  const [deepDives, setDeepDives] = useState<Record<number, DeepDiveState>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  const handleDeepDive = useCallback(async (messageIndex: number, brief: string) => {
+    // Find the preceding user message as the question
+    let question = ''
+    for (let i = messageIndex - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        question = messages[i].content
+        break
+      }
+    }
+    if (!question) question = 'Analyze the available data'
+
+    setDeepDives(prev => ({
+      ...prev,
+      [messageIndex]: { loading: true, result: null, error: null, requested: true },
+    }))
+
+    try {
+      const result = await requestDeepDive(
+        question,
+        brief,
+        neighborhood || 'Loop',
+        businessType || 'Restaurant',
+      )
+      setDeepDives(prev => ({
+        ...prev,
+        [messageIndex]: { loading: false, result, error: null, requested: true },
+      }))
+    } catch (err) {
+      setDeepDives(prev => ({
+        ...prev,
+        [messageIndex]: { loading: false, result: null, error: err instanceof Error ? err.message : 'Analysis failed', requested: true },
+      }))
+    }
+  }, [messages, neighborhood, businessType])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -77,28 +125,46 @@ export default function ChatPanel({ messages, onSend, loading, isStreaming, agen
           </div>
         )}
 
-        {messages.map((msg, i) => (
-          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div
-              className={`max-w-[85%] px-4 py-2.5 text-xs leading-relaxed ${
-                msg.role === 'user'
-                  ? 'bg-white text-[#06080d]'
-                  : 'bg-white/[0.04] border border-white/[0.06] text-white/70'
-              }`}
-            >
-              {msg.role === 'assistant' ? (
-                <div className="prose prose-invert prose-sm max-w-none">
-                  <Markdown>{msg.content}</Markdown>
+        {messages.map((msg, i) => {
+          const isAssistant = msg.role === 'assistant'
+          const isLastMessage = i === messages.length - 1
+          const isComplete = isAssistant && !(isStreaming && isLastMessage)
+          const dive = deepDives[i]
+
+          return (
+            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className="max-w-[85%]">
+                <div
+                  className={`px-4 py-2.5 text-xs leading-relaxed ${
+                    msg.role === 'user'
+                      ? 'bg-white text-[#06080d]'
+                      : 'bg-white/[0.04] border border-white/[0.06] text-white/70'
+                  }`}
+                >
+                  {isAssistant ? (
+                    <div className="prose prose-invert prose-sm max-w-none">
+                      <Markdown>{msg.content}</Markdown>
+                    </div>
+                  ) : (
+                    msg.content
+                  )}
+                  {isStreaming && isLastMessage && isAssistant && (
+                    <span className="inline-block w-1.5 h-4 bg-white animate-pulse ml-0.5 align-middle" />
+                  )}
                 </div>
-              ) : (
-                msg.content
-              )}
-              {isStreaming && i === messages.length - 1 && msg.role === 'assistant' && (
-                <span className="inline-block w-1.5 h-4 bg-white animate-pulse ml-0.5 align-middle" />
-              )}
+                {isComplete && (
+                  <DeepDivePanel
+                    result={dive?.result ?? null}
+                    loading={dive?.loading ?? false}
+                    error={dive?.error ?? null}
+                    onRequest={() => handleDeepDive(i, msg.content)}
+                    requested={dive?.requested ?? false}
+                  />
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
 
         {statusMessage && (
           <div className="flex justify-start">

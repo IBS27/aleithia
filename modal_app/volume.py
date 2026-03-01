@@ -78,6 +78,12 @@ web_image = (
     .add_local_python_source("modal_app", copy=True)
 )
 
+# Sandbox image for AI-generated data analysis scripts (no local source — standalone code)
+sandbox_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install("pandas==2.2.0", "matplotlib==3.9.0", "numpy==1.26.0", "seaborn==0.13.0")
+)
+
 # Vision pipeline images
 video_image = (
     modal.Image.debian_slim(python_version="3.11")
