@@ -1615,6 +1615,328 @@ async def neighborhood(name: str, business_type: str = ""):
 
 # ── Social Media Trends ──────────────────────────────────────────────────────
 
+_SOCIAL_GENERIC_KEYWORDS = (
+    "business",
+    "small business",
+    "owner",
+    "opening",
+    "closing",
+    "foot traffic",
+    "price",
+    "customer",
+    "rent",
+    "construction",
+    "permit",
+    "license",
+)
+
+
+def _coerce_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _social_business_keywords(business_type: str) -> list[str]:
+    """Resolve business-specific keywords used by deterministic social ranking."""
+    bt = _sanitize_business_type(business_type)
+    if not bt:
+        return list(_SOCIAL_GENERIC_KEYWORDS)
+
+    keywords = BUSINESS_TYPE_KEYWORDS.get(bt, [bt])
+    resolved = []
+    for kw in keywords:
+        clean = _sanitize_business_type(kw)
+        if clean:
+            resolved.append(clean)
+    return resolved or [bt]
+
+
+def _extract_social_timestamp_epoch(doc: dict) -> float:
+    """Best-effort timestamp extraction across Reddit/TikTok payload variants."""
+    ts = _parse_timestamp_epoch(str(doc.get("timestamp", "") or ""))
+    if ts > 0:
+        return ts
+
+    meta = doc.get("metadata", {}) or {}
+    for key in ("created_at", "createdAt", "published_at", "scraped_at", "updated_at"):
+        candidate = _parse_timestamp_epoch(str(meta.get(key, "") or ""))
+        if candidate > 0:
+            return candidate
+
+    for key in ("created_utc", "created"):
+        raw = meta.get(key)
+        if isinstance(raw, (int, float)) and raw > 0:
+            return float(raw)
+        parsed = _coerce_float(raw, 0.0)
+        if parsed > 0:
+            return parsed
+
+    return 0.0
+
+
+def _social_doc_quality_score(doc: dict) -> float:
+    """Simple content quality heuristic to downrank sparse/noisy snippets."""
+    title = str(doc.get("title", "") or "").strip()
+    content = str(doc.get("content", "") or "").strip()
+    content_len = len(content)
+    title_len = len(title)
+    has_sentence_break = any(sep in content for sep in (". ", "! ", "? "))
+
+    score = 0.0
+    if title_len >= 12:
+        score += 0.25
+    if content_len >= 80:
+        score += 0.45
+    elif content_len >= 30:
+        score += 0.25
+    if has_sentence_break:
+        score += 0.2
+    if not _is_count_only_text(title):
+        score += 0.1
+    return min(1.0, score)
+
+
+def _social_doc_engagement_score(doc: dict, source: str) -> float:
+    """Normalize engagement metrics across sources to 0..1."""
+    meta = doc.get("metadata", {}) or {}
+
+    if source == "reddit":
+        score = max(0.0, _coerce_float(meta.get("score", 0)))
+        comments = max(0.0, _coerce_float(meta.get("num_comments", 0)))
+        upvote_ratio = _coerce_float(meta.get("upvote_ratio", 0.0))
+        # Saturating normalization keeps very large posts from dominating.
+        return min(1.0, (score / 200.0) + (comments / 80.0) + min(0.2, max(0.0, upvote_ratio - 0.5)))
+
+    if source == "tiktok":
+        views = int((meta.get("views_normalized") or 0) or 0)
+        if views <= 0:
+            views = _parse_view_count(str(meta.get("views", "") or ""))
+        likes = max(0.0, _coerce_float(meta.get("likes", 0)))
+        comments = max(0.0, _coerce_float(meta.get("comments", 0)))
+        return min(1.0, (views / 200_000.0) + (likes / 20_000.0) + (comments / 2_000.0))
+
+    return 0.0
+
+
+def _score_social_doc(doc: dict, business_type: str, neighborhood: str, source: str) -> float:
+    """Deterministic relevance score for social docs (0..1)."""
+    keywords = _social_business_keywords(business_type)
+    title = str(doc.get("title", "") or "")
+    content = str(doc.get("content", "") or "")
+    combined = f"{title} {content}".lower()
+
+    business_hits = sum(1 for kw in keywords if kw and kw in combined)
+    business_score = min(1.0, business_hits / 3.0)
+
+    # Neighborhood specificity gets a dedicated boost.
+    nb = (neighborhood or "").strip().lower()
+    geo_nb = str((doc.get("geo", {}) or {}).get("neighborhood", "") or "").strip().lower()
+    neighborhood_score = 1.0 if (nb and (nb in combined or geo_nb == nb)) else 0.0
+
+    ts = _extract_social_timestamp_epoch(doc)
+    if ts > 0:
+        age_days = max(0.0, (time.time() - ts) / 86400.0)
+        recency_score = max(0.0, 1.0 - (age_days / 21.0))
+    else:
+        recency_score = 0.25
+
+    engagement_score = _social_doc_engagement_score(doc, source)
+    quality_score = _social_doc_quality_score(doc)
+
+    weighted = (
+        0.38 * business_score
+        + 0.22 * recency_score
+        + 0.22 * engagement_score
+        + 0.18 * quality_score
+    )
+    if neighborhood_score > 0:
+        weighted = min(1.0, weighted + 0.1)
+    return round(weighted, 5)
+
+
+def _dedupe_social_docs(docs: list[dict]) -> list[dict]:
+    """Deduplicate documents by id, falling back to title/content fingerprint."""
+    deduped: list[dict] = []
+    seen: set[str] = set()
+    for doc in docs:
+        doc_id = str(doc.get("id", "") or "").strip()
+        if not doc_id:
+            title = str(doc.get("title", "") or "").strip().lower()
+            content = str(doc.get("content", "") or "").strip().lower()[:120]
+            doc_id = f"fp:{title}|{content}"
+        if doc_id in seen:
+            continue
+        seen.add(doc_id)
+        deduped.append(doc)
+    return deduped
+
+
+def _rank_social_docs_deterministic(
+    reddit_docs: list[dict],
+    tiktok_docs: list[dict],
+    business_type: str,
+    neighborhood: str,
+    max_total: int = 8,
+) -> list[tuple[str, dict, float]]:
+    """Rank docs per source, then merge with source-balancing."""
+
+    def _rank_source(docs: list[dict], source: str) -> list[tuple[str, dict, float]]:
+        ranked: list[tuple[str, dict, float]] = []
+        for doc in _dedupe_social_docs(docs):
+            score = _score_social_doc(doc, business_type, neighborhood, source)
+            ranked.append((source, doc, score))
+        ranked.sort(
+            key=lambda item: (
+                item[2],
+                _extract_social_timestamp_epoch(item[1]),
+                str(item[1].get("id", "") or ""),
+            ),
+            reverse=True,
+        )
+        return ranked
+
+    ranked_reddit = _rank_source(reddit_docs, "reddit")
+    ranked_tiktok = _rank_source(tiktok_docs, "tiktok")
+
+    merged: list[tuple[str, dict, float]] = []
+    i_reddit = 0
+    i_tiktok = 0
+
+    reddit_top = ranked_reddit[0][2] if ranked_reddit else -1.0
+    tiktok_top = ranked_tiktok[0][2] if ranked_tiktok else -1.0
+    primary = "reddit" if reddit_top >= tiktok_top else "tiktok"
+    secondary = "tiktok" if primary == "reddit" else "reddit"
+
+    while len(merged) < max_total and (i_reddit < len(ranked_reddit) or i_tiktok < len(ranked_tiktok)):
+        for source in (primary, secondary):
+            if len(merged) >= max_total:
+                break
+            if source == "reddit" and i_reddit < len(ranked_reddit):
+                merged.append(ranked_reddit[i_reddit])
+                i_reddit += 1
+            elif source == "tiktok" and i_tiktok < len(ranked_tiktok):
+                merged.append(ranked_tiktok[i_tiktok])
+                i_tiktok += 1
+
+    return merged
+
+
+def _build_social_snippets(ranked_docs: list[tuple[str, dict, float]]) -> list[str]:
+    """Build concise source-tagged snippets for GPT synthesis."""
+    snippets: list[str] = []
+    for idx, (source, doc, score) in enumerate(ranked_docs, start=1):
+        title = str(doc.get("title", "") or "Untitled").strip()
+        content = re.sub(r"\s+", " ", str(doc.get("content", "") or "").strip())
+        excerpt = content[:380]
+        meta = doc.get("metadata", {}) or {}
+
+        if source == "reddit":
+            subreddit = str(meta.get("subreddit", "") or "").strip()
+            points = int(_coerce_float(meta.get("score", 0)))
+            comments = int(_coerce_float(meta.get("num_comments", 0)))
+            meta_str = f"subreddit={subreddit or 'unknown'}, points={points}, comments={comments}"
+            source_tag = "Reddit"
+        else:
+            views = int(meta.get("views_normalized", 0) or 0)
+            if views <= 0:
+                views = _parse_view_count(str(meta.get("views", "") or ""))
+            creator = str(meta.get("creator", "") or "").strip()
+            meta_str = f"creator=@{creator}" if creator else "creator=unknown"
+            meta_str += f", views={views}"
+            source_tag = "TikTok"
+
+        snippets.append(
+            f"[{source_tag} #{idx}] relevance={score:.2f}; {meta_str}\n"
+            f"Title: {title}\n"
+            f"Content: {excerpt}"
+        )
+    return snippets
+
+
+def _trim_words(text: str, max_words: int) -> str:
+    words = [w for w in re.split(r"\s+", text.strip()) if w]
+    if len(words) <= max_words:
+        return " ".join(words)
+    return " ".join(words[:max_words]).strip(" -:;,")
+
+
+def _deterministic_social_fallback_trends(
+    ranked_docs: list[tuple[str, dict, float]],
+    business_type: str,
+    neighborhood: str,
+    count: int = 3,
+) -> list[dict]:
+    """Build stable trends when LLM output is unavailable or malformed."""
+    if not ranked_docs:
+        return []
+
+    trends: list[dict] = []
+    biz_label = (business_type or "small businesses").strip()
+    used_titles: set[str] = set()
+
+    for i in range(count):
+        source, doc, score = ranked_docs[i % len(ranked_docs)]
+        title = _trim_words(str(doc.get("title", "") or ""), 8)
+        if not title:
+            title = _trim_words(f"{source.title()} local trend {i + 1}", 8)
+
+        if title in used_titles:
+            title = _trim_words(f"{title} {i + 1}", 8)
+        used_titles.add(title)
+
+        content = re.sub(r"\s+", " ", str(doc.get("content", "") or "").strip())
+        excerpt = _trim_words(content, 22)
+        if not excerpt:
+            excerpt = "limited text signal from recent posts"
+
+        detail = (
+            f"{source.title()} signals in {neighborhood} suggest {excerpt}. "
+            f"This is likely relevant for {biz_label} planning."
+        )
+        trends.append({"title": title, "detail": detail, "_score": score})
+
+    trends.sort(key=lambda t: t.pop("_score", 0.0), reverse=True)
+    return trends
+
+
+def _parse_social_trends_response(raw: str) -> list[dict]:
+    """Parse and normalize LLM output into the existing trends contract."""
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+
+    parsed = None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\[.*\]", text, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group())
+            except json.JSONDecodeError:
+                parsed = None
+
+    if isinstance(parsed, dict):
+        parsed = parsed.get("trends", [])
+
+    if not isinstance(parsed, list):
+        return []
+
+    normalized = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        title = _trim_words(str(item.get("title", "") or ""), 8)
+        detail = str(item.get("detail", "") or "").strip()
+        if title and detail:
+            normalized.append({"title": title, "detail": detail})
+        if len(normalized) >= 3:
+            break
+    return normalized
+
 @web_app.get("/social-trends/{neighborhood}")
 async def social_trends(neighborhood: str, business_type: str = ""):
     """LLM-synthesized social media trends from Reddit + TikTok data."""
@@ -1666,62 +1988,65 @@ async def social_trends(neighborhood: str, business_type: str = ""):
                 "source_counts": {"reddit": 0, "tiktok": 0},
             }
 
-        # Build content for LLM
-        reddit_snippets = []
-        for d in reddit_docs[:10]:
-            title = d.get("title", "")
-            content = d.get("content", "")[:300]
-            reddit_snippets.append(f"[Reddit] {title}: {content}")
-
-        tiktok_snippets = []
-        for d in tiktok_docs[:5]:
-            title = d.get("title", "")
-            transcript = d.get("content", "")[:500]
-            views = d.get("metadata", {}).get("views", "")
-            tiktok_snippets.append(f"[TikTok] {title} (views: {views}): {transcript}")
-
-        all_snippets = "\n\n".join(reddit_snippets + tiktok_snippets)
+        ranked_docs = _rank_social_docs_deterministic(
+            reddit_docs=reddit_docs,
+            tiktok_docs=tiktok_docs,
+            business_type=business_type or "small business",
+            neighborhood=neighborhood,
+            max_total=8,
+        )
+        all_snippets = "\n\n".join(_build_social_snippets(ranked_docs))
 
         system_prompt = (
-            "Extract exactly 3 concise, business-relevant social media trends from the provided "
-            "posts/transcripts. Respond ONLY with a JSON array of 3 objects with `title` (max 8 words) "
-            "and `detail` (1-2 sentences). Focus on consumer behavior, neighborhood sentiment, "
-            "and emerging opportunities."
+            "You are a Chicago small-business signal analyst.\n"
+            "Use ONLY the provided snippets. Do not invent facts.\n"
+            "Return ONLY a JSON array with exactly 3 objects: "
+            "[{\"title\": \"...\", \"detail\": \"...\"}].\n"
+            "Rules:\n"
+            "- title max 8 words.\n"
+            "- detail must be 1-2 concise sentences.\n"
+            "- Each trend must be relevant to both business type and neighborhood.\n"
+            "- Prefer concrete behavior/sentiment/opportunity signals from the snippets."
         )
         user_prompt = (
             f"Neighborhood: {neighborhood}\n"
             f"Business type: {business_type or 'general'}\n\n"
-            f"Social media content:\n{all_snippets}"
+            f"Ranked social snippets:\n{all_snippets}"
         )
 
-        # Call GPT-4o (fast, no cold start) with Qwen3-8B fallback
-        from modal_app.openai_utils import openai_available, get_openai_client
+        # GPT synthesis over deterministic ranked snippets.
+        from modal_app.openai_utils import (
+            get_openai_client,
+            get_social_trends_model,
+            openai_available,
+        )
 
         msgs = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
 
+        llm_parse_failed = False
         if openai_available():
             try:
                 client = get_openai_client()
                 oai_resp = await client.chat.completions.create(
-                    model="gpt-4o",
+                    model=get_social_trends_model(),
                     messages=msgs,
                     max_tokens=512,
-                    temperature=0.4,
+                    temperature=0.2,
                 )
                 raw = oai_resp.choices[0].message.content or ""
             except Exception as e:
                 if not ENABLE_ALETHIA_LLM:
                     return JSONResponse(
-                        {"error": f"Social trends synthesis unavailable: GPT-4o failed and AlethiaLLM is disabled ({e})"},
+                        {"error": f"Social trends synthesis unavailable: OpenAI failed and AlethiaLLM is disabled ({e})"},
                         status_code=503,
                     )
-                print(f"GPT-4o social-trends failed, falling back to Qwen3: {e}")
+                print(f"OpenAI social-trends failed, falling back to Qwen3: {e}")
                 llm_cls = modal.Cls.from_name("alethia", "AlethiaLLM")
                 llm = llm_cls()
-                raw = await llm.generate.remote.aio(msgs, max_tokens=512, temperature=0.4)
+                raw = await llm.generate.remote.aio(msgs, max_tokens=512, temperature=0.2)
         else:
             if not ENABLE_ALETHIA_LLM:
                 return JSONResponse(
@@ -1730,31 +2055,38 @@ async def social_trends(neighborhood: str, business_type: str = ""):
                 )
             llm_cls = modal.Cls.from_name("alethia", "AlethiaLLM")
             llm = llm_cls()
-            raw = await llm.generate.remote.aio(msgs, max_tokens=512, temperature=0.4)
+            raw = await llm.generate.remote.aio(msgs, max_tokens=512, temperature=0.2)
 
-        # Parse JSON response (strip code fences if present)
-        text = raw.strip()
-        if text.startswith("```"):
-            text = re.sub(r"^```(?:json)?\s*", "", text)
-            text = re.sub(r"\s*```$", "", text)
+        validated = _parse_social_trends_response(raw)
+        if not validated:
+            llm_parse_failed = True
+            validated = _deterministic_social_fallback_trends(
+                ranked_docs,
+                business_type=business_type or "small business",
+                neighborhood=neighborhood,
+                count=3,
+            )
 
-        try:
-            trends = json.loads(text)
-        except json.JSONDecodeError:
-            # Try to extract JSON array from response
-            match = re.search(r"\[.*\]", text, re.DOTALL)
-            if match:
-                trends = json.loads(match.group())
-            else:
-                trends = []
-
-        # Validate structure
-        validated = []
-        for t in trends[:3]:
-            if isinstance(t, dict) and "title" in t and "detail" in t:
-                validated.append({"title": str(t["title"]), "detail": str(t["detail"])})
+        if len(validated) < 3:
+            fallback = _deterministic_social_fallback_trends(
+                ranked_docs,
+                business_type=business_type or "small business",
+                neighborhood=neighborhood,
+                count=3,
+            )
+            existing = {(item["title"], item["detail"]) for item in validated}
+            for trend in fallback:
+                key = (trend["title"], trend["detail"])
+                if key in existing:
+                    continue
+                validated.append(trend)
+                existing.add(key)
+                if len(validated) >= 3:
+                    break
 
         if span:
+            span.set_attribute("social_trends.ranked_count", len(ranked_docs))
+            span.set_attribute("social_trends.parse_fallback", llm_parse_failed)
             span.set_attribute("social_trends.trend_count", len(validated))
 
         return {
@@ -2291,8 +2623,12 @@ def _load_parking_for_neighborhood(name: str) -> dict | None:
 
 @web_app.get("/vision/assess/{neighborhood}")
 async def vision_assess(neighborhood: str):
-    """AI-powered street assessment using GPT-4o vision on collected frames."""
-    from modal_app.openai_utils import openai_available, get_openai_client
+    """AI-powered street assessment using OpenAI vision on collected frames."""
+    from modal_app.openai_utils import (
+        get_openai_client,
+        get_vision_assess_model,
+        openai_available,
+    )
 
     if not openai_available():
         return JSONResponse(
@@ -2345,9 +2681,10 @@ async def vision_assess(neighborhood: str):
     if not image_content:
         return JSONResponse({"error": "Failed to read frame images"}, status_code=500)
 
+    model_name = get_vision_assess_model()
     try:
         resp = await client.chat.completions.create(
-            model="gpt-4o",
+            model=model_name,
             messages=[
                 {
                     "role": "system",
@@ -2378,7 +2715,7 @@ async def vision_assess(neighborhood: str):
             "assessment": assessment,
             "frame_count": len(image_content),
             "neighborhood": neighborhood,
-            "model": "gpt-4o",
+            "model": model_name,
         }
     except Exception as e:
         return JSONResponse({"error": f"Vision assessment failed: {e}"}, status_code=500)

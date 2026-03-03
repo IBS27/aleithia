@@ -27,6 +27,8 @@ modal secret create alethia-secrets \
   CENSUS_API_KEY=your_key \
   SUPERMEMORY_API_KEY=your_key \
   OPENAI_API_KEY=your_key \
+  OPENAI_MODEL_SOCIAL_TRENDS=gpt-5 \
+  OPENAI_MODEL_VISION_ASSESS=gpt-5-mini \
   TOMTOM_API_KEY=your_key \
   MAPBOX_TOKEN=your_token
 
@@ -59,6 +61,8 @@ modal secret create tiktok-scraper-secrets \
 | `SOCRATA_APP_TOKEN` | [data.cityofchicago.org](https://data.cityofchicago.org/profile/edit/developer_settings) | Optional — public access works |
 | `CENSUS_API_KEY` | [census.gov/developers](https://api.census.gov/data/key_signup.html) | Optional — works without key |
 | `SUPERMEMORY_API_KEY` | [supermemory.ai](https://supermemory.ai) | Optional — for RAG + user profiles |
+| `OPENAI_MODEL_SOCIAL_TRENDS` | n/a (model id string) | Optional — defaults to `gpt-5` |
+| `OPENAI_MODEL_VISION_ASSESS` | n/a (model id string) | Optional — defaults to `gpt-5-mini` |
 | `TOMTOM_API_KEY` | [developer.tomtom.com](https://developer.tomtom.com) | Optional — traffic monitoring; free tier available |
 | `ARIZE_SPACE_ID` | [arize.com](https://app.arize.com) | Optional — OTel tracing dashboard |
 | `ARIZE_API_KEY` | [arize.com](https://app.arize.com) | Optional — OTel tracing dashboard |
@@ -79,7 +83,7 @@ modal deploy -m modal_app
 #                  CCTVDetector/TrafficAnalyzer (T4), ParkingAnalyzer (T4)
 # - Agent swarm: neighborhood_intel_agent, regulatory_agent (+ GPT-4o enrichment), orchestrate_query
 # - Web API: https://ibsrinivas27--alethia-serve.modal.run (22+ endpoints)
-# - OpenAI hybrid: GPT-4o for Deep Dive codegen, suggestions, regulatory impact, vision assess
+# - OpenAI hybrid: GPT models for Deep Dive codegen, suggestions, regulatory impact, social trends, vision assess
 # - Utilities: compress, supermemory sync, model download, scaling_demo
 # - Tracing: Arize AX via OpenTelemetry (auto-instrumented OpenAI + LLM spans)
 ```

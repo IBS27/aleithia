@@ -5,10 +5,23 @@ instead of creating ad-hoc clients.
 """
 import os
 
+DEFAULT_SOCIAL_TRENDS_MODEL = "gpt-5"
+DEFAULT_VISION_ASSESS_MODEL = "gpt-5-mini"
+
 
 def openai_available() -> bool:
     """Check if OPENAI_API_KEY is set in the environment."""
     return bool(os.environ.get("OPENAI_API_KEY"))
+
+
+def get_social_trends_model() -> str:
+    """Resolve model for social trends synthesis."""
+    return os.environ.get("OPENAI_MODEL_SOCIAL_TRENDS", DEFAULT_SOCIAL_TRENDS_MODEL)
+
+
+def get_vision_assess_model() -> str:
+    """Resolve model for vision assessment."""
+    return os.environ.get("OPENAI_MODEL_VISION_ASSESS", DEFAULT_VISION_ASSESS_MODEL)
 
 
 def get_openai_client():
