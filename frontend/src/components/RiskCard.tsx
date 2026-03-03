@@ -46,7 +46,8 @@ export default function RiskCard({ score, borderless }: Props) {
             <div className={`text-3xl font-bold font-mono ${scoreColor(score.overall_score)}`}>
               {score.overall_score.toFixed(1)}
             </div>
-            <div className="text-[10px] font-mono text-white/20">/10 RISK</div>
+            <div className="text-[10px] font-mono text-white/20">/10 RISK SCORE</div>
+            <div className="text-[9px] font-mono text-white/15">Lower is better</div>
           </div>
         </div>
 
@@ -60,9 +61,9 @@ export default function RiskCard({ score, borderless }: Props) {
         <p className="text-xs text-white/35 leading-relaxed">{score.summary}</p>
 
         <div className={`flex items-center text-[10px] font-mono text-white/20 ${borderless ? 'mt-2' : 'mt-4'}`}>
-          <span>CONF {(score.confidence * 100).toFixed(0)}%</span>
+          <span>CONFIDENCE {(score.confidence * 100).toFixed(0)}%</span>
           <span className="mx-2 text-white/10">|</span>
-          <span>{score.factors.length} FACTORS</span>
+          <span>{score.factors.length} RISK FACTORS</span>
           <span className="ml-auto uppercase">{expanded ? 'collapse' : 'expand'}</span>
         </div>
       </button>

@@ -79,7 +79,7 @@ function scoreRegulatory(data: NeighborhoodData): CategoryScore | null {
   if (riskValues.length > 0) {
     const avgRisk = avg(riskValues)
     const highCount = riskValues.filter(v => v === 0).length
-    subs.push({ name: 'Risk Level', value: avgRisk, raw: `${highCount} high-risk of ${riskValues.length} facilities` })
+    subs.push({ name: 'Facility Risk Rating', value: avgRisk, raw: `${highCount} high-risk of ${riskValues.length} facilities` })
   }
 
   // Violation density
@@ -89,7 +89,7 @@ function scoreRegulatory(data: NeighborhoodData): CategoryScore | null {
   if (violationLengths.length > 0) {
     const avgLen = avg(violationLengths)
     const score = clamp(100 - avgLen / 10)
-    subs.push({ name: 'Violation Density', value: score, raw: `avg ${Math.round(avgLen)} chars across ${violationLengths.length} records` })
+    subs.push({ name: 'Violation Severity', value: score, raw: `${violationLengths.length} violations found` })
   }
 
   if (subs.length === 0) return null
@@ -115,7 +115,7 @@ function scoreEconomic(data: NeighborhoodData): CategoryScore | null {
 
   if (permitCount > 0) {
     const momentum = clamp((permitCount / 15) * 100)
-    subs.push({ name: 'Permit Momentum', value: momentum, raw: `${permitCount} active permits` })
+    subs.push({ name: 'Permit Activity', value: momentum, raw: `${permitCount} active permits` })
   }
 
   // Investment signal from fees
@@ -125,7 +125,7 @@ function scoreEconomic(data: NeighborhoodData): CategoryScore | null {
   if (fees.length > 0) {
     const totalFees = fees.reduce((a, b) => a + b, 0)
     const investScore = clamp(totalFees / 1000)
-    subs.push({ name: 'Investment Signal', value: investScore, raw: `$${Math.round(totalFees).toLocaleString()} in fees paid` })
+    subs.push({ name: 'Construction Investment', value: investScore, raw: `$${Math.round(totalFees).toLocaleString()} in fees paid` })
   }
 
   // New construction ratio
@@ -140,7 +140,7 @@ function scoreEconomic(data: NeighborhoodData): CategoryScore | null {
 
   if (licenseCount > 0) {
     const density = clamp(licenseCount * 4)
-    subs.push({ name: 'License Density', value: density, raw: `${licenseCount} active licenses` })
+    subs.push({ name: 'Active Licenses', value: density, raw: `${licenseCount} active licenses` })
   }
 
   if (subs.length === 0) return null
@@ -154,8 +154,8 @@ function scoreEconomic(data: NeighborhoodData): CategoryScore | null {
   }).length
 
   return {
-    id: 'economic', name: 'Economic', score, subMetrics: subs,
-    claim: `${permitCount} active permits, $${Math.round(totalFees / 1000)}K invested, ${newBuilds} new builds — ${signalLabel} economic activity`,
+    id: 'economic', name: 'Development Activity', score, subMetrics: subs,
+    claim: `${permitCount} active permits, $${Math.round(totalFees / 1000)}K invested, ${newBuilds} new builds — ${signalLabel} development activity`,
     signal: sig, signalLabel,
     sources: ['building_permits', 'business_licenses'],
     dataPoints: permitCount + licenseCount,
@@ -184,7 +184,7 @@ function scoreMarket(data: NeighborhoodData, profile: UserProfile, streetscape?:
       return 20
     })
   if (velocities.length > 0) {
-    subs.push({ name: 'Review Velocity', value: avg(velocities), raw: `${velocities.length} businesses tracked` })
+    subs.push({ name: 'Review Activity', value: avg(velocities), raw: `${velocities.length} businesses tracked` })
   }
 
   // Competitor saturation
@@ -196,7 +196,7 @@ function scoreMarket(data: NeighborhoodData, profile: UserProfile, streetscape?:
       }).length
     : data.licenses.length
   const saturation = clamp(100 - matchingLicenses * 8)
-  subs.push({ name: 'Competitor Saturation', value: saturation, raw: `${matchingLicenses} direct competitors` })
+  subs.push({ name: 'Competition Level', value: saturation, raw: `${matchingLicenses} direct competitors` })
 
   // Review volume
   const reviewCount = (data.metrics?.review_count || reviews.length)
@@ -256,7 +256,7 @@ function scoreDemographic(data: NeighborhoodData): CategoryScore | null {
 
   if (d.total_population) {
     const popSignal = clamp(d.total_population / 500)
-    subs.push({ name: 'Population Signal', value: popSignal, raw: `${d.total_population.toLocaleString()} residents` })
+    subs.push({ name: 'Population Size', value: popSignal, raw: `${d.total_population.toLocaleString()} residents` })
   }
 
   if (subs.length === 0) return null
@@ -295,10 +295,10 @@ function scoreSafety(data: NeighborhoodData, profile: UserProfile): CategoryScor
   if (data.cctv && data.cctv.cameras.length > 0) {
     const densityMap: Record<string, number> = { low: 25, medium: 60, high: 100 }
     const activity = densityMap[data.cctv.density] ?? 50
-    subs.push({ name: 'Highway Activity', value: activity, raw: `${data.cctv.density} density from ${data.cctv.cameras.length} IDOT cameras` })
+    subs.push({ name: 'Highway Traffic Volume', value: activity, raw: `${data.cctv.density} density from ${data.cctv.cameras.length} IDOT cameras` })
 
     const vehScore = clamp((data.cctv.avg_vehicles / 100) * 100)
-    subs.push({ name: 'Vehicle Flow', value: vehScore, raw: `~${Math.round(data.cctv.avg_vehicles)} avg vehicles` })
+    subs.push({ name: 'Avg Highway Vehicles', value: vehScore, raw: `~${Math.round(data.cctv.avg_vehicles)} avg vehicles` })
 
     dataPoints += data.cctv.cameras.length
   }
@@ -315,7 +315,7 @@ function scoreSafety(data: NeighborhoodData, profile: UserProfile): CategoryScor
         if (level.includes('blocked')) return 0
         return 66
       })
-    subs.push({ name: 'Traffic Accessibility', value: avg(congestionValues), raw: `${traffic.length} traffic zones monitored` })
+    subs.push({ name: 'Road Congestion', value: avg(congestionValues), raw: `${traffic.length} traffic zones monitored` })
     dataPoints += traffic.length
   }
 
@@ -366,7 +366,7 @@ function scoreCommunity(data: NeighborhoodData): CategoryScore | null {
   const subs: SubMetric[] = []
 
   if (newsCount > 0) {
-    subs.push({ name: 'News Volume', value: clamp(newsCount * 8), raw: `${newsCount} articles` })
+    subs.push({ name: 'News Coverage', value: clamp(newsCount * 8), raw: `${newsCount} articles` })
   }
   if (politicsCount > 0) {
     subs.push({ name: 'Political Activity', value: clamp(politicsCount * 10), raw: `${politicsCount} legislative items` })
@@ -374,7 +374,7 @@ function scoreCommunity(data: NeighborhoodData): CategoryScore | null {
   if (redditCount + tiktokCount > 0) {
     subs.push({ name: 'Social Engagement', value: clamp((redditCount + tiktokCount) * 10), raw: `${redditCount} reddit + ${tiktokCount} tiktok` })
   }
-  subs.push({ name: 'Total Buzz', value: clamp((totalMentions / 20) * 100), raw: `${totalMentions} total mentions` })
+  subs.push({ name: 'Total Mentions', value: clamp((totalMentions / 20) * 100), raw: `${totalMentions} total mentions` })
 
   const score = Math.round(avg(subs.map(s => s.value)))
   const { signal: sig, signalLabel } = signal(score)

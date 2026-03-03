@@ -30,15 +30,15 @@ export default function DemographicsCard({ metrics, demographics, horizontal }: 
 
   const items = [
     { label: 'Active Permits', value: metrics.active_permits || 0, fmt: (v: number) => v.toString() },
-    { label: 'Crime 30d', value: metrics.crime_incidents_30d || 0, fmt: (v: number) => v.toString() },
+    { label: 'Crimes (30 Days)', value: metrics.crime_incidents_30d || 0, fmt: (v: number) => v.toString() },
     { label: 'Avg Review', value: metrics.avg_review_rating || 0, fmt: (v: number) => v > 0 ? `${v.toFixed(1)}/5` : 'N/A' },
     { label: 'Reviews', value: metrics.review_count || 0, fmt: (v: number) => v > 0 ? v.toString() : 'N/A' },
   ]
 
   const scores = [
-    { label: 'Regulatory Density', value: metrics.regulatory_density || 0 },
+    { label: 'Regulatory Score', value: metrics.regulatory_density || 0 },
     { label: 'Business Activity', value: metrics.business_activity || 0 },
-    { label: 'Sentiment', value: metrics.sentiment || 0 },
+    { label: 'Overall Sentiment', value: metrics.sentiment || 0 },
   ]
 
   if (horizontal) {
@@ -56,7 +56,7 @@ export default function DemographicsCard({ metrics, demographics, horizontal }: 
       <div className="border border-white/[0.06] bg-white/[0.01] p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">
-            {metrics.neighborhood} Metrics
+            {metrics.neighborhood} Key Stats
           </h3>
           <div className="flex items-center gap-4">
             {scores.map(score => (
@@ -91,7 +91,7 @@ export default function DemographicsCard({ metrics, demographics, horizontal }: 
   return (
     <div className="border border-white/[0.06] bg-white/[0.01] p-5">
       <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30 mb-4">
-        {metrics.neighborhood} Metrics
+        {metrics.neighborhood} Key Stats
       </h3>
 
       {/* Census Demographics */}
