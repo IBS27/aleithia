@@ -61,7 +61,7 @@ export default function HowItWorks({ onBack }: Props) {
       </nav>
 
       <main className="max-w-4xl mx-auto px-10 py-16">
-        <p className={SECTION_HEADER}>Pipeline Overview</p>
+        <p className={SECTION_TITLE}>Pipeline Overview</p>
         <h1 className="text-4xl sm:text-5xl font-bold tracking-tight text-white mb-4">
           Architecture & Backend Logic
         </h1>
