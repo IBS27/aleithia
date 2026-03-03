@@ -28,6 +28,16 @@ DEDUP_PATH = f"{VOLUME_MOUNT}/dedup"
 MAX_ANALYZED_IDS = 5000
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+ENABLE_ALETHIA_LLM = _env_flag("ENABLE_ALETHIA_LLM", default=False)
+
+
 # ---------------------------------------------------------------------------
 # Output schemas
 # ---------------------------------------------------------------------------
@@ -231,9 +241,21 @@ async def _evaluate_significance(candidates: list[dict], tracer=None) -> list[di
         )
 
         try:
+            if not ENABLE_ALETHIA_LLM:
+                raise RuntimeError("AlethiaLLM disabled")
+
             from modal_app.llm import AlethiaLLM
             llm = AlethiaLLM()
-            response = await llm.generate.remote.aio(prompt, max_tokens=1500)
+            response = await llm.generate.remote.aio(
+                [
+                    {
+                        "role": "system",
+                        "content": "You score event significance for Chicago small businesses. Return only JSON.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=1500,
+            )
 
             # Parse JSON from response
             json_match = _extract_json_array(response)
@@ -673,9 +695,21 @@ async def _synthesize_brief(
         recommendations = []
 
         try:
+            if not ENABLE_ALETHIA_LLM:
+                raise RuntimeError("AlethiaLLM disabled")
+
             from modal_app.llm import AlethiaLLM
             llm = AlethiaLLM()
-            response = await llm.generate.remote.aio(prompt, max_tokens=2000)
+            response = await llm.generate.remote.aio(
+                [
+                    {
+                        "role": "system",
+                        "content": "You synthesize structured business impact briefs. Return valid JSON.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=2000,
+            )
 
             # Parse JSON from response
             json_match = _extract_json_array(response)

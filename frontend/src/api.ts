@@ -197,7 +197,7 @@ export async function fetchMetrics(): Promise<Record<string, number>> {
 }
 
 export interface GpuMetricsEntry {
-  status: 'active' | 'cold' | 'error'
+  status: 'active' | 'cold' | 'error' | 'disabled'
   inferred?: boolean
   reason?: 'idle' | 'no_data'
   enriched_count?: number

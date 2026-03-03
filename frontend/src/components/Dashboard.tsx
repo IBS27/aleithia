@@ -370,22 +370,39 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
   */
 
   const refreshData = async () => {
-      try {
-        const [nbData, srcData] = await Promise.all([
-        api.neighborhood(profile.neighborhood, profile.business_type),
-          api.sources(),
-        ])
-        setNeighborhoodData(nbData)
-        setSources(srcData)
-        setRiskScore(computeRiskScore(nbData, profile))
-        setLoading(false)
-      // Fetch trends (non-blocking)
+    const toErrorMessage = (value: unknown) =>
+      value instanceof Error ? value.message : String(value)
+
+    const [nbResult, srcResult] = await Promise.allSettled([
+      api.neighborhood(profile.neighborhood, profile.business_type),
+      api.sources(),
+    ])
+
+    const errors: string[] = []
+
+    if (nbResult.status === 'fulfilled') {
+      setNeighborhoodData(nbResult.value)
+      setRiskScore(computeRiskScore(nbResult.value, profile))
+      // Fetch trends only when neighborhood payload is available.
       fetchTrends(profile.neighborhood).then(t => setTrends(t)).catch(() => {})
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load data')
-        setLoading(false)
-      }
+    } else {
+      errors.push(`Neighborhood data: ${toErrorMessage(nbResult.reason)}`)
     }
+
+    if (srcResult.status === 'fulfilled') {
+      setSources(srcResult.value)
+    } else {
+      errors.push(`Data sources: ${toErrorMessage(srcResult.reason)}`)
+    }
+
+    if (errors.length > 0) {
+      setError(errors.join(' | '))
+    } else {
+      setError(null)
+    }
+
+    setLoading(false)
+  }
 
   useEffect(() => {
     let cancelled = false

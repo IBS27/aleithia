@@ -82,6 +82,19 @@ function GpuCard({ gpuKey, entry, taskName, warm }: { gpuKey: string; entry: Gpu
   const isInferred = isActive && entry.inferred
 
   if (!isActive) {
+    if (entry.status === 'disabled') {
+      return (
+        <div className="px-4 py-3">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-white/20" />
+            <span className="text-xs font-mono font-medium text-white/70">{gpuLabel}</span>
+          </div>
+          <div className="text-[10px] font-mono text-white/25">{taskName}</div>
+          <div className="text-[10px] font-mono mt-1 text-white/20">disabled</div>
+        </div>
+      )
+    }
+
     const isWarm = warm && entry.status === 'cold'
     const hasEnrichedData = entry.reason === 'idle' && (entry.enriched_count ?? 0) > 0
     const coldReason = entry.reason === 'no_data'

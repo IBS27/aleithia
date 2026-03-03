@@ -33,7 +33,7 @@ When answering questions:
     secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     scaledown_window=300,
     timeout=600,
-    min_containers=1,
+    min_containers=0,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
 )

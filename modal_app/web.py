@@ -89,6 +89,16 @@ _COUNT_ONLY_RE = re.compile(r"^\s*\d[\d,.\s]*[KMBkmb]?\s*$")
 _TIKTOK_CREATOR_RE = re.compile(r"tiktok\.com/@([^/?#]+)/video/", re.IGNORECASE)
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+ENABLE_ALETHIA_LLM = _env_flag("ENABLE_ALETHIA_LLM", default=False)
+
+
 def _is_count_only_text(value: str) -> bool:
     text = (value or "").strip()
     return bool(text) and bool(_COUNT_ONLY_RE.match(text))
@@ -746,6 +756,12 @@ def _compute_metrics(name: str, inspections: list, permits: list, licenses: list
 @web_app.post("/chat")
 async def chat(request: Request):
     """Streaming chat endpoint — orchestrates agent swarm + streams LLM tokens via SSE."""
+    if not ENABLE_ALETHIA_LLM:
+        return JSONResponse(
+            {"error": "Chat is disabled (ENABLE_ALETHIA_LLM=false)"},
+            status_code=503,
+        )
+
     from modal_app.instrumentation import get_tracer
     tracer = get_tracer("alethia.web")
 
@@ -1068,7 +1084,7 @@ async def status():
         "pipelines": pipeline_status,
         "enriched_docs": enriched_count,
         "gpu_status": {
-            "h100_llm": "available",
+            "h100_llm": "disabled" if not ENABLE_ALETHIA_LLM else "available",
             "t4_classifier": "available",
             "t4_sentiment": "available",
             "t4_cctv": "available",
@@ -1871,11 +1887,21 @@ async def social_trends(neighborhood: str, business_type: str = ""):
                 )
                 raw = oai_resp.choices[0].message.content or ""
             except Exception as e:
+                if not ENABLE_ALETHIA_LLM:
+                    return JSONResponse(
+                        {"error": f"Social trends synthesis unavailable: GPT-4o failed and AlethiaLLM is disabled ({e})"},
+                        status_code=503,
+                    )
                 print(f"GPT-4o social-trends failed, falling back to Qwen3: {e}")
                 llm_cls = modal.Cls.from_name("alethia", "AlethiaLLM")
                 llm = llm_cls()
                 raw = await llm.generate.remote.aio(msgs, max_tokens=512, temperature=0.4)
         else:
+            if not ENABLE_ALETHIA_LLM:
+                return JSONResponse(
+                    {"error": "Social trends synthesis unavailable: OpenAI not configured and AlethiaLLM is disabled"},
+                    status_code=503,
+                )
             llm_cls = modal.Cls.from_name("alethia", "AlethiaLLM")
             llm = llm_cls()
             raw = await llm.generate.remote.aio(msgs, max_tokens=512, temperature=0.4)
@@ -2779,17 +2805,16 @@ async def gpu_metrics():
     import asyncio
 
     results = {
-        "h100_llm": {"status": "cold"},
+        "h100_llm": {"status": "disabled" if not ENABLE_ALETHIA_LLM else "cold"},
         "t4_classifier": {"status": "cold"},
         "t4_sentiment": {"status": "cold"},
         "t4_cctv": {"status": "cold"},
     }
 
     # Query non-batched GPU classes directly (batched classes can't have extra methods)
-    gpu_classes = [
-        ("AlethiaLLM", "h100_llm"),
-        ("TrafficAnalyzer", "t4_cctv"),
-    ]
+    gpu_classes = [("TrafficAnalyzer", "t4_cctv")]
+    if ENABLE_ALETHIA_LLM:
+        gpu_classes.insert(0, ("AlethiaLLM", "h100_llm"))
 
     async def _fetch(cls_name: str, key: str):
         try:
@@ -3029,6 +3054,8 @@ async def analyze(payload: _AnalyzeRequest):
         )
 
         async def _codegen_via_qwen(p: str) -> str:
+            if not ENABLE_ALETHIA_LLM:
+                raise RuntimeError("AlethiaLLM disabled")
             llm_cls = modal.Cls.from_name("alethia", "AlethiaLLM")
             llm = llm_cls()
             msgs = [{"role": "system", "content": CODEGEN_SYSTEM_PROMPT}, {"role": "user", "content": p}]
@@ -3050,9 +3077,19 @@ async def analyze(payload: _AnalyzeRequest):
                 response = oai_resp.choices[0].message.content or ""
                 model_used = "gpt-4o"
             except Exception as e:
+                if not ENABLE_ALETHIA_LLM:
+                    return JSONResponse(
+                        {"error": f"Deep Dive unavailable: GPT-4o failed and AlethiaLLM is disabled ({e})"},
+                        status_code=503,
+                    )
                 print(f"GPT-4o codegen failed, falling back to Qwen3: {e}")
                 response = await _codegen_via_qwen(prompt)
         else:
+            if not ENABLE_ALETHIA_LLM:
+                return JSONResponse(
+                    {"error": "Deep Dive unavailable: OpenAI not configured and AlethiaLLM is disabled"},
+                    status_code=503,
+                )
             response = await _codegen_via_qwen(prompt)
 
         code = _extract_python_code(response)
