@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { SignedIn, SignedOut, SignInButton, SignUpButton, useClerk, useUser } from '@clerk/clerk-react'
 import type { UserProfile, NeighborhoodData, DataSources, RiskScore, CCTVData, ParkingData } from '../types/index.ts'
@@ -314,6 +314,42 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
   const [trends, setTrends] = useState<TrendData | null>(null)
+
+  // Resizable sidebar
+  const SIDEBAR_DEFAULT = 540
+  const SIDEBAR_MIN = 360
+  const SIDEBAR_MAX = 720
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT)
+  const isDragging = useRef(false)
+  const startX = useRef(0)
+  const startWidth = useRef(SIDEBAR_DEFAULT)
+
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    isDragging.current = true
+    startX.current = e.clientX
+    startWidth.current = sidebarWidth
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!isDragging.current) return
+      const delta = startX.current - ev.clientX // dragging left = wider sidebar
+      const newWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startWidth.current + delta))
+      setSidebarWidth(newWidth)
+    }
+
+    const onMouseUp = () => {
+      isDragging.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+  }, [sidebarWidth])
 
   /*
     Legacy ChatPanel state intentionally commented out (not deleted):
@@ -767,32 +803,41 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
           )}
         </div>
 
-        {/* Right: Report */}
-        <div className="w-96 border-l-2 border-[#2B95D6]/40 p-4" style={{ boxShadow: '-4px 0 24px rgba(43, 149, 214, 0.08)' }}>
-          {/*
-            <ChatPanel
-              messages={messages}
-              onSend={(msg) => { setSuggestions([]); handleChat(msg) }}
-              loading={chatLoading}
-              isStreaming={isStreaming}
-              agentInfo={agentInfo}
-              agentActive={agentActive}
-              agentElapsedMs={agentElapsedMs}
-              statusMessage={statusMessage}
-              processStage={processStage}
-              chatQuestion={chatQuestion}
-              processLogs={processLogs.current}
-              memoryInfo={memoryInfo}
-              suggestions={suggestions}
+        {/* Right: Resizable Report Sidebar */}
+        <div className="relative shrink-0 flex" style={{ width: sidebarWidth }}>
+          {/* Drag handle */}
+          <div
+            onMouseDown={onDragStart}
+            className="absolute left-0 top-0 bottom-0 w-1.5 z-10 cursor-col-resize group hover:bg-[#2B95D6]/30 transition-colors"
+          >
+            <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-[#2B95D6]/40 group-hover:bg-[#2B95D6]/80 transition-colors" />
+          </div>
+          <div className="flex-1 p-4 overflow-y-auto" style={{ boxShadow: '-4px 0 24px rgba(43, 149, 214, 0.08)' }}>
+            {/*
+              <ChatPanel
+                messages={messages}
+                onSend={(msg) => { setSuggestions([]); handleChat(msg) }}
+                loading={chatLoading}
+                isStreaming={isStreaming}
+                agentInfo={agentInfo}
+                agentActive={agentActive}
+                agentElapsedMs={agentElapsedMs}
+                statusMessage={statusMessage}
+                processStage={processStage}
+                chatQuestion={chatQuestion}
+                processLogs={processLogs.current}
+                memoryInfo={memoryInfo}
+                suggestions={suggestions}
+              />
+            */}
+            <LocationReportPanel
+              profile={profile}
+              neighborhoodData={neighborhoodData}
+              riskScore={riskScore}
+              loading={loading}
+              agentInfo={reportAgentInfo}
             />
-          */}
-          <LocationReportPanel
-            profile={profile}
-            neighborhoodData={neighborhoodData}
-            riskScore={riskScore}
-            loading={loading}
-            agentInfo={reportAgentInfo}
-          />
+          </div>
         </div>
       </div>
 
