@@ -1,6 +1,6 @@
 # Aleithia: Bridging the Regulatory and Analytical Divide
 
-> **Democratizing high-level, data-driven expertise for small business owners.**
+> **Democratizing data-driven expertise for small business owners.**
 
 The modern operational environment for businesses is characterized by immense complexity. Entities must navigate a vast, interlocking web of constraints spanning multiple jurisdictions—federal, state, and local—covering everything from stringent employment law to evolving consumer safety standards and taxation requirements. 
 
