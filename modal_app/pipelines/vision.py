@@ -18,6 +18,7 @@ from pathlib import Path
 
 import modal
 
+from modal_app.costs import track_cost
 from modal_app.volume import app, volume, video_image, label_image, yolo_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
 
 VISION_CLASSES = [
@@ -30,6 +31,7 @@ VISION_CLASSES = [
 
 
 @app.function(image=video_image, volumes={"/data": volume}, timeout=300)
+@track_cost("vision.extract_frames", "CPU")
 def extract_frames(youtube_url: str, sample_rate: int = 5) -> str:
     """Download YouTube video and extract key frames.
 
@@ -84,6 +86,7 @@ def extract_frames(youtube_url: str, sample_rate: int = 5) -> str:
     secrets=[modal.Secret.from_name("alethia-secrets")],
     timeout=600,
 )
+@track_cost("vision.label_frame", "CPU")
 def label_frame(frame_path: str, classes: list[str] | None = None) -> dict:
     """Use GPT-4V to label a single frame with bounding boxes.
 
@@ -156,6 +159,7 @@ Focus on business-relevant features: storefronts, signage, people, vehicles."""
     secrets=[modal.Secret.from_name("alethia-secrets")],
     timeout=900,
 )
+@track_cost("vision.label_all_frames", "CPU")
 def label_all_frames(frames_dir: str) -> str:
     """Dispatch parallel labeling agents for all frames. Returns dataset path."""
     frames = sorted(Path(frames_dir).glob("*.jpg"))
@@ -213,6 +217,7 @@ names:
     volumes={"/data": volume},
     timeout=1800,  # 30 min max for training
 )
+@track_cost("vision.train_detector", "T4")
 def train_detector(dataset_dir: str, epochs: int = 50) -> str:
     """Train custom YOLOv8n detector on labeled neighborhood data."""
     from ultralytics import YOLO
@@ -238,6 +243,7 @@ def train_detector(dataset_dir: str, epochs: int = 50) -> str:
 
 
 @app.function(image=yolo_image, gpu="T4", volumes={"/data": volume}, timeout=120)
+@track_cost("vision.analyze_neighborhood", "T4")
 def analyze_neighborhood(image_path: str, model_path: str = "", neighborhood: str = "") -> dict:
     """Run custom detector on a neighborhood image. Returns structured analysis."""
     from ultralytics import YOLO

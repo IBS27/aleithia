@@ -22,6 +22,7 @@ from modal_app.common import (
     safe_queue_push,
     safe_volume_commit,
 )
+from modal_app.costs import track_cost
 from modal_app.fallback import FallbackChain
 from modal_app.volume import app, volume, base_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
 
@@ -235,6 +236,7 @@ def _convert_to_documents(traffic_data: list[dict]) -> list[Document]:
     secrets=[modal.Secret.from_name("alethia-secrets")],
     timeout=120,
 )
+@track_cost("traffic_ingester", "CPU")
 async def traffic_ingester():
     """Ingest traffic flow data from TomTom API for all Chicago neighborhoods."""
     all_raw_data: list[dict] = []

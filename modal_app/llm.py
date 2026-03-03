@@ -8,6 +8,7 @@ import uuid
 
 import modal
 
+from modal_app.costs import track_cost
 from modal_app.volume import app, volume, weights_volume, vllm_image, VOLUME_MOUNT, WEIGHTS_MOUNT
 
 MODEL_NAME = "Qwen/Qwen3-8B-AWQ"
@@ -41,6 +42,7 @@ class AlethiaLLM:
     """Self-hosted Qwen3-8B inference engine on H100 GPU."""
 
     @modal.enter(snap=True)
+    @track_cost("AlethiaLLM.load_model", "H100")
     def load_model(self):
         from modal_app.instrumentation import init_tracing, get_tracer
         init_tracing()
@@ -58,6 +60,7 @@ class AlethiaLLM:
         self.engine = AsyncLLMEngine.from_engine_args(args)
 
     @modal.method()
+    @track_cost("AlethiaLLM.generate", "H100")
     async def generate(self, messages: list[dict], max_tokens: int = 2048, temperature: float = 0.7) -> str:
         """Non-streaming generation. Returns complete response text."""
         from vllm import SamplingParams
@@ -97,6 +100,7 @@ class AlethiaLLM:
                 span_ctx.__exit__(None, None, None)
 
     @modal.method()
+    @track_cost("AlethiaLLM.generate_stream", "H100")
     async def generate_stream(self, messages: list[dict], max_tokens: int = 2048, temperature: float = 0.7):
         """Streaming generation. Yields token chunks for SSE delivery."""
         from vllm import SamplingParams

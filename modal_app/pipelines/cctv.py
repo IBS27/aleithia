@@ -26,6 +26,7 @@ from modal_app.common import (
     safe_queue_push,
     safe_volume_commit,
 )
+from modal_app.costs import track_cost
 from modal_app.fallback import FallbackChain
 from modal_app.volume import app, volume, base_image, yolo_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
 
@@ -354,6 +355,7 @@ def _trim_old_frames(frame_dir: Path, max_age_hours: int = 24) -> int:
     volumes={"/data": volume},
     timeout=300,
 )
+@track_cost("cctv_ingester", "CPU")
 async def cctv_ingester():
     """Poll IDOT cameras, download snapshots, spawn GPU analysis."""
     chain = FallbackChain("cctv", "idot", cache_ttl_hours=1)
@@ -408,6 +410,7 @@ class TrafficAnalyzer:
     """YOLOv8n inference on CCTV frames — counts persons, vehicles, bicycles."""
 
     @modal.enter(snap=True)
+    @track_cost("TrafficAnalyzer.load_model", "T4")
     def load_model(self):
         import cv2
         from ultralytics import YOLO
@@ -447,6 +450,7 @@ class TrafficAnalyzer:
             return {"status": "error", "error": str(e)}
 
     @modal.method()
+    @track_cost("TrafficAnalyzer.analyze_frame", "T4")
     def analyze_frame(self, snapshot_path: str, camera_id: str) -> dict:
         """Run YOLOv8n on a single frame, annotate, and return counts."""
         import cv2
@@ -544,6 +548,7 @@ class TrafficAnalyzer:
     volumes={"/data": volume},
     timeout=300,
 )
+@track_cost("analyze_cctv_batch", "CPU")
 async def analyze_cctv_batch():
     """Analyze all unprocessed CCTV frames via TrafficAnalyzer (GPU dispatched via .remote)."""
     frame_dir = Path(RAW_DATA_PATH) / "cctv" / "frames"
@@ -691,6 +696,7 @@ async def analyze_cctv_batch():
     volumes={"/data": volume},
     timeout=900,
 )
+@track_cost("rebuild_cctv_latest_index", "CPU")
 def rebuild_cctv_latest_index(max_analysis_files: int = 50000, max_meta_days: int = 14) -> dict:
     """One-off rebuild of latest CCTV index from historical analysis files."""
     analysis_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "analysis"

@@ -25,6 +25,7 @@ from modal_app.common import (
     safe_queue_push,
     safe_volume_commit,
 )
+from modal_app.costs import track_cost
 from modal_app.volume import app, volume, base_image, parking_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
 
 
@@ -114,6 +115,7 @@ async def _download_tile_grid(
     secrets=[modal.Secret.from_name("alethia-secrets")],
     timeout=300,
 )
+@track_cost("parking_ingester", "CPU")
 async def parking_ingester(neighborhoods: list[str] | None = None):
     """Download satellite tiles for neighborhoods and spawn GPU analysis."""
     import os
@@ -186,6 +188,7 @@ class ParkingAnalyzer:
     """Two-stage parking lot detection: SegFormer segmentation + YOLO vehicle detection."""
 
     @modal.enter(snap=True)
+    @track_cost("ParkingAnalyzer.load_models", "T4")
     def load_models(self):
         import torch
         from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
@@ -207,6 +210,7 @@ class ParkingAnalyzer:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
     @modal.method()
+    @track_cost("ParkingAnalyzer.analyze_tiles", "T4")
     def analyze_tiles(self, tile_batch: dict) -> dict:
         """Analyze stitched satellite tiles for parking lots and vehicles.
 
@@ -455,6 +459,7 @@ class ParkingAnalyzer:
     volumes={"/data": volume},
     timeout=600,
 )
+@track_cost("analyze_parking_batch", "CPU")
 async def analyze_parking_batch(neighborhoods: list[str] | None = None):
     """Dispatch ParkingAnalyzer for each neighborhood. Saves JSON results + creates Documents."""
     targets = neighborhoods or list(NEIGHBORHOOD_CENTROIDS.keys())
