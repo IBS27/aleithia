@@ -19,10 +19,10 @@ const CATEGORY_TAB_MAP: Record<string, string> = {
   community: 'community',
 }
 
-const PROFILES: { key: RiskProfile; label: string }[] = [
-  { key: 'conservative', label: 'Conservative' },
-  { key: 'growth', label: 'Growth' },
-  { key: 'budget', label: 'Budget' },
+const PROFILES: { key: RiskProfile; label: string; desc: string }[] = [
+  { key: 'conservative', label: 'Conservative', desc: 'Weighs regulatory compliance & safety highest' },
+  { key: 'growth', label: 'Growth', desc: 'Weighs economic & market signals highest' },
+  { key: 'budget', label: 'Budget', desc: 'Weighs affordability & community highest' },
 ]
 
 function signalColor(signal: string) {
@@ -68,10 +68,10 @@ function CategoryRow({ cat, expanded, onToggle, evidence, onViewAll }: {
         onClick={onToggle}
         className="w-full px-4 py-3 flex items-center gap-3 hover:bg-white/[0.02] transition-colors cursor-pointer"
       >
-        <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 border rounded ${signalColor(cat.signal)} border-current/20`}>
+        <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 border rounded min-w-[100px] text-center shrink-0 ${signalColor(cat.signal)} border-current/20`}>
           {signalIcon(cat.signal)} {cat.signalLabel}
         </span>
-        <span className="text-xs font-medium text-white/60 w-24">{cat.name}</span>
+        <span className="text-xs font-medium text-white/60 w-40 shrink-0 whitespace-nowrap">{cat.name}</span>
         <ScoreBar score={cat.score} signal={cat.signal} />
       </button>
 
@@ -211,6 +211,7 @@ export default function InsightsCard({ data, profile, onTabChange, borderless }:
             <button
               key={p.key}
               type="button"
+              title={p.desc}
               onClick={() => setRiskProfile(p.key)}
               className={`px-3 py-1 text-[10px] font-mono uppercase tracking-wider transition-colors cursor-pointer ${
                 riskProfile === p.key
