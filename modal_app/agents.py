@@ -164,13 +164,23 @@ Format your response with clear sections:
 - Recommendation (with confidence: high/medium/low)"""
 
 
+def _aggregate_categories(vectordb_results: list[dict]) -> dict:
+    """Aggregate category counts from VectorDB search results."""
+    counts: dict[str, int] = {}
+    for r in vectordb_results:
+        cat = r.get("payload", {}).get("category", "")
+        if cat:
+            counts[cat] = counts.get(cat, 0) + 1
+    return dict(sorted(counts.items(), key=lambda x: x[1], reverse=True)[:5])
+
+
 @app.function(
     image=base_image,
     volumes={"/data": volume},
     secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=120,
 )
-async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_areas: list[str] | None = None, trace_context: dict | None = None) -> dict:
+async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_areas: list[str] | None = None, trace_context: dict | None = None, query_embedding: list[float] | None = None) -> dict:
     """Query-time intelligence agent for a single neighborhood.
 
     Gathers data from local volume + Supermemory to build a neighborhood brief.
@@ -202,6 +212,33 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
             span.set_attribute("agent.business_type", business_type)
 
         nb_community_area = neighborhood_to_ca(neighborhood)
+
+        # --- VectorAI DB semantic retrieval (fast path) ---
+        vectordb_docs = []
+        try:
+            from modal_app.vectordb import vectordb_available
+            if vectordb_available():
+                vdb_cls = modal.Cls.from_name("alethia", "VectorDBService")
+                vdb = vdb_cls()
+
+                if query_embedding is not None:
+                    vectordb_docs = vdb.search_neighborhood.remote(query_embedding, neighborhood, top_k=50)
+                else:
+                    query_text = f"{business_type} {neighborhood} {' '.join(focus_areas or [])}"
+                    local_embedding = vdb.embed_text.remote(query_text)
+                    vectordb_docs = vdb.search_neighborhood.remote(local_embedding, neighborhood, top_k=50)
+
+                if vectordb_docs:
+                    report["findings"]["vectordb"] = {
+                        "count": len(vectordb_docs),
+                        "avg_score": round(sum(d["score"] for d in vectordb_docs) / len(vectordb_docs), 4),
+                        "top_categories": _aggregate_categories(vectordb_docs),
+                    }
+                    report["data_points"] += len(vectordb_docs)
+                    if span:
+                        span.set_attribute("agent.vectordb_results", len(vectordb_docs))
+        except Exception as e:
+            print(f"VectorDB query failed (falling back to file scan): {e}")
 
         # Read local volume data
         for source in ["public_data", "news", "politics", "federal_register", "demographics", "reddit", "reviews", "realestate", "tiktok", "cctv"]:
@@ -645,7 +682,7 @@ async def regulatory_agent(business_type: str, trace_context: dict | None = None
     secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=300,
 )
-async def orchestrate_query(user_id: str, question: str, business_type: str, target_neighborhood: str, trace_context: dict | None = None) -> dict:
+async def orchestrate_query(user_id: str, question: str, business_type: str, target_neighborhood: str, trace_context: dict | None = None, query_embedding: list[float] | None = None) -> dict:
     """Orchestrate parallel agents for query-time intelligence.
 
     1. Get user profile from Supermemory
@@ -678,6 +715,18 @@ async def orchestrate_query(user_id: str, question: str, business_type: str, tar
         # Capture current trace context to propagate to child agents
         child_ctx = inject_context()
 
+        # Pre-compute query embedding once for all agents (avoids 3x redundant embedding)
+        if query_embedding is None:
+            try:
+                from modal_app.vectordb import vectordb_available
+                if vectordb_available():
+                    vdb_cls = modal.Cls.from_name("alethia", "VectorDBService")
+                    vdb = vdb_cls()
+                    query_text = f"{business_type} {target_neighborhood} {question}"
+                    query_embedding = vdb.embed_text.remote(query_text)
+            except Exception as e:
+                print(f"Pre-compute embedding failed (agents will embed individually): {e}")
+
         # Fan-out via .spawn() — parallel agent execution
         agent_handles = []
 
@@ -687,6 +736,7 @@ async def orchestrate_query(user_id: str, question: str, business_type: str, tar
             business_type=business_type,
             focus_areas=["permits", "sentiment", "competition", "safety", "demographics"],
             trace_context=child_ctx,
+            query_embedding=query_embedding,
         )
         agent_handles.append(("primary", target_neighborhood, primary_handle))
 
@@ -697,6 +747,7 @@ async def orchestrate_query(user_id: str, question: str, business_type: str, tar
                 business_type=business_type,
                 focus_areas=["permits", "competition", "demographics"],
                 trace_context=child_ctx,
+                query_embedding=query_embedding,
             )
             agent_handles.append(("comparison", comp_neighborhood, handle))
 

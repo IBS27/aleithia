@@ -633,8 +633,77 @@ def _aggregate_demographics(neighborhood: str) -> dict:
     return {}
 
 
+def _logistic(x: float, x0: float, k: float) -> float:
+    """Logistic (sigmoid) normalization: f(x) = 1 / (1 + e^(-k(x - x₀)))."""
+    import math
+    return 1 / (1 + math.exp(-k * (x - x0)))
+
+
+def _compute_risk_wlc(inspections: list, permits: list, licenses: list, news: list, politics: list, reviews: list | None = None) -> float:
+    """Weighted Linear Combination risk score — same model as frontend Dashboard.tsx.
+
+    Methodology (ISO 31000-aligned):
+      Logistic normalization of each input to [0, 1] risk scale,
+      then WLC aggregation: risk = Σ(wᵢ · rᵢ) / Σ(wᵢ) over available dimensions.
+
+    Returns 0-10 risk score (higher = more risk).
+    """
+    W = {
+        "regulatory": 0.25,
+        "market": 0.20,
+        "economic": 0.20,
+        "accessibility": 0.15,
+        "political": 0.10,
+        "community": 0.10,
+    }
+
+    scored: list[tuple[str, float, float]] = []  # (dimension, risk, weight)
+
+    # ── Regulatory Compliance (25%) — inspection fail rate
+    total_inspections = len(inspections)
+    if total_inspections > 0:
+        failed = sum(1 for i in inspections if i.get("metadata", {}).get("raw_record", {}).get("results") in ("Fail", "Out of Business"))
+        fail_rate = failed / total_inspections
+        scored.append(("regulatory", _logistic(fail_rate, 0.22, 8), W["regulatory"]))
+
+    # ── Market Competition (20%) — license density + review quality
+    license_count = len(licenses)
+    if license_count > 0:
+        scored.append(("market", _logistic(license_count, 12, 0.25), W["market"] * 0.5))
+
+    ratings = [r.get("metadata", {}).get("rating", 0) for r in (reviews or []) if r.get("metadata", {}).get("rating")]
+    if ratings:
+        avg_rating = sum(ratings) / len(ratings)
+        scored.append(("market", 1 - _logistic(avg_rating, 3.5, 3), W["market"] * 0.5))
+
+    # ── Economic Vitality (20%) — permit activity (inverted: more permits = lower risk)
+    permit_count = len(permits)
+    if permit_count > 0:
+        scored.append(("economic", 1 - _logistic(permit_count, 8, 0.3), W["economic"]))
+
+    # ── Political Stability (10%) — legislative activity volume
+    if politics:
+        scored.append(("political", _logistic(len(politics), 5, 0.4), W["political"]))
+
+    # ── Community Presence (10%) — news visibility (inverted: low visibility = higher risk)
+    if news:
+        scored.append(("community", 1 - _logistic(len(news), 8, 0.3), W["community"]))
+
+    if not scored:
+        return 5.0  # no data — neutral default
+
+    weighted_risk = sum(r * w for _, r, w in scored)
+    total_weight = sum(w for _, _, w in scored)
+    normalized = weighted_risk / total_weight
+    return round(normalized * 10, 1)
+
+
 def _compute_metrics(name: str, inspections: list, permits: list, licenses: list, news: list, politics: list, reviews: list | None = None) -> dict:
-    """Compute neighborhood metrics from actual data instead of relying on pre-computed geo file."""
+    """Compute neighborhood metrics from actual data.
+
+    Risk score uses the same WLC logistic model as frontend Dashboard.tsx.
+    Returns zeros for missing data instead of seeded fakes.
+    """
     total_inspections = len(inspections)
     failed = sum(1 for i in inspections if i.get("metadata", {}).get("raw_record", {}).get("results") in ("Fail", "Out of Business"))
 
@@ -644,9 +713,8 @@ def _compute_metrics(name: str, inspections: list, permits: list, licenses: list
     # Business activity: normalized license count (0-100 scale)
     business_activity = min(100, len(licenses) * 8) if licenses else 0
 
-    # Risk score: based on inspection fail rate
-    fail_rate = (failed / total_inspections) if total_inspections > 0 else 0
-    risk_score = round(min(10, 2 + fail_rate * 6 + (len(licenses) > 10) + (len(politics) > 3)), 1)
+    # Risk score: WLC logistic model (same formula as frontend)
+    risk_score = _compute_risk_wlc(inspections, permits, licenses, news, politics, reviews)
 
     # Sentiment: placeholder based on news volume (more news = more activity = higher)
     sentiment = min(100, len(news) * 10) if news else 0
@@ -731,6 +799,7 @@ async def chat(request: Request):
                 span.set_attribute("chat.has_profile", has_profile)
             # Phase 1: Agent gathering (returns synthesis_messages, NOT response text)
             from modal_app.instrumentation import inject_context
+
             orchestrate_query = modal.Function.from_name("alethia", "orchestrate_query")
             result = await orchestrate_query.remote.aio(
                 user_id=user_id,
@@ -981,6 +1050,9 @@ async def status():
     except Exception:
         pass
 
+    from modal_app.vectordb import check_vectordb_health
+    vectordb_health = check_vectordb_health()
+
     return {
         "pipelines": pipeline_status,
         "enriched_docs": enriched_count,
@@ -992,6 +1064,7 @@ async def status():
         },
         "costs": costs,
         "total_docs": sum(p.get("doc_count", 0) for p in pipeline_status.values()),
+        "vectordb": vectordb_health,
     }
 
 
@@ -2638,7 +2711,8 @@ async def gpu_metrics():
 
 @web_app.get("/health")
 async def health():
-    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+    from modal_app.vectordb import check_vectordb_health
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat(), "vectordb": check_vectordb_health()}
 
 
 @web_app.post("/demo/scale")

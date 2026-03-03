@@ -5,7 +5,7 @@ export const API_BASE = import.meta.env.VITE_MODAL_URL || '/api/data'
 
 // Stable user identity — persisted in localStorage so Supermemory can retrieve past context
 function getOrCreateUserId(): string {
-  const KEY = 'alethia_user_id'
+  const KEY = 'aleithia_user_id'
   let id = localStorage.getItem(KEY)
   if (!id) {
     id = `anon_${crypto.randomUUID()}`

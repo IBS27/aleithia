@@ -19,6 +19,14 @@ function riskStyle(risk: string) {
   return 'text-green-400/80'
 }
 
+function ExternalIcon() {
+  return (
+    <svg className="w-3 h-3 text-white/15 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+      <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
+    </svg>
+  )
+}
+
 export default function InspectionTable({ inspections }: Props) {
   if (inspections.length === 0) {
     return (
@@ -39,21 +47,23 @@ export default function InspectionTable({ inspections }: Props) {
         const r = insp.metadata?.raw_record
         if (!r) return null
         const violations = (r.violations || '').split('|').filter(Boolean)
+        const hasUrl = !!insp.url
 
-        return (
-          <div key={insp.id} className="border border-white/[0.06] bg-white/[0.01] p-4">
+        const card = (
+          <>
             <div className="flex items-start justify-between mb-2">
-              <div>
+              <div className="min-w-0 flex-1">
                 <h4 className="text-sm font-semibold text-white">{r.dba_name}</h4>
                 <p className="text-[10px] font-mono text-white/20 mt-0.5">{r.address}, {r.city} {r.zip}</p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 <span className={`text-[10px] font-mono uppercase px-2 py-0.5 border ${resultStyle(r.results)}`}>
                   {r.results}
                 </span>
                 <span className={`text-[10px] font-mono font-medium ${riskStyle(r.risk)}`}>
                   {r.risk}
                 </span>
+                {hasUrl && <ExternalIcon />}
               </div>
             </div>
 
@@ -64,13 +74,32 @@ export default function InspectionTable({ inspections }: Props) {
               <span className="text-white/5">|</span>
               <span>{new Date(r.inspection_date).toLocaleDateString()}</span>
             </div>
+          </>
+        )
+
+        return (
+          <div key={insp.id}>
+            {hasUrl ? (
+              <a
+                href={insp.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block border border-white/[0.06] bg-white/[0.01] p-4 hover:bg-white/[0.04] hover:border-white/[0.12] transition-colors cursor-pointer"
+              >
+                {card}
+              </a>
+            ) : (
+              <div className="border border-white/[0.06] bg-white/[0.01] p-4">
+                {card}
+              </div>
+            )}
 
             {violations.length > 0 && (
-              <details className="mt-2">
-                <summary className="text-[10px] font-mono text-white/25 cursor-pointer hover:text-white/40 uppercase tracking-wider">
+              <details className="border border-t-0 border-white/[0.06] bg-white/[0.01]">
+                <summary className="px-4 py-2 text-[10px] font-mono text-white/25 cursor-pointer hover:text-white/40 uppercase tracking-wider">
                   {violations.length} violation{violations.length > 1 ? 's' : ''}
                 </summary>
-                <div className="mt-2 space-y-1">
+                <div className="px-4 pb-3 space-y-1">
                   {violations.map((v, i) => (
                     <div key={i} className="text-[10px] text-white/25 bg-white/[0.02] border border-white/[0.04] p-2.5 leading-relaxed font-mono">
                       {v.trim().substring(0, 300)}

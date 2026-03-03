@@ -287,6 +287,44 @@ Chicago-focused data source collectors, each running as Modal functions. All out
 
 ---
 
+## 11. VectorAI DB — Semantic Search Layer
+
+**File:** `modal_app/vectordb.py`
+**Schedule:** Always-on (`min_containers=1`, `scaledown_window=300`)
+**Pattern:** Actian VectorAI DB (HNSW-indexed) + sentence-transformer embeddings
+
+**Docker Image:** `williamimoh/actian-vectorai-db:1.0b`
+**Python Client:** `actiancortex` (CortexClient, gRPC on port 50051)
+
+**Embedding Model:** `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions, cosine similarity)
+
+**Collections:** 15 total — one per data source (`news`, `politics`, `reddit`, `reviews`, `realestate`, `federal_register`, `tiktok`, `demographics`, `public_data`, `traffic`, `cctv`, `vision`, `parking`, `worldpop`) + `enriched` (unified cross-source collection)
+
+**How it works:**
+1. Documents are embedded at ingestion time in `classify.py` after enrichment
+2. `build_embed_text()` concatenates title + first 1,000 chars of content
+3. `build_payload()` creates metadata (doc_id, source, neighborhood, category, sentiment)
+4. `batch_upsert_docs()` writes vectors + payloads to the `enriched` collection
+5. At query time, `neighborhood_intel_agent` calls `search_neighborhood()` for semantic retrieval filtered by neighborhood
+6. Query embedding is pre-computed once in `orchestrate_query()` and shared across all agent spawns
+
+**VectorDBService methods:**
+- `embed_text(text)` — Single text → 384-dim vector
+- `embed_batch(texts)` — Batch embed (batch_size=32)
+- `upsert_doc(doc_id, embedding, payload, collection)` — Single upsert
+- `batch_upsert_docs(doc_ids, embeddings, payloads, collection)` — Batch upsert + flush
+- `search(query_embedding, collection, top_k, filter_dict)` — Semantic search with optional payload filters
+- `search_neighborhood(query_embedding, neighborhood, top_k)` — Convenience: search enriched collection filtered by neighborhood
+- `health_check()` — Returns status + per-collection document counts
+
+**Graceful degradation:** All VectorDB operations are guarded by `vectordb_available()` (returns `False` when `VECTORDB_DISABLED=1` env var is set) and wrapped in try/except. The platform operates normally without VectorDB — agents fall back to raw JSON file reads.
+
+**Backfill:** `backfill_vectordb()` reads all existing enriched docs from volume and indexes them. Run manually: `modal run -m modal_app modal_app.vectordb::backfill_vectordb`
+
+**Health monitoring:** The reconciler checks VectorDB health every 5 min via `check_vectordb_health()`. Status is exposed on `/status` and `/health` API endpoints.
+
+---
+
 ## GPU Classification Pipeline
 
 ### DocClassifier + SentimentAnalyzer — `process_queue_batch`
@@ -323,3 +361,4 @@ Chicago-focused data source collectors, each running as Modal functions. All out
 | `vision` (5 functions) | On-demand | — | Active (needs OPENAI_API_KEY) |
 | `parking` (3 functions) | On-demand | — | Active (needs MAPBOX_TOKEN) |
 | `worldpop_ingester` | On-demand | — | Active (needs Earth Engine auth) |
+| `VectorDBService` | Always-on | — | Active (HNSW semantic search) |

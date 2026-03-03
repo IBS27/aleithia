@@ -24,6 +24,7 @@ import LocationReportPanel from './LocationReportPanel.tsx'
 import FootTrafficChart from './FootTrafficChart.tsx'
 import StreetscapeCard from './StreetscapeCard.tsx'
 import RecursiveAgentPanel from './RecursiveAgentPanel.tsx'
+import LoadingFlow from './LoadingFlow.tsx'
 import Drawer from './Drawer.tsx'
 import ProfilePage from './ProfilePage.tsx'
 import ShinyText from './ShinyText.tsx'
@@ -38,7 +39,7 @@ import { InspectionOutcomesChart, TopViolationsPareto, AlertHoursStackedArea } f
   import ChatPanel from './ChatPanel.tsx'
 */
 
-type Tab = 'overview' | 'regulatory' | 'intel' | 'community' | 'market' | 'vision' | 'models' | 'vault'
+type Tab = 'overview' | 'regulatory' | 'intel' | 'community' | 'market' | 'vision' | 'models' | 'insights'
 
 interface ReportAgentInfo {
   agents_deployed: number
@@ -556,7 +557,7 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
     { key: 'market', label: 'Market', count: (neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0), isEmpty: () => !((neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0)) },
     { key: 'vision', label: 'Vision', count: neighborhoodData?.cctv?.cameras.length || 0, isEmpty: () => false },
     { key: 'models', label: 'Models' },
-    { key: 'vault', label: 'Vault' },
+    { key: 'insights', label: 'Insights' },
   ]
   const tabs = useMemo(
     () => allTabs.filter(t => !t.isEmpty || !(t.isEmpty?.() ?? false)),
@@ -584,8 +585,8 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
   return (
     <div className="h-screen flex flex-col bg-[#06080d]">
       {/* Top bar */}
-      <header className="flex items-center justify-between px-6 py-3 bg-white/[0.02] backdrop-blur-md border-b border-white/[0.06]">
-        <div className="flex items-center gap-5">
+      <header className="flex items-center justify-between px-8 py-4 border-b border-white/[0.04]">
+        <div className="flex items-center gap-6">
           <button
             type="button"
             onClick={onReset}
@@ -593,20 +594,20 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
           >
             <ShinyText text="Aleithia" speed={2} color="#b5b5b5" shineColor="#ffffff" spread={120} direction="left" />
           </button>
-          <div className="h-3.5 w-px bg-white/10" />
-          <span className="text-xs font-mono text-white/30">
-            {profile.business_type} <span className="text-white/10 mx-1">/</span> <span className="text-white/50">{profile.neighborhood}</span>
+          <div className="h-3 w-px bg-white/[0.06]" />
+          <span className="text-xs font-mono text-white/25 tracking-wide">
+            {profile.business_type} <span className="text-white/[0.08] mx-1.5">/</span> <span className="text-white/40">{profile.neighborhood}</span>
           </span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
           <Timer running={loading} />
-          <button onClick={refreshData} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
+          <button onClick={refreshData} className="text-[10px] font-mono uppercase tracking-wider text-white/15 hover:text-white/40 transition-colors cursor-pointer">
             Refresh
           </button>
 
           <SignedOut>
             <SignInButton mode="modal">
-              <button className="text-[10px] font-mono uppercase tracking-wider text-white/30 hover:text-white/60 transition-colors cursor-pointer">
+              <button className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
                 Auth
               </button>
             </SignInButton>
@@ -618,30 +619,30 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
           </SignedOut>
 
           <SignedIn>
-            {user && <span className="text-[10px] font-mono text-white/25">{user.primaryEmailAddress?.emailAddress}</span>}
-            <button onClick={() => setProfileDrawerOpen(true)} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
+            {user && <span className="text-[10px] font-mono text-white/20">{user.primaryEmailAddress?.emailAddress}</span>}
+            <button onClick={() => setProfileDrawerOpen(true)} className="text-[10px] font-mono uppercase tracking-wider text-white/15 hover:text-white/40 transition-colors cursor-pointer">
               Profile
             </button>
-            <button onClick={() => signOut()} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
+            <button onClick={() => signOut()} className="text-[10px] font-mono uppercase tracking-wider text-white/15 hover:text-white/40 transition-colors cursor-pointer">
               Sign out
             </button>
           </SignedIn>
 
-          <button onClick={() => navigate('/start')} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
+          <button onClick={() => navigate('/start')} className="text-[10px] font-mono uppercase tracking-wider text-white/15 hover:text-white/40 transition-colors cursor-pointer">
             New Search
           </button>
         </div>
       </header>
 
       {error && (
-        <div className="mx-6 mt-4 p-4 bg-red-500/[0.06] border border-red-500/20 text-red-400/80 text-xs font-mono space-y-2">
+        <div className="mx-8 mt-5 p-5 bg-red-500/[0.04] border border-red-500/10 text-red-400/70 text-xs font-mono space-y-3">
           <p>{error}</p>
-          <p className="text-white/50">
-            API: {API_BASE} — Restart dev server after changing <code className="bg-white/10 px-1">frontend/.env</code>. Deploy: <code className="bg-white/10 px-1">modal deploy modal_app/__init__.py</code>
+          <p className="text-white/30">
+            API: {API_BASE}
           </p>
           <button
             onClick={() => { setError(null); setLoading(true); refreshData() }}
-            className="mt-2 px-3 py-1.5 text-[10px] font-medium border border-white/20 text-white/70 hover:text-white hover:border-white/40 transition-colors cursor-pointer"
+            className="px-4 py-2 text-[10px] font-mono uppercase tracking-wider border border-white/[0.08] text-white/50 hover:text-white/80 hover:border-white/20 transition-all cursor-pointer"
           >
             Retry
           </button>
@@ -651,28 +652,28 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
       {/* Main content */}
       <div className="flex-1 flex min-h-0">
         {/* Left: Data */}
-        <div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto">
-          {/* Pipeline Monitor */}
-          <PipelineMonitor />
-
-          {/* Data sources */}
-          <DataSourceBadge sources={sourceList} />
+        <div className="flex-1 flex flex-col px-6 py-5 gap-6 overflow-y-auto">
+          {/* Pipeline + Sources — compact row */}
+          <div className="flex items-start gap-6">
+            <div className="flex-1"><PipelineMonitor /></div>
+            <div className="flex-1"><DataSourceBadge sources={sourceList} /></div>
+          </div>
 
           {/* Tabs */}
-          <div className="flex gap-0 border-b border-white/[0.06]">
+          <div className="flex gap-1 border-b border-white/[0.04]">
             {tabs.map(tab => (
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
-                className={`flex items-center gap-2 px-5 py-2.5 text-xs font-medium transition-colors border-b-2 -mb-px cursor-pointer ${
+                className={`flex items-center gap-2 px-5 py-3 text-xs font-medium transition-all border-b-2 -mb-px cursor-pointer ${
                   activeTab === tab.key
-                    ? 'border-white text-white'
-                    : 'border-transparent text-white/30 hover:text-white/60'
+                    ? 'border-white/80 text-white'
+                    : 'border-transparent text-white/25 hover:text-white/50'
                 }`}
               >
                 {tab.label}
                 {tab.count !== undefined && tab.count > 0 && (
-                  <span className="font-mono text-[10px] text-white/20">
+                  <span className="font-mono text-[10px] text-white/15">
                     {tab.count}
                   </span>
                 )}
@@ -681,19 +682,13 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
           </div>
 
           {loading ? (
-            <div className="border border-white/[0.06] p-16 text-center">
-              <div className="w-6 h-6 border border-white/20 border-t-white/60 rounded-full animate-spin mx-auto mb-5" />
-              <p className="text-xs text-white/30 font-mono uppercase tracking-wider">
-                Analyzing {profile.neighborhood}
-              </p>
-              <p className="text-[10px] text-white/15 font-mono mt-2">Loading real Chicago city data</p>
-            </div>
+            <LoadingFlow neighborhood={profile.neighborhood} />
           ) : (
             <>
               {activeTab === 'overview' && trends?.congestion.anomalies && trends.congestion.anomalies.length > 0 && (
-                <div className="border border-red-500/20 bg-red-500/[0.04] px-4 py-3 flex items-center gap-3">
-                  <span className="text-red-400 text-xs font-mono font-bold">ALERT</span>
-                  <span className="text-xs text-white/50">
+                <div className="border border-red-500/10 bg-red-500/[0.03] px-5 py-3.5 flex items-center gap-4">
+                  <span className="text-red-400/80 text-[10px] font-mono font-bold uppercase tracking-wider">Alert</span>
+                  <span className="text-xs text-white/40">
                     {trends.congestion.anomalies.length} traffic anomal{trends.congestion.anomalies.length === 1 ? 'y' : 'ies'} detected:
                     {' '}{trends.congestion.anomalies.map(a => a.road).join(', ')}
                   </span>
@@ -701,19 +696,19 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
               )}
 
               {activeTab === 'overview' && (
-                <div className="space-y-4">
-                  {/* HUD quadrant grid: Map + Risk | Demographics */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <div className="h-[280px] min-h-0">
-                    <MapView activeNeighborhood={profile.neighborhood} />
+                <div className="space-y-6">
+                  {/* Map + Risk */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div className="h-[300px] min-h-0">
+                      <MapView activeNeighborhood={profile.neighborhood} />
                     </div>
                     <div className="min-h-0">
-                      {riskScore ? <RiskCard score={riskScore} /> : <div className="h-full border border-white/[0.06] bg-white/[0.01] p-6 flex items-center justify-center"><span className="text-[10px] font-mono text-white/20">Loading risk assessment</span></div>}
+                      {riskScore ? <RiskCard score={riskScore} /> : <div className="h-full border border-white/[0.04] bg-white/[0.01] p-8 flex items-center justify-center"><span className="text-[10px] font-mono text-white/15">Loading risk assessment</span></div>}
                     </div>
                   </div>
 
-                  {/* Quadrant 2: Demographics + Insights */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* Demographics + Insights */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {neighborhoodData?.metrics && (
                       <DemographicsCard metrics={neighborhoodData.metrics} demographics={neighborhoodData.demographics} />
                     )}
@@ -721,7 +716,6 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
                       <InsightsCard data={neighborhoodData} profile={profile} onTabChange={(tab) => setActiveTab(tab as Tab)} />
                     )}
                   </div>
-
                 </div>
               )}
 
@@ -749,14 +743,13 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
               )}
 
               {activeTab === 'models' && (
-                <div className="space-y-4">
+                <div className="space-y-6">
                   <RecursiveAgentPanel />
-                  <CityGraph activeNeighborhood={profile.neighborhood} interactive />
                   <MLMonitor />
                 </div>
               )}
 
-              {activeTab === 'vault' && (
+              {activeTab === 'insights' && (
                 <VaultTab
                   onOpenGraph={() => navigate('/memory-graph')}
                   dataPoints={reportAgentInfo?.data_points ?? 0}
@@ -768,7 +761,7 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
         </div>
 
         {/* Right: Report */}
-        <div className="w-96 border-l-2 border-[#2B95D6]/40 p-4" style={{ boxShadow: '-4px 0 24px rgba(43, 149, 214, 0.08)' }}>
+        <div className="w-96 border-l border-white/[0.06] p-5" style={{ boxShadow: '-4px 0 32px rgba(0, 0, 0, 0.2)' }}>
           {/*
             <ChatPanel
               messages={messages}
@@ -835,7 +828,7 @@ function VisionTab({ cctv, parking, neighborhood }: { cctv: CCTVData | null; par
   const selectedCamera = expandedCam ? cameras.find(c => c.camera_id === expandedCam) : null
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {/* Streetscape Intelligence */}
       <StreetscapeCard neighborhood={neighborhood} />
 
@@ -1036,56 +1029,60 @@ function VaultTab({
   const hoursReclaimed = dataPoints ? Math.round((dataPoints * 2) / 60 * 10) / 10 : 0
 
   return (
-    <div className="space-y-6">
-      {/* 1. Analytics Charts */}
+    <div className="space-y-8">
+      {/* 1. Knowledge Graph — hero position */}
+      <div className="border border-white/[0.04] bg-white/[0.01] p-6">
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <h3 className="text-sm font-semibold text-white/80 mb-1">Knowledge Graph</h3>
+            <p className="text-[11px] text-white/30 leading-relaxed">
+              Interactive network of neighborhoods, regulations, and entities connected by semantic similarity.
+            </p>
+          </div>
+          <button
+            onClick={onOpenGraph}
+            className="px-4 py-2 text-[10px] font-mono uppercase tracking-wider border border-white/[0.08] text-white/40 hover:text-white/70 hover:border-white/20 transition-all cursor-pointer"
+          >
+            Fullscreen
+          </button>
+        </div>
+        {neighborhood && (
+          <div className="border border-white/[0.04] overflow-hidden">
+            <CityGraph activeNeighborhood={neighborhood} interactive />
+          </div>
+        )}
+        <div className="flex items-center gap-8 mt-4 pt-4 border-t border-white/[0.03]">
+          {[
+            { dot: 'bg-cyan-400', label: 'Neighborhoods' },
+            { dot: 'bg-violet-400', label: 'Regulations' },
+            { dot: 'bg-amber-400', label: 'Entities' },
+          ].map(l => (
+            <div key={l.label} className="flex items-center gap-2">
+              <div className={`w-1.5 h-1.5 rounded-full ${l.dot}`} />
+              <span className="text-[9px] font-mono text-white/20 uppercase tracking-wider">{l.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 2. Analytics Charts */}
       {neighborhoodData && (
-        <div className="space-y-4">
+        <div className="space-y-6">
           <InspectionOutcomesChart inspections={neighborhoodData.inspections ?? []} />
           <TopViolationsPareto inspections={neighborhoodData.inspections ?? []} />
           <AlertHoursStackedArea data={neighborhoodData} />
         </div>
       )}
 
-      {/* 2. Neural Graph Visualization */}
-      <div className="border border-white/[0.06] bg-white/[0.02] p-5">
-        <h3 className="text-sm font-semibold mb-3">
-          <ShinyText text='The "Neural" Graph Visualization' speed={2} color="#b5b5b5" shineColor="#ffffff" spread={120} direction="left" />
-        </h3>
-        <p className="text-xs text-white/60 leading-relaxed mb-3">
-          The standout feature is the Knowledge Graph, which visually proves that content is connected.
-        </p>
-        {neighborhood && (
-          <div className="mb-4 border border-white/[0.06] rounded overflow-hidden">
-            <CityGraph activeNeighborhood={neighborhood} interactive />
-          </div>
-        )}
-        <ul className="text-xs text-white/50 space-y-2 list-disc list-inside mb-3">
-          <li><strong className="text-white/70">Nodes:</strong> Neighborhoods, regulations, entities</li>
-          <li><strong className="text-white/70">Edges:</strong> Connect nodes that share similar themes</li>
-          <li><strong className="text-white/70">Interactive:</strong> Drag nodes, filter by type</li>
-        </ul>
-        <button
-          onClick={onOpenGraph}
-          className="px-4 py-2 text-xs font-medium border border-white/20 text-white/70 hover:text-white hover:border-white/40 transition-colors cursor-pointer"
-        >
-          Open Full Knowledge Graph
-        </button>
-      </div>
-
-      {/* Visualizing the &quot;Attention Crisis&quot; */}
-      <div className="border border-white/[0.06] bg-white/[0.02] p-5">
-        <h3 className="text-sm font-semibold mb-3">
-          <ShinyText text='Visualizing the "Attention Crisis"' speed={2} color="#b5b5b5" shineColor="#ffffff" spread={120} direction="left" />
-        </h3>
-        <div className="space-y-4">
-          <div className="flex items-center gap-4 p-4 border border-white/[0.06]">
-            <div className="text-2xl font-bold font-mono text-white">{hoursReclaimed > 0 ? `${hoursReclaimed}h` : '—'}</div>
-            <div>
-              <div className="text-[10px] font-mono uppercase tracking-wider text-white/40 mb-1">Time Reclaimed</div>
-              <p className="text-xs text-white/50">
-                {dataPoints ? `Hours saved vs. manually reviewing ${dataPoints} data points.` : 'Hours saved by AI vs. manual review.'}
-              </p>
-            </div>
+      {/* 3. Time reclaimed */}
+      <div className="border border-white/[0.04] bg-white/[0.01] p-6">
+        <div className="flex items-center gap-6">
+          <div className="text-3xl font-bold font-mono text-white tabular-nums">{hoursReclaimed > 0 ? `${hoursReclaimed}h` : '—'}</div>
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mb-1">Time Reclaimed</div>
+            <p className="text-xs text-white/40 leading-relaxed">
+              {dataPoints ? `Estimated hours saved vs. manually reviewing ${dataPoints.toLocaleString()} data points.` : 'Hours saved by AI vs. manual review.'}
+            </p>
           </div>
         </div>
       </div>
