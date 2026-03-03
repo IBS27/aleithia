@@ -27,12 +27,6 @@ export interface NeighborhoodMetrics {
   review_count?: number
 }
 
-export interface ChatMessage {
-  role: 'user' | 'assistant'
-  content: string
-  timestamp: Date
-}
-
 export interface UserProfile {
   business_type: string
   neighborhood: string

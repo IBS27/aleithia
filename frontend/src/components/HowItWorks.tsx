@@ -315,16 +315,15 @@ export default function HowItWorks({ onBack }: Props) {
         <section className="mb-20">
           <h2 className={SECTION_TITLE}>LLM Layer</h2>
           <p className={BODY}>
-            <span className={CODE}>modal_app/llm.py</span> — AlethiaLLM runs Qwen3 8B AWQ (INT4) via vLLM on H100 for streaming chat responses and intelligence briefs. 20 concurrent inputs via <span className={CODE}>@modal.concurrent</span>. GPU memory snapshots for fast cold starts.
+            <span className={CODE}>modal_app/llm.py</span> — AlethiaLLM runs Qwen3 8B AWQ (INT4) via vLLM on H100 for intelligence synthesis and fallback generation. 20 concurrent inputs via <span className={CODE}>@modal.concurrent</span>. GPU memory snapshots for fast cold starts.
           </p>
           <div className={`${CARD} mt-6`}>
             <p className="text-xs font-mono font-bold text-white/50 mb-3">OpenAI Hybrid Layer (GPT-4o)</p>
             <p className="text-sm text-white/60 mb-3">
-              <span className={CODE}>modal_app/openai_utils.py</span> provides shared client factory. GPT-4o is used for 4 targeted enhancements — all degrade gracefully without <span className={CODE}>OPENAI_API_KEY</span>:
+              <span className={CODE}>modal_app/openai_utils.py</span> provides shared client factory. GPT-4o is used for 3 targeted enhancements — all degrade gracefully without <span className={CODE}>OPENAI_API_KEY</span>:
             </p>
             <ul className="list-disc list-inside text-sm text-white/60 space-y-1">
               <li>Deep Dive code generation (<span className={CODE}>/analyze</span> endpoint)</li>
-              <li>Chat follow-up suggestion chips</li>
               <li>Regulatory impact summaries (in regulatory_agent)</li>
               <li>Vision-powered street assessment (<span className={CODE}>/vision/assess/&#123;neighborhood&#125;</span>)</li>
             </ul>
@@ -566,7 +565,6 @@ export default function HowItWorks({ onBack }: Props) {
           </p>
           <div className="mt-6 space-y-2">
             {[
-              { method: 'POST', path: '/chat', desc: 'Streaming SSE chat (agent swarm + LLM + follow-up suggestions)' },
               { method: 'GET', path: '/brief/{neighborhood}', desc: 'Neighborhood intelligence brief' },
               { method: 'POST', path: '/analyze', desc: 'Deep Dive: GPT-4o code gen → modal.Sandbox execution' },
               { method: 'GET', path: '/neighborhood/{name}', desc: 'Full neighborhood data (includes transit + parking fields)' },

@@ -3,18 +3,6 @@ import type { DataSources, GeoJSON, NeighborhoodData, Document, CCTVTimeseries, 
 // Modal deployed endpoint — set via VITE_MODAL_URL, fallback to local proxy
 export const API_BASE = import.meta.env.VITE_MODAL_URL || '/api/data'
 
-// Stable user identity — persisted in localStorage so Supermemory can retrieve past context
-function getOrCreateUserId(): string {
-  const KEY = 'aleithia_user_id'
-  let id = localStorage.getItem(KEY)
-  if (!id) {
-    id = `anon_${crypto.randomUUID()}`
-    localStorage.setItem(KEY, id)
-  }
-  return id
-}
-export const USER_ID = getOrCreateUserId()
-
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, init)
   if (!res.ok) {
@@ -40,119 +28,6 @@ export interface UserQuery {
   business_type: string
   neighborhood: string
   created_at: string
-}
-
-export interface MemoryInfo {
-  has_profile: boolean
-  profile_facts: string[]
-  past_interactions: number
-}
-
-export interface StreamChatCallbacks {
-  onStatus?: (content: string) => void
-  onAgents?: (data: {
-    agents_deployed: number
-    neighborhoods: string[]
-    data_points: number
-    agent_summaries?: Array<{
-      name: string
-      data_points: number
-      sources?: string[]
-      regulation_count?: number
-      error?: boolean
-    }>
-  }) => void
-  onMemory?: (data: MemoryInfo) => void
-  onToken?: (token: string) => void
-  onSuggestions?: (questions: string[]) => void
-  onDone?: () => void
-  onError?: (error: string) => void
-}
-
-export async function streamChat(
-  message: string,
-  profile: { business_type: string; neighborhood: string },
-  callbacks: StreamChatCallbacks,
-  token?: string,
-): Promise<void> {
-  const chatUrl = `${API_BASE}/chat`
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  }
-  
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
-
-  const res = await fetch(chatUrl, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      message,
-      user_id: USER_ID,
-      business_type: profile.business_type,
-      neighborhood: profile.neighborhood,
-    }),
-  })
-
-  if (!res.ok) {
-    callbacks.onError?.(`Chat API error: ${res.status}`)
-    return
-  }
-
-  const reader = res.body?.getReader()
-  if (!reader) {
-    callbacks.onError?.('No response body')
-    return
-  }
-
-  const decoder = new TextDecoder()
-  let buffer = ''
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
-
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      try {
-        const data = JSON.parse(line.slice(6))
-        switch (data.type) {
-          case 'status':
-            callbacks.onStatus?.(data.content)
-            break
-          case 'agents':
-            callbacks.onAgents?.(data)
-            break
-          case 'memory':
-            callbacks.onMemory?.(data)
-            break
-          case 'token':
-            callbacks.onToken?.(data.content)
-            break
-          case 'suggestions':
-            callbacks.onSuggestions?.(data.questions || [])
-            break
-          case 'done':
-            callbacks.onDone?.()
-            break
-          case 'error':
-            callbacks.onError?.(data.content)
-            break
-        }
-      } catch {
-        // Skip malformed lines
-      }
-    }
-  }
-
-  // Stream ended — ensure onDone fires even if server didn't send a "done" event
-  callbacks.onDone?.()
 }
 
 export interface DeepDiveResult {

@@ -49,7 +49,7 @@ Replaces the traditional Postgres + Pinecone + Redis stack with a single Graph-R
 
 ## 🎨 Frontend
 Built with **React 19 + TypeScript + Vite + Tailwind CSS v4**, featuring:
-* **Streaming Chat:** Real-time responses with inline process flow traces.
+* **Intelligence Briefing:** Structured neighborhood intelligence with regulatory, market, and community signals.
 * **Risk Scoring:** ISO 31000-aligned, 6 MCDA dimensions with sigmoid-normalization.
 * **Visual Intelligence:** Satellite parking detection and live IDOT highway traffic cards.
 * **Knowledge Graph:** Interactive drag-and-filter node visualization.

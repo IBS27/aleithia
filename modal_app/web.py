@@ -1,8 +1,8 @@
 """Modal-hosted FastAPI web API — replaces local backend.
 
-Endpoints: /chat (streaming SSE), /brief, /alerts, /status, /metrics, /sources, /neighborhood
+Endpoints: /chat (retired), /brief, /alerts, /status, /metrics, /sources, /neighborhood
            /news, /politics, /inspections, /permits, /licenses, /summary
-Modal features: @modal.asgi_app, streaming SSE
+Modal features: @modal.asgi_app
 """
 import asyncio
 import base64
@@ -10,14 +10,13 @@ import json
 import os
 import re
 import time
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 import modal
 from fastapi import FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from modal_app.volume import app, volume, web_image, sandbox_image, VOLUME_MOUNT, RAW_DATA_PATH, PROCESSED_DATA_PATH
@@ -754,189 +753,16 @@ def _compute_metrics(name: str, inspections: list, permits: list, licenses: list
 
 
 @web_app.post("/chat")
-async def chat(request: Request):
-    """Streaming chat endpoint — orchestrates agent swarm + streams LLM tokens via SSE."""
-    if not ENABLE_ALETHIA_LLM:
-        return JSONResponse(
-            {"error": "Chat is disabled (ENABLE_ALETHIA_LLM=false)"},
-            status_code=503,
-        )
-
-    from modal_app.instrumentation import get_tracer
-    tracer = get_tracer("alethia.web")
-
-    body = await request.json()
-    question = body.get("message", "")
-
-    if not question or not question.strip():
-        return JSONResponse({"error": "message is required"}, status_code=400)
-    if len(question) > 5000:
-        return JSONResponse({"error": "message exceeds 5000 character limit"}, status_code=400)
-
-    user_id = body.get("user_id", str(uuid.uuid4()))
-    business_type = body.get("business_type", "Restaurant")
-    neighborhood = body.get("neighborhood", "Loop")
-
-    async def event_stream():
-        # Send agent deployment status
-        yield f"data: {json.dumps({'type': 'status', 'content': 'Deploying intelligence agents...'})}\n\n"
-
-        span_ctx = tracer.start_as_current_span("chat-request") if tracer else None
-        span = span_ctx.__enter__() if span_ctx else None
-
-        # Initialize Supermemory client early for profile + memory retrieval
-        api_key = os.environ.get("SUPERMEMORY_API_KEY", "")
-        sm = None
-        profile_data = {}
-        past_memories = []
-        if api_key:
-            try:
-                from modal_app.supermemory import SupermemoryClient
-                sm = SupermemoryClient(api_key)
-                # Parallel fetch: profile (v4 API) + user memories (retrieval API)
-                profile_task = sm.get_profile(user_id)
-                memory_task = sm.search(question, container_tags=[f"user_{user_id}"], limit=5)
-                profile_data, past_memories = await asyncio.gather(
-                    profile_task, memory_task, return_exceptions=True
-                )
-                if isinstance(profile_data, Exception):
-                    profile_data = {}
-                if isinstance(past_memories, Exception):
-                    past_memories = []
-            except Exception:
-                profile_data = {}
-                past_memories = []
-
-        # Emit memory SSE event
-        static_facts = profile_data.get("static", []) if isinstance(profile_data, dict) else []
-        dynamic_facts = profile_data.get("dynamic", []) if isinstance(profile_data, dict) else []
-        has_profile = bool(static_facts or dynamic_facts)
-        yield f"data: {json.dumps({'type': 'memory', 'has_profile': has_profile, 'profile_facts': (static_facts[:3] + dynamic_facts[:2]) if has_profile else [], 'past_interactions': len(past_memories)})}\n\n"
-
-        try:
-            if span:
-                span.set_attribute("openinference.span.kind", "CHAIN")
-                span.set_attribute("input.value", question)
-                span.set_attribute("chat.business_type", business_type)
-                span.set_attribute("chat.neighborhood", neighborhood)
-                span.set_attribute("chat.has_profile", has_profile)
-            # Phase 1: Agent gathering (returns synthesis_messages, NOT response text)
-            from modal_app.instrumentation import inject_context
-            orchestrate_query = modal.Function.from_name("alethia", "orchestrate_query")
-            result = await orchestrate_query.remote.aio(
-                user_id=user_id,
-                question=question,
-                business_type=business_type,
-                target_neighborhood=neighborhood,
-                trace_context=inject_context(),
-            )
-
-            # Build per-agent summaries for frontend
-            agent_summaries = []
-            agent_results = result.get("context", {}).get("agent_results", {})
-            for key, agent_result in agent_results.items():
-                if isinstance(agent_result, dict) and "error" not in agent_result:
-                    summary = {
-                        "name": key,
-                        "data_points": agent_result.get("data_points", 0),
-                    }
-                    if "findings" in agent_result:
-                        summary["sources"] = list(agent_result["findings"].keys())
-                    if "regulations" in agent_result:
-                        summary["regulation_count"] = len(agent_result["regulations"])
-                    agent_summaries.append(summary)
-                else:
-                    agent_summaries.append({"name": key, "data_points": 0, "error": True})
-
-            # Send agent stats with per-agent breakdown
-            yield f"data: {json.dumps({'type': 'agents', 'agents_deployed': result.get('agents_deployed', 0), 'neighborhoods': result.get('neighborhoods_analyzed', []), 'data_points': result.get('total_data_points', 0), 'agent_summaries': agent_summaries})}\n\n"
-
-            # Status bridge between agents and LLM streaming
-            yield f"data: {json.dumps({'type': 'status', 'content': 'Synthesizing intelligence report...'})}\n\n"
-
-            # Phase 2: Inject user memory context into synthesis messages
-            messages = result["synthesis_messages"]
-            if has_profile or past_memories:
-                memory_context_parts = []
-                if static_facts:
-                    memory_context_parts.append(f"Known facts: {'; '.join(str(f) for f in static_facts[:5])}")
-                if dynamic_facts:
-                    memory_context_parts.append(f"Recent context: {'; '.join(str(f) for f in dynamic_facts[:3])}")
-                if past_memories:
-                    snippets = []
-                    for mem in past_memories[:3]:
-                        content = mem.get("content", "") if isinstance(mem, dict) else str(mem)
-                        snippets.append(content[:200])
-                    memory_context_parts.append(f"Past interactions: {'; '.join(snippets)}")
-                memory_block = "\n\nUSER CONTEXT FROM MEMORY:\n" + "\n".join(memory_context_parts) + "\nUse this context to personalize your response."
-                # Append to the last user message in synthesis
-                for i in range(len(messages) - 1, -1, -1):
-                    if messages[i].get("role") == "user":
-                        messages[i] = {**messages[i], "content": messages[i]["content"] + memory_block}
-                        break
-
-            # Real LLM streaming
-            llm_cls = modal.Cls.from_name("alethia", "AlethiaLLM")
-            llm = llm_cls()
-
-            full_response = ""
-            async for token in llm.generate_stream.remote_gen.aio(
-                messages, max_tokens=2048, temperature=0.7
-            ):
-                full_response += token
-                yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
-
-            if span:
-                span.set_attribute("output.value", full_response[:2000])
-                span.set_attribute("chat.agents_deployed", result.get("agents_deployed", 0))
-                span.set_attribute("chat.data_points", result.get("total_data_points", 0))
-
-            # Generate follow-up suggestions via GPT-4o (non-blocking, skip on failure)
-            try:
-                from modal_app.openai_utils import openai_available, get_openai_client
-                if openai_available():
-                    oai_client = get_openai_client()
-                    suggestion_resp = await oai_client.chat.completions.create(
-                        model="gpt-4o",
-                        messages=[
-                            {"role": "system", "content": "Generate 2-3 concise follow-up questions a small business owner would ask next. Return JSON: {\"questions\": [\"...\", \"...\"]}. Questions should be specific to the business type and neighborhood context provided. Keep each under 60 characters."},
-                            {"role": "user", "content": f"User asked: {question}\nResponse summary: {full_response[:2000]}\nBusiness: {business_type}, Neighborhood: {neighborhood}"},
-                        ],
-                        max_tokens=200,
-                        temperature=0.7,
-                        response_format={"type": "json_object"},
-                    )
-                    suggestions = json.loads(suggestion_resp.choices[0].message.content or "{}").get("questions", [])[:3]
-                    if suggestions:
-                        yield f"data: {json.dumps({'type': 'suggestions', 'questions': suggestions})}\n\n"
-            except Exception:
-                pass  # Silently skip suggestions on failure
-
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-            # Store conversation + seed profile in Supermemory (fire-and-forget)
-            if sm:
-                try:
-                    await asyncio.gather(
-                        sm.store_conversation(user_id, [
-                            {"role": "user", "content": question},
-                            {"role": "assistant", "content": full_response},
-                        ]),
-                        sm.sync_user_profile(user_id, business_type, neighborhood),
-                        return_exceptions=True,
-                    )
-                except Exception:
-                    pass
-
-        except Exception as e:
-            if span:
-                span.set_attribute("error", str(e))
-            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
-        finally:
-            if span_ctx:
-                span_ctx.__exit__(None, None, None)
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+async def chat():
+    """Compatibility stub for retired chat endpoint."""
+    return JSONResponse(
+        {
+            "error": "chat_endpoint_retired",
+            "message": "The /chat endpoint was retired on 2026-03-03. Use /brief, /analyze, /social-trends, or /neighborhood endpoints instead.",
+            "status": 410,
+        },
+        status_code=410,
+    )
 
 
 @web_app.get("/user/memories")

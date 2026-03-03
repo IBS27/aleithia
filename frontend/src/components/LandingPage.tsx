@@ -312,7 +312,7 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
                 logo: <OpenAILogo />,
                 name: 'OpenAI GPT-4o',
                 role: 'Hybrid Intelligence',
-                desc: 'Deep Dive code gen, follow-up suggestions, regulatory impact summaries, vision assessment.',
+                desc: 'Deep Dive code gen, social trend synthesis, regulatory impact summaries, vision assessment.',
                 color: 'border-white/10 hover:border-white/30',
                 glow: 'hover:shadow-[0_0_30px_-5px_rgba(255,255,255,0.1)]',
               },
@@ -320,7 +320,7 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
                 logo: <ModelLogo name="Qwen3-8B" />,
                 name: 'Qwen3-8B AWQ',
                 role: 'Self-Hosted LLM',
-                desc: 'INT4 quantized on H100 via vLLM. 20 concurrent inputs. Streaming chat & intelligence briefs.',
+                desc: 'INT4 quantized on H100 via vLLM. 20 concurrent inputs. Intelligence briefs and synthesis fallbacks.',
                 color: 'border-violet-500/20 hover:border-violet-500/40',
                 glow: 'hover:shadow-[0_0_30px_-5px_rgba(139,92,246,0.15)]',
               },
@@ -578,7 +578,7 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
                 FastAPI &middot; 43 Endpoints &middot; @modal.asgi_app()
               </p>
               <p className="text-[9px] font-mono text-white/15 mt-1">
-                /chat &middot; /neighborhood &middot; /analyze &middot; /brief
+                /neighborhood &middot; /analyze &middot; /brief &middot; /social-trends
               </p>
             </div>
 

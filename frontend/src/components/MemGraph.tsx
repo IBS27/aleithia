@@ -210,7 +210,7 @@ export default function MemGraph() {
           >
             <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
               <p className="text-sm font-mono text-white/40">No documents in the knowledge graph yet.</p>
-              <p className="text-xs font-mono text-white/25 max-w-sm">Run analysis and ask a question in the chat to ingest documents.</p>
+              <p className="text-xs font-mono text-white/25 max-w-sm">Run analysis to ingest documents into the memory graph.</p>
               <button
                 type="button"
                 onClick={() => navigate('/start')}

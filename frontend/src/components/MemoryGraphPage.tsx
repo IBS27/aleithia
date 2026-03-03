@@ -312,7 +312,7 @@ export default function MemoryGraphPage({ onBack }: Props) {
                 No documents in the knowledge graph yet.
               </p>
               <p className="text-xs font-mono text-white/25 max-w-sm">
-                Run analysis and ask a question in the chat to ingest documents.
+                Run analysis to ingest documents into the memory graph.
               </p>
               <button
                 type="button"
