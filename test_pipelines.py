@@ -19,6 +19,10 @@ from pathlib import Path
 # ── 1. Create a temporary directory for volume paths ──────────────────────────
 _tmpdir = tempfile.mkdtemp(prefix="pipeline_test_")
 
+# Avoid importing full local discovery graph from modal_app.__init__.
+# For this harness we only need direct pipeline modules.
+os.environ.setdefault("MODAL_IS_REMOTE", "1")
+
 # ── 2. Build a fake `modal` module ────────────────────────────────────────────
 
 _modal = types.ModuleType("modal")
@@ -133,7 +137,7 @@ for _sub in ("data/raw", "data/cache", "data/dedup", "data/processed"):
 from modal_app.pipelines import news, reddit, politics, public_data  # noqa: E402
 from modal_app.pipelines import demographics, federal_register        # noqa: E402
 from modal_app.pipelines import realestate, reviews                   # noqa: E402
-from modal_app.pipelines import cctv                                  # noqa: E402
+from modal_app.pipelines import cctv, traffic                         # noqa: E402
 
 # ── Reporting helpers ─────────────────────────────────────────────────────────
 
@@ -197,7 +201,10 @@ async def run_all():
 
     await _run("NEWS (RSS)", news._fetch_all_rss)
     await _run("NEWS (Google RSS)", news._fetch_google_news_rss)
-    await _run("REDDIT (RSS)", reddit._fetch_all_rss)
+    await _run(
+        "REDDIT (RSS)",
+        reddit.RedditRetrievalService().fetch_hourly_candidates_via_rss,
+    )
     await _run("POLITICS (Legislation)", politics._fetch_legislation_rest)
     await _run("POLITICS (Events)", politics._fetch_events)
     await _run("PUBLIC DATA (no token)", public_data._fetch_all_without_token)
@@ -225,6 +232,12 @@ async def run_all():
         await _run("REVIEWS (Google Places)", reviews._fetch_google_places, google_key)
     else:
         results.append(("REVIEWS (Google Places)", None, 0, ""))
+
+    tomtom_key = os.environ.get("TOMTOM_API_KEY", "")
+    if tomtom_key:
+        await _run("TRAFFIC (TomTom)", traffic._fetch_all_traffic, tomtom_key)
+    else:
+        results.append(("TRAFFIC (TomTom)", None, 0, ""))
 
     # ── Print report ──────────────────────────────────────────────────────
     print("\n" + "=" * 64)

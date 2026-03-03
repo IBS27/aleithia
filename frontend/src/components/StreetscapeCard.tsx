@@ -66,13 +66,13 @@ export default function StreetscapeCard({ neighborhood }: Props) {
       {/* Indicator badges */}
       <div className="flex gap-2 mb-4">
         <span className={`text-[10px] font-mono px-2 py-1 border ${INDICATOR_COLORS[indicators.vacancy_signal]}`}>
-          Vacancy: {indicators.vacancy_signal}
+          Vacancy Rate: {indicators.vacancy_signal}
         </span>
         <span className={`text-[10px] font-mono px-2 py-1 border ${INDICATOR_COLORS[indicators.dining_saturation]}`}>
-          Dining: {indicators.dining_saturation}
+          Dining Scene: {indicators.dining_saturation}
         </span>
         <span className={`text-[10px] font-mono px-2 py-1 border ${INDICATOR_COLORS[indicators.growth_signal]}`}>
-          Growth: {indicators.growth_signal}
+          Growth Trend: {indicators.growth_signal}
         </span>
       </div>
 

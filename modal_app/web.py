@@ -21,7 +21,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from modal_app.volume import app, volume, web_image, sandbox_image, VOLUME_MOUNT, RAW_DATA_PATH, PROCESSED_DATA_PATH
-from modal_app.common import CHICAGO_NEIGHBORHOODS, COMMUNITY_AREA_MAP, NON_SENSOR_PIPELINE_SOURCES, detect_neighborhood, neighborhood_to_ca
+from modal_app.common import (
+    CHICAGO_NEIGHBORHOODS,
+    COMMUNITY_AREA_MAP,
+    NON_SENSOR_PIPELINE_SOURCES,
+    detect_neighborhood,
+    neighborhood_to_ca,
+    parse_timestamp,
+)
 from modal_app.pipelines.reddit import (
     FALLBACK_BUDGET_MS,
     merge_rank_reddit_docs,
@@ -1133,55 +1140,158 @@ def _load_fake_cctv() -> dict:
     return {}
 
 
+CCTV_LATEST_INDEX_PATH = Path(PROCESSED_DATA_PATH) / "cctv" / "index" / "latest_by_camera.json"
+CCTV_NEIGHBORHOOD_CAMERA_LIMIT = 24
+
+
+def _empty_cctv_payload() -> dict:
+    return {"cameras": [], "avg_pedestrians": 0, "avg_vehicles": 0, "density": "unknown"}
+
+
+def _analysis_timestamp_epoch(data: dict, fallback_mtime: float) -> float:
+    """Extract comparable epoch from CCTV analysis payload with safe fallback."""
+    parsed = parse_timestamp(data.get("timestamp"))
+    if parsed is not None:
+        return parsed.timestamp()
+    return fallback_mtime
+
+
+def _fake_cctv_entry(name: str) -> dict | None:
+    """Return normalized fake CCTV payload for a neighborhood when available."""
+    fake = _load_fake_cctv()
+    entry = fake.get(name)
+    if not isinstance(entry, dict):
+        return None
+
+    cam_blob = entry.get("cameras", {})
+    if not isinstance(cam_blob, dict):
+        return None
+
+    raw_cams = cam_blob.get("cameras", [])
+    if not isinstance(raw_cams, list):
+        raw_cams = []
+
+    normalized: list[dict] = []
+    for idx, cam in enumerate(raw_cams):
+        if not isinstance(cam, dict):
+            continue
+        try:
+            lat = float(cam.get("lat", 0) or 0)
+            lng = float(cam.get("lng", 0) or 0)
+            dist = float(cam.get("distance_km", 0) or 0)
+            pedestrians = int(cam.get("pedestrians", 0) or 0)
+            vehicles = int(cam.get("vehicles", 0) or 0)
+            bicycles = int(cam.get("bicycles", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        normalized.append({
+            "camera_id": str(cam.get("camera_id", f"fake-{name}-{idx}") or f"fake-{name}-{idx}"),
+            "lat": lat,
+            "lng": lng,
+            "distance_km": round(dist, 2),
+            "pedestrians": pedestrians,
+            "vehicles": vehicles,
+            "bicycles": bicycles,
+            "density_level": str(cam.get("density_level", "unknown") or "unknown"),
+            "timestamp": str(cam.get("timestamp", "") or ""),
+        })
+
+    try:
+        avg_p = float(cam_blob.get("avg_pedestrians", 0) or 0)
+    except (TypeError, ValueError):
+        avg_p = 0.0
+    try:
+        avg_v = float(cam_blob.get("avg_vehicles", 0) or 0)
+    except (TypeError, ValueError):
+        avg_v = 0.0
+    density = str(cam_blob.get("density", "unknown") or "unknown")
+
+    return {
+        "cameras": normalized[:CCTV_NEIGHBORHOOD_CAMERA_LIMIT],
+        "avg_pedestrians": round(avg_p, 1),
+        "avg_vehicles": round(avg_v, 1),
+        "density": density,
+        "has_timeseries": bool(entry.get("timeseries")),
+    }
+
+
+async def _load_cctv_latest_index() -> dict[str, dict]:
+    """Load precomputed latest CCTV snapshot per camera from processed index."""
+    start = time.perf_counter()
+    try:
+        await volume.reload.aio()
+    except Exception as exc:
+        print(f"cctv_index_reload_warning: {exc}")
+        return {}
+
+    if not CCTV_LATEST_INDEX_PATH.exists():
+        print(f"cctv_index_missing: {CCTV_LATEST_INDEX_PATH}")
+        return {}
+
+    try:
+        parsed = json.loads(CCTV_LATEST_INDEX_PATH.read_text())
+    except Exception as exc:
+        print(f"cctv_index_corrupt: {exc}")
+        return {}
+    finally:
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        print(f"cctv_index_load_ms={elapsed_ms:.1f}")
+
+    if not isinstance(parsed, dict):
+        print("cctv_index_invalid: expected JSON object")
+        return {}
+
+    normalized: dict[str, dict] = {}
+    bad_entries = 0
+    for cam_id, payload in parsed.items():
+        if not isinstance(payload, dict):
+            bad_entries += 1
+            continue
+        cid = str(payload.get("camera_id", cam_id) or "").strip()
+        if not cid:
+            bad_entries += 1
+            continue
+        normalized[cid] = payload
+
+    if bad_entries:
+        print(f"cctv_index_bad_entries={bad_entries}")
+
+    return normalized
+
+
 async def _load_cctv_for_neighborhood(name: str) -> dict:
     """Load latest CCTV analysis for cameras near a neighborhood."""
     from modal_app.common import NEIGHBORHOOD_CENTROIDS
     import math
 
-    await volume.reload.aio()
-
-    analysis_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "analysis"
-    if not analysis_dir.exists():
-        return {"cameras": [], "avg_pedestrians": 0, "avg_vehicles": 0, "density": "unknown"}
+    start = time.perf_counter()
+    fake_entry = _fake_cctv_entry(name)
+    latest_by_cam = await _load_cctv_latest_index()
+    if not latest_by_cam:
+        if fake_entry is not None:
+            print("cctv_neighborhood_fallback", {"name": name, "source": "fake_only_no_index", "camera_count": len(fake_entry["cameras"])})
+            return {
+                "cameras": fake_entry["cameras"],
+                "avg_pedestrians": fake_entry["avg_pedestrians"],
+                "avg_vehicles": fake_entry["avg_vehicles"],
+                "density": fake_entry["density"],
+            }
+        return _empty_cctv_payload()
 
     centroid = NEIGHBORHOOD_CENTROIDS.get(name)
     if not centroid:
-        return {"cameras": [], "avg_pedestrians": 0, "avg_vehicles": 0, "density": "unknown"}
+        return _empty_cctv_payload()
 
     clat, clng = centroid
     cameras = []
 
-    # Group by camera_id, keep latest per camera
-    latest_by_cam: dict[str, dict] = {}
-    for jf in sorted(analysis_dir.glob("*.json"), reverse=True)[:200]:
-        try:
-            data = json.loads(jf.read_text())
-            cam_id = data.get("camera_id", "")
-            if cam_id in latest_by_cam:
-                continue
-            latest_by_cam[cam_id] = data
-        except Exception:
-            continue
-
     # Filter by distance (< 10km from neighborhood centroid)
     for cam_id, data in latest_by_cam.items():
-        # Get lat/lng from raw metadata
-        meta_dir = Path(RAW_DATA_PATH) / "cctv"
-        lat, lng = 0.0, 0.0
-        for date_dir in sorted(meta_dir.iterdir(), reverse=True) if meta_dir.exists() else []:
-            if not date_dir.is_dir() or date_dir.name == "frames":
-                continue
-            for mf in date_dir.glob(f"{cam_id}_*.json"):
-                try:
-                    meta = json.loads(mf.read_text())
-                    lat = meta.get("lat", 0)
-                    lng = meta.get("lng", 0)
-                    break
-                except Exception:
-                    continue
-            if lat:
-                break
-
+        try:
+            lat = float(data.get("lat", 0) or 0)
+            lng = float(data.get("lng", 0) or 0)
+        except (TypeError, ValueError):
+            continue
         if not lat:
             continue
 
@@ -1205,18 +1315,31 @@ async def _load_cctv_for_neighborhood(name: str) -> dict:
                 "bicycles": data.get("bicycles", 0),
                 "density_level": data.get("density_level", "unknown"),
                 "timestamp": data.get("timestamp", ""),
+                "_ts_epoch": _analysis_timestamp_epoch(data, fallback_mtime=0.0),
             })
 
     if not cameras:
-        return {"cameras": [], "avg_pedestrians": 0, "avg_vehicles": 0, "density": "unknown"}
+        if fake_entry is not None:
+            print("cctv_neighborhood_fallback", {"name": name, "source": "fake_only_no_nearby_real", "camera_count": len(fake_entry["cameras"])})
+            return {
+                "cameras": fake_entry["cameras"],
+                "avg_pedestrians": fake_entry["avg_pedestrians"],
+                "avg_vehicles": fake_entry["avg_vehicles"],
+                "density": fake_entry["density"],
+            }
+        return _empty_cctv_payload()
+
+    # Stable ordering to avoid random camera churn between requests.
+    cameras.sort(key=lambda cam: (cam["distance_km"], -cam.get("_ts_epoch", 0.0), cam["camera_id"]))
+
+    selected_cameras = cameras[:CCTV_NEIGHBORHOOD_CAMERA_LIMIT]
+    for cam in selected_cameras:
+        cam.pop("_ts_epoch", None)
 
     # Overlay fake detection counts onto real cameras (keeps real IDs/positions/frames)
-    fake = _load_fake_cctv()
-    fake_entry = fake.get(name, {}).get("cameras", {})
-    if fake_entry:
-        fake_cams = fake_entry.get("cameras", [])
-        n_real = len(cameras)
-        for i, cam in enumerate(cameras):
+    if fake_entry is not None:
+        fake_cams = fake_entry["cameras"]
+        for i, cam in enumerate(selected_cameras):
             # Round-robin assign fake counts from pre-generated cameras
             fc = fake_cams[i % len(fake_cams)] if fake_cams else {}
             cam["pedestrians"] = fc.get("pedestrians", cam["pedestrians"])
@@ -1224,16 +1347,27 @@ async def _load_cctv_for_neighborhood(name: str) -> dict:
             cam["bicycles"] = fc.get("bicycles", cam["bicycles"])
             cam["density_level"] = fc.get("density_level", cam["density_level"])
 
-        avg_p = fake_entry.get("avg_pedestrians", 0)
-        avg_v = fake_entry.get("avg_vehicles", 0)
-        density = fake_entry.get("density", "unknown")
+        avg_p = fake_entry["avg_pedestrians"]
+        avg_v = fake_entry["avg_vehicles"]
+        density = fake_entry["density"]
     else:
-        avg_p = sum(c["pedestrians"] for c in cameras) / len(cameras)
-        avg_v = sum(c["vehicles"] for c in cameras) / len(cameras)
+        avg_p = sum(c["pedestrians"] for c in selected_cameras) / len(selected_cameras)
+        avg_v = sum(c["vehicles"] for c in selected_cameras) / len(selected_cameras)
         density = "high" if avg_p > 20 else "medium" if avg_p > 5 else "low"
 
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    print(
+        "cctv_neighborhood_select",
+        {
+            "name": name,
+            "selected": len(selected_cameras),
+            "candidate_count": len(cameras),
+            "elapsed_ms": round(elapsed_ms, 1),
+        },
+    )
+
     return {
-        "cameras": cameras[:10],
+        "cameras": selected_cameras,
         "avg_pedestrians": round(avg_p, 1),
         "avg_vehicles": round(avg_v, 1),
         "density": density,
@@ -2060,22 +2194,15 @@ async def summary():
 @web_app.get("/cctv/latest")
 async def cctv_latest():
     """Latest CCTV analysis per camera: counts, density, location."""
-    volume.reload()
-    analysis_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "analysis"
-    if not analysis_dir.exists():
+    latest_by_cam = await _load_cctv_latest_index()
+    if not latest_by_cam:
         return {"cameras": [], "count": 0}
 
-    latest_by_cam: dict[str, dict] = {}
-    for jf in sorted(analysis_dir.glob("*.json"), reverse=True)[:500]:
-        try:
-            data = json.loads(jf.read_text())
-            cam_id = data.get("camera_id", "")
-            if cam_id not in latest_by_cam:
-                latest_by_cam[cam_id] = data
-        except Exception:
-            continue
-
-    cameras = list(latest_by_cam.values())
+    cameras = sorted(
+        latest_by_cam.values(),
+        key=lambda data: _analysis_timestamp_epoch(data, fallback_mtime=0.0),
+        reverse=True,
+    )
     return {"cameras": cameras, "count": len(cameras)}
 
 
@@ -2087,11 +2214,13 @@ async def cctv_frame(camera_id: str):
     volume.reload()
     ann_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "annotated"
     if not ann_dir.exists():
+        print("cctv_frame_miss", {"camera_id": camera_id, "reason": "annotated_dir_missing"})
         return JSONResponse({"error": "no annotated frames"}, status_code=404)
 
     # Find latest annotated frame for this camera
     frames = sorted(ann_dir.glob(f"{camera_id}_*.jpg"), reverse=True)
     if not frames:
+        print("cctv_frame_miss", {"camera_id": camera_id, "reason": "camera_frame_missing"})
         return JSONResponse({"error": f"no frames for camera {camera_id}"}, status_code=404)
 
     frame_bytes = frames[0].read_bytes()
@@ -2105,6 +2234,7 @@ async def _aggregate_timeseries_for_neighborhood(name: str, camera_ids: list[str
     # Prefer fake analytics if available
     fake = _load_fake_cctv()
     if name in fake and fake[name].get("timeseries"):
+        print("cctv_timeseries_source", {"name": name, "source": "fake"})
         return fake[name]["timeseries"]
 
     if camera_ids is None:

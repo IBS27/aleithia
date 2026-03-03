@@ -49,10 +49,10 @@ export default function FootTrafficChart({ neighborhood }: Props) {
     <div className="border border-white/[0.06] bg-white/[0.02] p-5">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">
-          CCTV — 24h Traffic Pattern
+          Highway Traffic — 24h Pattern
         </h3>
         <span className="text-[9px] font-mono text-white/20">
-          {data.camera_count} camera{data.camera_count !== 1 ? 's' : ''} · Chicago time
+          IDOT expressway cameras · {data.camera_count} camera{data.camera_count !== 1 ? 's' : ''} · Chicago time
         </span>
       </div>
 
@@ -109,7 +109,7 @@ export default function FootTrafficChart({ neighborhood }: Props) {
       {/* Peak summary */}
       {data.peak_pedestrians > 0 && (
         <div className="mt-3 pt-3 border-t border-white/[0.04] text-[10px] font-mono text-white/40">
-          Peak: {formatHour(data.peak_hour)}–{formatHour((data.peak_hour + 2) % 24)} (avg {data.peak_pedestrians} vehicles/hr)
+          Peak: {formatHour(data.peak_hour)}–{formatHour((data.peak_hour + 2) % 24)} (avg {data.peak_pedestrians} detections/hr)
         </div>
       )}
     </div>

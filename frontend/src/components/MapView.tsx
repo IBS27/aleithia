@@ -13,7 +13,7 @@ const LAYER_CONFIG: Record<HeatmapLayer, {
   stops: [number, string][]
 }> = {
 regulatory: {
-  label: 'Regulatory',
+  label: 'Regulatory Activity',
   color: '#dc2626',
   property: 'norm_regulatory',
   stops: [
@@ -31,7 +31,7 @@ regulatory: {
   ],
 },
 business: {
-  label: 'Business',
+  label: 'Commercial Activity',
   color: '#3b82f6',
   property: 'norm_business',
   stops: [
@@ -49,7 +49,7 @@ business: {
   ],
 },
 sentiment: {
-  label: 'Sentiment',
+  label: 'Public Sentiment',
   color: '#22c55e',
   property: 'norm_sentiment',
   stops: [
@@ -231,11 +231,11 @@ function addSourceAndLayers(map: mapboxgl.Map, geojson: GeoJSON.FeatureCollectio
           <div style="font-family:system-ui;font-size:13px;color:#ffffff;line-height:1.6;background:#333333;padding:12px 16px;border-radius:8px;border:1px solid rgba(255,255,255,0.1)">
             <strong style="color:#818cf8;font-size:14px">${props.neighborhood || 'Unknown'}</strong>
             <div style="margin-top:6px;display:grid;grid-template-columns:auto auto;gap:2px 12px">
-              <span style="color:#aaa">Permits</span><span>${props.active_permits && Number(props.active_permits) > 0 ? props.active_permits : na}</span>
-              <span style="color:#aaa">Regulatory</span><span>${fmt(props.regulatory_density)}</span>
-              <span style="color:#aaa">Business</span><span>${fmt(props.business_activity)}</span>
-              <span style="color:#aaa">Sentiment</span><span>${fmt(props.avg_review_rating, ' / 5')}</span>
-              <span style="color:#aaa">Risk</span><span>${fmt(props.risk_score)}</span>
+              <span style="color:#aaa">Active Permits</span><span>${props.active_permits && Number(props.active_permits) > 0 ? props.active_permits : na}</span>
+              <span style="color:#aaa">Regulatory Score</span><span>${fmt(props.regulatory_density)}</span>
+              <span style="color:#aaa">Business Activity</span><span>${fmt(props.business_activity)}</span>
+              <span style="color:#aaa">Sentiment Score</span><span>${fmt(props.avg_review_rating, ' / 5')}</span>
+              <span style="color:#aaa">Risk Score</span><span>${fmt(props.risk_score)}</span>
             </div>
           </div>`
         })())

@@ -22,6 +22,7 @@ from urllib.parse import quote_plus
 import modal
 
 from modal_app.common import SourceType, build_document, detect_neighborhood
+from modal_app.costs import track_cost
 from modal_app.dedup import SeenSet
 from modal_app.volume import (
     VOLUME_MOUNT,
@@ -528,6 +529,7 @@ async def _scrape_async(search_query: str, max_videos: int) -> list[dict]:
     timeout=120,
     secrets=[modal.Secret.from_name("tiktok-scraper-secrets")],
 )
+@track_cost("scrape_tiktok", "CPU")
 def scrape_tiktok(search_query: str, max_videos: int = MAX_VIDEOS_PER_QUERY) -> list[dict]:
     """Scrape TikTok search results for a given query via Kernel cloud browser."""
     return asyncio.run(_scrape_async(search_query, max_videos))
@@ -542,6 +544,7 @@ def scrape_tiktok(search_query: str, max_videos: int = MAX_VIDEOS_PER_QUERY) -> 
     gpu="A10G",
     timeout=300,
 )
+@track_cost("transcribe_video", "A10G")
 def transcribe_video(video_url: str) -> dict:
     """Download video audio with yt-dlp and transcribe with Whisper."""
     import glob as globmod
@@ -796,6 +799,7 @@ def _build_tiktok_title(v: dict) -> str:
     volumes={VOLUME_MOUNT: volume},
     secrets=[modal.Secret.from_name("tiktok-scraper-secrets")],
 )
+@track_cost("ingest_tiktok", "CPU")
 def ingest_tiktok(
     queries: list[str] | None = None,
     query_specs: list[dict[str, Any]] | None = None,
@@ -1041,6 +1045,7 @@ def ingest_tiktok(
     volumes={VOLUME_MOUNT: volume},
     secrets=[modal.Secret.from_name("tiktok-scraper-secrets")],
 )
+@track_cost("ingest_tiktok_for_profile", "CPU")
 def ingest_tiktok_for_profile(
     business_type: str,
     neighborhood: str,
@@ -1064,6 +1069,7 @@ def ingest_tiktok_for_profile(
     volumes={VOLUME_MOUNT: volume},
     secrets=[modal.Secret.from_name("tiktok-scraper-secrets")],
 )
+@track_cost("tiktok_on_demand", "CPU")
 def tiktok_on_demand(
     queries: list[str] | None = None,
     business_type: str = "",

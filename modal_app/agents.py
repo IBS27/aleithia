@@ -16,6 +16,7 @@ from pathlib import Path
 import modal
 
 from modal_app.common import compute_freshness, neighborhood_to_ca
+from modal_app.costs import track_cost
 from modal_app.pipelines.reddit import (
     FALLBACK_BUDGET_MS,
     merge_rank_reddit_docs,
@@ -170,6 +171,7 @@ Format your response with clear sections:
     secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=120,
 )
+@track_cost("neighborhood_intel_agent", "CPU")
 async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_areas: list[str] | None = None, trace_context: dict | None = None) -> dict:
     """Query-time intelligence agent for a single neighborhood.
 
@@ -471,6 +473,7 @@ async def _enrich_regulations_with_impact(regulations: list[dict], business_type
     secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=120,
 )
+@track_cost("regulatory_agent", "CPU")
 async def regulatory_agent(business_type: str, trace_context: dict | None = None) -> dict:
     """Scans live APIs + cached volume data for regulations relevant to business type.
 
@@ -666,6 +669,7 @@ async def regulatory_agent(business_type: str, trace_context: dict | None = None
     secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
     timeout=300,
 )
+@track_cost("orchestrate_query", "CPU")
 async def orchestrate_query(user_id: str, question: str, business_type: str, target_neighborhood: str, trace_context: dict | None = None) -> dict:
     """Orchestrate parallel agents for query-time intelligence.
 

@@ -588,7 +588,7 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
   const allTabs: { key: Tab; label: string; count?: number; isEmpty?: () => boolean }[] = [
     { key: 'overview', label: 'Overview' },
     { key: 'regulatory', label: 'Regulatory', count: regulatoryCount, isEmpty: () => !regulatoryCount },
-    { key: 'intel', label: 'Intel', count: (neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0), isEmpty: () => !((neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0)) },
+    { key: 'intel', label: 'News & Policy', count: (neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0), isEmpty: () => !((neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0)) },
     { key: 'community', label: 'Community', count: (neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0), isEmpty: () => !((neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0)) },
     { key: 'market', label: 'Market', count: (neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0), isEmpty: () => !((neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0)) },
     { key: 'vision', label: 'Vision', count: neighborhoodData?.cctv?.cameras.length || 0, isEmpty: () => false },
@@ -977,9 +977,10 @@ function VisionTab({ cctv, parking, neighborhood }: { cctv: CCTVData | null; par
 
       {/* Detection Summary — stats + distribution merged */}
       <div className="border border-white/[0.06] bg-white/[0.02] p-5">
-        <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30 mb-4">
-          Detection Summary
+        <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30 mb-1">
+          Highway Camera Detections
         </h3>
+        <p className="text-[9px] font-mono text-white/15 mb-4">IDOT expressway cameras near {neighborhood || "selected area"}</p>
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
           <div className="bg-white/[0.02] border border-white/[0.04] p-3">
             <div className="text-2xl font-bold font-mono text-white">{cameras.length}</div>
@@ -999,7 +1000,7 @@ function VisionTab({ cctv, parking, neighborhood }: { cctv: CCTVData | null; par
           </div>
           <div className="bg-white/[0.02] border border-white/[0.04] p-3">
             <div className="text-2xl font-bold font-mono text-white/70">{avgDensity}</div>
-            <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Avg Density</div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Avg Traffic Density</div>
           </div>
         </div>
         {totalDetections > 0 && (

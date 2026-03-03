@@ -29,9 +29,9 @@ if not _os.environ.get("MODAL_IS_REMOTE"):
     from modal_app.pipelines import federal_register  # noqa: F401
     from modal_app.pipelines import traffic  # noqa: F401
     from modal_app.pipelines import tiktok  # noqa: F401
-    from modal_app.pipelines import vision  # noqa: F401
     from modal_app.pipelines import cctv  # noqa: F401
     from modal_app.pipelines import parking  # noqa: F401
+    from modal_app.pipelines import vision  # noqa: F401
     from modal_app.pipelines import worldpop  # noqa: F401
     from modal_app import lead_analyst  # noqa: F401
     from modal_app.volume import vectordb_image as _vdb_img  # noqa: F401

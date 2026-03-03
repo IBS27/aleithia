@@ -10,6 +10,7 @@ from pathlib import Path
 
 import modal
 
+from modal_app.costs import track_cost
 from modal_app.volume import app, volume, classify_image, VOLUME_MOUNT, PROCESSED_DATA_PATH
 
 # Event bus: pipelines push raw docs, classifier drains and enriches
@@ -21,6 +22,7 @@ class DocClassifier:
     """Zero-shot document classifier using facebook/bart-large-mnli (406M params)."""
 
     @modal.enter(snap=True)
+    @track_cost("DocClassifier.load_model", "T4")
     def load_model(self):
         from modal_app.instrumentation import init_tracing, get_tracer
         init_tracing()
@@ -34,6 +36,7 @@ class DocClassifier:
         )
 
     @modal.batched(max_batch_size=32, wait_ms=2000)
+    @track_cost("DocClassifier.classify", "T4")
     async def classify(self, texts: list[str]) -> list[dict]:
         """Classify documents into city intelligence categories."""
         span_ctx = self._tracer.start_as_current_span("doc-classify-batch") if self._tracer else None
@@ -70,6 +73,7 @@ class SentimentAnalyzer:
     """Sentiment analysis using cardiffnlp/twitter-roberta-base-sentiment-latest."""
 
     @modal.enter(snap=True)
+    @track_cost("SentimentAnalyzer.load_model", "T4")
     def load_model(self):
         from modal_app.instrumentation import init_tracing, get_tracer
         init_tracing()
@@ -83,6 +87,7 @@ class SentimentAnalyzer:
         )
 
     @modal.batched(max_batch_size=32, wait_ms=2000)
+    @track_cost("SentimentAnalyzer.analyze", "T4")
     async def analyze(self, texts: list[str]) -> list[dict]:
         """Analyze sentiment of documents."""
         span_ctx = self._tracer.start_as_current_span("sentiment-analyze-batch") if self._tracer else None
@@ -118,6 +123,7 @@ class SentimentAnalyzer:
     schedule=modal.Period(minutes=2),
     timeout=300,
 )
+@track_cost("process_queue_batch", "CPU")
 async def process_queue_batch():
     """Drain doc_queue and classify/analyze documents in batch.
 

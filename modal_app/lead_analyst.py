@@ -17,6 +17,7 @@ from pathlib import Path
 import modal
 from pydantic import BaseModel, Field
 
+from modal_app.costs import track_cost
 from modal_app.volume import app, volume, lead_analyst_image, VOLUME_MOUNT, RAW_DATA_PATH, PROCESSED_DATA_PATH
 
 # Queue: classify.py pushes high-confidence docs here after enrichment
@@ -781,6 +782,7 @@ def _load_brief_by_id(brief_id: str) -> dict | None:
     # schedule=modal.Period(minutes=5),  # Disabled: Modal free tier limits to 5 cron jobs
     timeout=600,
 )
+@track_cost("scan_enriched_docs", "CPU")
 async def scan_enriched_docs():
     """Lead Analyst: scan enriched docs for high-impact events.
 
@@ -893,6 +895,7 @@ async def scan_enriched_docs():
     ],
     timeout=300,
 )
+@track_cost("analyze_impact", "CPU")
 async def analyze_impact(doc_id: str) -> dict:
     """Manually trigger impact analysis for a specific enriched document."""
     from modal_app.instrumentation import init_tracing, get_tracer

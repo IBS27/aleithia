@@ -17,13 +17,26 @@ import modal
 from modal_app.common import (
     Document,
     SourceType,
-    CHICAGO_NEIGHBORHOODS,
     NEIGHBORHOOD_CENTROIDS,
     gather_with_limit,
+    safe_queue_push,
     safe_volume_commit,
 )
+from modal_app.costs import track_cost
 from modal_app.fallback import FallbackChain
-from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
+from modal_app.volume import app, volume, base_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
+
+
+def _traffic_probe_points(lat: float, lng: float) -> list[tuple[float, float]]:
+    """Return centroid + nearby probes to recover from off-road TomTom 400s."""
+    offsets = [
+        (0.0, 0.0),      # centroid
+        (0.0015, 0.0),   # north  ~165m
+        (-0.0015, 0.0),  # south
+        (0.0, 0.0015),   # east   ~125m in Chicago
+        (0.0, -0.0015),  # west
+    ]
+    return [(lat + dlat, lng + dlng) for dlat, dlng in offsets]
 
 
 def _classify_congestion(current_speed: float, free_flow_speed: float) -> str:
@@ -67,34 +80,45 @@ async def _fetch_traffic_point(api_key: str, neighborhood: str, lat: float, lng:
     if not api_key:
         return None
     
+    probes = _traffic_probe_points(lat, lng)
     async with httpx.AsyncClient(timeout=15) as client:
-        try:
-            # TomTom Flow Segment Data API requires zoom level in path (0-22)
-            # Zoom 14 provides fine-grained street-level traffic visibility
-            resp = await client.get(
-                f"https://api.tomtom.com/traffic/services/4/flowSegmentData/relative/14/json",
-                params={
-                    "key": api_key,
-                    "point": f"{lat},{lng}",
-                    "unit": "mph",
-                },
-            )
-            
+        for idx, (probe_lat, probe_lng) in enumerate(probes):
+            try:
+                # TomTom Flow Segment Data API requires zoom level in path (0-22)
+                # Zoom 14 provides fine-grained street-level traffic visibility
+                resp = await client.get(
+                    "https://api.tomtom.com/traffic/services/4/flowSegmentData/relative/14/json",
+                    params={
+                        "key": api_key,
+                        "point": f"{probe_lat},{probe_lng}",
+                        "unit": "mph",
+                    },
+                )
+            except Exception as e:
+                if idx == len(probes) - 1:
+                    print(f"TomTom request error [{neighborhood}]: {e}")
+                continue
+
             if resp.status_code != 200:
+                # Common failure mode: centroid isn't near a routable segment.
+                # Retry nearby probes before giving up.
+                if resp.status_code in (400, 404) and idx < len(probes) - 1:
+                    continue
                 print(f"TomTom [{neighborhood}]: HTTP {resp.status_code}")
                 return None
-            
+
             data = resp.json()
             flow = data.get("flowSegmentData", {})
-            
             if not flow:
+                if idx < len(probes) - 1:
+                    continue
                 print(f"TomTom [{neighborhood}]: Empty response")
                 return None
-            
+
             current_speed = flow.get("currentSpeed", 0)
             free_flow_speed = flow.get("freeFlowSpeed", 0)
             congestion_level = _classify_congestion(current_speed, free_flow_speed)
-            
+
             return {
                 "neighborhood": neighborhood,
                 "lat": lat,
@@ -108,10 +132,9 @@ async def _fetch_traffic_point(api_key: str, neighborhood: str, lat: float, lng:
                 "road_closure": flow.get("roadClosure", False),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
-        
-        except Exception as e:
-            print(f"TomTom request error [{neighborhood}]: {e}")
-            return None
+
+    print(f"TomTom [{neighborhood}]: no valid segment found after probe retries")
+    return None
 
 
 async def _fetch_all_traffic(api_key: str) -> list[dict]:
@@ -213,6 +236,7 @@ def _convert_to_documents(traffic_data: list[dict]) -> list[Document]:
     secrets=[modal.Secret.from_name("alethia-secrets")],
     timeout=120,
 )
+@track_cost("traffic_ingester", "CPU")
 async def traffic_ingester():
     """Ingest traffic flow data from TomTom API for all Chicago neighborhoods."""
     all_raw_data: list[dict] = []
@@ -251,7 +275,7 @@ async def traffic_ingester():
     # Convert to documents and save processed version
     documents = _convert_to_documents(all_raw_data)
     
-    processed_dir = Path(RAW_DATA_PATH) / "processed" / "traffic" / date_str
+    processed_dir = Path(PROCESSED_DATA_PATH) / "traffic" / date_str
     processed_dir.mkdir(parents=True, exist_ok=True)
     
     anomalies = []
@@ -272,6 +296,14 @@ async def traffic_ingester():
         anomaly_path = processed_dir / "anomalies.json"
         anomaly_path.write_text(json.dumps(anomalies, indent=2))
         print(f"Traffic anomalies detected: {len(anomalies)}")
+
+    # Push new traffic docs to classification queue for downstream enrichment.
+    try:
+        doc_queue = modal.Queue.from_name("alethia-doc-queue", create_if_missing=True)
+        doc_dicts = [doc.model_dump(mode="json") for doc in documents]
+        await safe_queue_push(doc_queue, doc_dicts, "traffic")
+    except Exception as e:
+        print(f"Traffic queue push failed: {e}")
     
     await safe_volume_commit(volume, "traffic")
     print(f"Traffic ingester complete: {len(documents)} documents saved to {processed_dir}")

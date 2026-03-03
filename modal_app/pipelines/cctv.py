@@ -22,9 +22,11 @@ from modal_app.common import (
     SourceType,
     NEIGHBORHOOD_CENTROIDS,
     gather_with_limit,
+    parse_timestamp,
     safe_queue_push,
     safe_volume_commit,
 )
+from modal_app.costs import track_cost
 from modal_app.fallback import FallbackChain
 from modal_app.volume import app, volume, base_image, yolo_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
 
@@ -52,6 +54,8 @@ TRUCK_ID = 7
 VEHICLE_IDS = {CAR_ID, MOTORCYCLE_ID, BUS_ID, TRUCK_ID}
 
 CONFIDENCE_THRESHOLD = 0.3
+CCTV_INDEX_DIR = Path(PROCESSED_DATA_PATH) / "cctv" / "index"
+CCTV_LATEST_INDEX_PATH = CCTV_INDEX_DIR / "latest_by_camera.json"
 
 
 def _classify_density(person_count: int) -> str:
@@ -86,6 +90,148 @@ def _nearest_neighborhood(lat: float, lng: float) -> str:
             best_dist = d
             best = name
     return best if best_dist < 15 else ""
+
+
+def _timestamp_epoch(value: object) -> float:
+    parsed = parse_timestamp(str(value or ""))
+    if parsed is None:
+        return 0.0
+    return parsed.timestamp()
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _atomic_write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, default=str))
+    tmp_path.replace(path)
+
+
+def _iter_cctv_meta_dirs(max_meta_days: int | None = None) -> list[Path]:
+    root = Path(RAW_DATA_PATH) / "cctv"
+    if not root.exists():
+        return []
+
+    dirs = [d for d in root.iterdir() if d.is_dir() and d.name != "frames"]
+    dirs.sort(key=lambda d: d.name, reverse=True)
+
+    if not max_meta_days or max_meta_days <= 0:
+        return dirs
+
+    cutoff_date = datetime.now(timezone.utc).date() - timedelta(days=max_meta_days)
+    filtered: list[Path] = []
+    for d in dirs:
+        try:
+            dir_date = datetime.strptime(d.name, "%Y-%m-%d").date()
+            if dir_date >= cutoff_date:
+                filtered.append(d)
+        except ValueError:
+            # Keep unknown naming schemes rather than silently dropping data.
+            filtered.append(d)
+    return filtered
+
+
+def _build_latest_camera_metadata_map(
+    camera_ids: set[str] | None = None,
+    max_meta_days: int | None = None,
+) -> dict[str, dict]:
+    """Load latest camera metadata once, optionally scoped to a camera ID set."""
+    targets = None
+    if camera_ids is not None:
+        targets = {str(cid or "").strip() for cid in camera_ids if str(cid or "").strip()}
+        if not targets:
+            return {}
+
+    meta_by_camera: dict[str, dict] = {}
+    for date_dir in _iter_cctv_meta_dirs(max_meta_days=max_meta_days):
+        for mf in date_dir.glob("*.json"):
+            cam_id = mf.stem.split("_", 1)[0].strip()
+            if not cam_id:
+                continue
+            if targets is not None and cam_id not in targets:
+                continue
+            if cam_id in meta_by_camera:
+                continue
+            try:
+                parsed = json.loads(mf.read_text())
+            except Exception:
+                continue
+            meta_by_camera[cam_id] = {
+                "lat": _safe_float(parsed.get("lat", 0), default=0.0),
+                "lng": _safe_float(parsed.get("lng", 0), default=0.0),
+                "location": str(parsed.get("location", "") or ""),
+                "direction": str(parsed.get("direction", "") or ""),
+            }
+            if targets is not None and len(meta_by_camera) >= len(targets):
+                return meta_by_camera
+
+    return meta_by_camera
+
+
+def _load_latest_index_file() -> dict[str, dict]:
+    if not CCTV_LATEST_INDEX_PATH.exists():
+        return {}
+    try:
+        parsed = json.loads(CCTV_LATEST_INDEX_PATH.read_text())
+    except Exception:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+
+    normalized: dict[str, dict] = {}
+    for key, payload in parsed.items():
+        if not isinstance(payload, dict):
+            continue
+        cam_id = str(payload.get("camera_id", key) or "").strip()
+        if not cam_id:
+            continue
+        normalized[cam_id] = payload
+    return normalized
+
+
+def _update_cctv_latest_index(results: list[dict], meta_by_camera: dict[str, dict]) -> dict[str, int]:
+    """Merge batch results into latest-by-camera index, keeping newest timestamp."""
+    latest_index = _load_latest_index_file()
+    updated = 0
+
+    for result in results:
+        cam_id = str(result.get("camera_id", "") or "").strip()
+        if not cam_id:
+            continue
+
+        prev = latest_index.get(cam_id, {})
+        prev_ts = _timestamp_epoch(prev.get("timestamp"))
+        next_ts = _timestamp_epoch(result.get("timestamp"))
+        if prev and next_ts <= prev_ts:
+            continue
+
+        meta = meta_by_camera.get(cam_id, {})
+        lat = _safe_float(meta.get("lat", prev.get("lat", 0)), default=0.0)
+        lng = _safe_float(meta.get("lng", prev.get("lng", 0)), default=0.0)
+
+        latest_index[cam_id] = {
+            "camera_id": cam_id,
+            "lat": lat,
+            "lng": lng,
+            "location": str(meta.get("location", prev.get("location", "")) or ""),
+            "direction": str(meta.get("direction", prev.get("direction", "")) or ""),
+            "pedestrians": int(result.get("pedestrians", 0) or 0),
+            "vehicles": int(result.get("vehicles", 0) or 0),
+            "bicycles": int(result.get("bicycles", 0) or 0),
+            "density_level": str(result.get("density_level", "unknown") or "unknown"),
+            "timestamp": str(result.get("timestamp", "") or ""),
+            "annotated_path": str(result.get("annotated_path", "") or ""),
+        }
+        updated += 1
+
+    _atomic_write_json(CCTV_LATEST_INDEX_PATH, latest_index)
+    return {"updated": updated, "total": len(latest_index)}
 
 
 # ── 2a. IDOT Camera Ingester ────────────────────────────────────────────────
@@ -209,6 +355,7 @@ def _trim_old_frames(frame_dir: Path, max_age_hours: int = 24) -> int:
     volumes={"/data": volume},
     timeout=300,
 )
+@track_cost("cctv_ingester", "CPU")
 async def cctv_ingester():
     """Poll IDOT cameras, download snapshots, spawn GPU analysis."""
     chain = FallbackChain("cctv", "idot", cache_ttl_hours=1)
@@ -263,6 +410,7 @@ class TrafficAnalyzer:
     """YOLOv8n inference on CCTV frames — counts persons, vehicles, bicycles."""
 
     @modal.enter(snap=True)
+    @track_cost("TrafficAnalyzer.load_model", "T4")
     def load_model(self):
         import cv2
         from ultralytics import YOLO
@@ -302,6 +450,7 @@ class TrafficAnalyzer:
             return {"status": "error", "error": str(e)}
 
     @modal.method()
+    @track_cost("TrafficAnalyzer.analyze_frame", "T4")
     def analyze_frame(self, snapshot_path: str, camera_id: str) -> dict:
         """Run YOLOv8n on a single frame, annotate, and return counts."""
         import cv2
@@ -399,6 +548,7 @@ class TrafficAnalyzer:
     volumes={"/data": volume},
     timeout=300,
 )
+@track_cost("analyze_cctv_batch", "CPU")
 async def analyze_cctv_batch():
     """Analyze all unprocessed CCTV frames via TrafficAnalyzer (GPU dispatched via .remote)."""
     frame_dir = Path(RAW_DATA_PATH) / "cctv" / "frames"
@@ -480,29 +630,18 @@ async def analyze_cctv_batch():
 
         ts_path.write_text(json.dumps(existing, indent=2, default=str))
 
+    camera_ids = {str(r.get("camera_id", "") or "").strip() for r in results if str(r.get("camera_id", "") or "").strip()}
+    meta_by_camera = _build_latest_camera_metadata_map(camera_ids=camera_ids)
+
     # Convert to Documents and push to classification queue
     documents = []
     for r in results:
         cam_id = r["camera_id"]
-        # Load camera metadata to get lat/lng
-        meta_dir = Path(RAW_DATA_PATH) / "cctv"
-        lat, lng, location, direction = 0.0, 0.0, "", ""
-        # Search recent metadata files for this camera
-        for date_dir in sorted(meta_dir.iterdir(), reverse=True):
-            if not date_dir.is_dir() or date_dir.name == "frames":
-                continue
-            for mf in date_dir.glob(f"{cam_id}_*.json"):
-                try:
-                    meta = json.loads(mf.read_text())
-                    lat = meta.get("lat", 0)
-                    lng = meta.get("lng", 0)
-                    location = meta.get("location", "")
-                    direction = meta.get("direction", "")
-                    break
-                except Exception:
-                    continue
-            if lat:
-                break
+        meta = meta_by_camera.get(cam_id, {})
+        lat = _safe_float(meta.get("lat", 0), default=0.0)
+        lng = _safe_float(meta.get("lng", 0), default=0.0)
+        location = str(meta.get("location", "") or "")
+        direction = str(meta.get("direction", "") or "")
 
         neighborhood = _nearest_neighborhood(lat, lng) if lat else ""
 
@@ -541,6 +680,80 @@ async def analyze_cctv_batch():
     except Exception as e:
         print(f"CCTV batch: queue push failed: {e}")
 
+    try:
+        stats = _update_cctv_latest_index(results, meta_by_camera)
+        print(f"CCTV batch: latest index updated {stats['updated']} cameras ({stats['total']} total)")
+    except Exception as e:
+        print(f"CCTV batch: latest index update failed: {e}")
+
     await safe_volume_commit(volume, "cctv")
     print(f"CCTV batch: analyzed {len(results)} frames, created {len(documents)} documents")
     return len(results)
+
+
+@app.function(
+    image=base_image,
+    volumes={"/data": volume},
+    timeout=900,
+)
+@track_cost("rebuild_cctv_latest_index", "CPU")
+def rebuild_cctv_latest_index(max_analysis_files: int = 50000, max_meta_days: int = 14) -> dict:
+    """One-off rebuild of latest CCTV index from historical analysis files."""
+    analysis_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "analysis"
+    if not analysis_dir.exists():
+        return {"processed_files": 0, "cameras_found": 0, "updated": 0, "total": 0}
+
+    def _mtime(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except Exception:
+            return 0.0
+
+    files = sorted(
+        analysis_dir.glob("*.json"),
+        key=_mtime,
+        reverse=True,
+    )[:max(0, max_analysis_files)]
+
+    latest_by_camera: dict[str, tuple[float, dict]] = {}
+    for jf in files:
+        try:
+            data = json.loads(jf.read_text())
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        cam_id = str(data.get("camera_id", "") or "").strip()
+        if not cam_id:
+            continue
+
+        ts_epoch = _timestamp_epoch(data.get("timestamp"))
+        if ts_epoch <= 0:
+            ts_epoch = _mtime(jf)
+        prev = latest_by_camera.get(cam_id)
+        if prev is None or ts_epoch > prev[0]:
+            latest_by_camera[cam_id] = (ts_epoch, data)
+
+    results = [payload for _, payload in latest_by_camera.values()]
+    meta_by_camera = _build_latest_camera_metadata_map(
+        camera_ids=set(latest_by_camera.keys()),
+        max_meta_days=max_meta_days,
+    )
+    stats = _update_cctv_latest_index(results, meta_by_camera)
+    try:
+        volume.commit()
+    except Exception as exc:
+        print(f"cctv index rebuild commit warning: {exc}")
+
+    with_geo = sum(
+        1
+        for meta in meta_by_camera.values()
+        if _safe_float(meta.get("lat", 0), default=0.0)
+    )
+    return {
+        "processed_files": len(files),
+        "cameras_found": len(results),
+        "cameras_with_geo": with_geo,
+        "updated": stats.get("updated", 0),
+        "total": stats.get("total", 0),
+    }

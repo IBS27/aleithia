@@ -11,16 +11,8 @@ from pathlib import Path
 
 import modal
 
+from modal_app.costs import cost_dict, track_cost
 from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
-
-# GPU cost rates (per second)
-COST_RATES = {
-    "H100": 0.001389,
-    "A100-80GB": 0.001042,
-    "A10G": 0.000306,
-    "T4": 0.000164,
-    "CPU": 0.0000125,
-}
 
 # Expected freshness per source (in minutes)
 FRESHNESS_THRESHOLDS = {
@@ -36,34 +28,7 @@ FRESHNESS_THRESHOLDS = {
     "cctv": 15,          # Every 5 min, alert after 15
     "federal_register": 1500, # Daily
 }
-
-cost_dict = modal.Dict.from_name("alethia-costs", create_if_missing=True)
 restart_dict = modal.Dict.from_name("alethia-restarts", create_if_missing=True)
-
-
-def log_cost(function_name: str, gpu: str, duration_seconds: float):
-    """Log compute cost for a function execution."""
-    rate = COST_RATES.get(gpu, COST_RATES["CPU"])
-    cost = rate * duration_seconds
-
-    key = f"{function_name}_{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
-    try:
-        existing = cost_dict[key]
-        cost_dict[key] = {
-            "total_cost": existing.get("total_cost", 0) + cost,
-            "total_seconds": existing.get("total_seconds", 0) + duration_seconds,
-            "invocations": existing.get("invocations", 0) + 1,
-            "gpu": gpu,
-            "function": function_name,
-        }
-    except KeyError:
-        cost_dict[key] = {
-            "total_cost": cost,
-            "total_seconds": duration_seconds,
-            "invocations": 1,
-            "gpu": gpu,
-            "function": function_name,
-        }
 
 
 async def get_total_cost() -> dict:
@@ -93,6 +58,7 @@ async def get_total_cost() -> dict:
     schedule=modal.Period(minutes=5),
     timeout=120,
 )
+@track_cost("data_reconciler", "CPU")
 async def data_reconciler():
     """Self-healing pipeline reconciler.
 
