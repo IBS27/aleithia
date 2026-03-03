@@ -527,7 +527,7 @@ class RedditRetrievalService:
     async def _fetch_subreddit_rss(self, subreddit_name: str) -> list[dict]:
         import feedparser
 
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; Alethia/0.2)"}
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; Aleithia/0.2)"}
         async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=headers) as client:
             resp = await client.get(f"https://www.reddit.com/r/{subreddit_name}/hot.rss")
             if resp.status_code != 200:
@@ -550,7 +550,7 @@ class RedditRetrievalService:
     async def _search_rss(self, query: str, timeout_seconds: float, ingestion_mode: str) -> list[dict]:
         import feedparser
 
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; Alethia/0.2)"}
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; Aleithia/0.2)"}
         params = {
             "q": query,
             "sort": "relevance",

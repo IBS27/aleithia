@@ -109,7 +109,7 @@ export default function FootTrafficChart({ neighborhood }: Props) {
       {/* Peak summary */}
       {data.peak_pedestrians > 0 && (
         <div className="mt-3 pt-3 border-t border-white/[0.04] text-[10px] font-mono text-white/40">
-          Peak: {formatHour(data.peak_hour)}–{formatHour((data.peak_hour + 2) % 24)} (avg {data.peak_pedestrians} vehicles)
+          Peak: {formatHour(data.peak_hour)}–{formatHour((data.peak_hour + 2) % 24)} (avg {data.peak_pedestrians} vehicles/hr)
         </div>
       )}
     </div>

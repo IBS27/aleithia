@@ -38,7 +38,7 @@ async def _fetch_loopnet_area(area: str) -> list[dict]:
                 "type": "lease",
             },
             headers={
-                "User-Agent": "Mozilla/5.0 (compatible; AlethiaBot/0.1; educational hackathon project)",
+                "User-Agent": "Mozilla/5.0 (compatible; AleithiaBot/0.1; educational hackathon project)",
             },
         )
 

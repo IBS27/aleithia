@@ -169,7 +169,7 @@ export default function OnboardingForm({ onSubmit, onCancel, initialProfile, emb
             </div>
 
             <p className="text-center text-[10px] font-mono text-white/15 uppercase tracking-widest pt-2">
-              9 live data sources across Chicago
+              14 live data sources across Chicago
             </p>
           </form>
         </div>

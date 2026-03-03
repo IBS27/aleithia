@@ -1,6 +1,6 @@
 """Supermemory integration — RAG context, user profiles, and document sync.
 
-Provides persistent memory layer for the Alethia intelligence engine.
+Provides persistent memory layer for the Aleithia intelligence engine.
 """
 from __future__ import annotations
 

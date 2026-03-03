@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { SignedIn, SignedOut, SignInButton, SignUpButton, useClerk, useUser } from '@clerk/clerk-react'
 import type { UserProfile, NeighborhoodData, DataSources, RiskScore, CCTVData, ParkingData } from '../types/index.ts'
@@ -24,10 +24,10 @@ import LocationReportPanel from './LocationReportPanel.tsx'
 import FootTrafficChart from './FootTrafficChart.tsx'
 import StreetscapeCard from './StreetscapeCard.tsx'
 import RecursiveAgentPanel from './RecursiveAgentPanel.tsx'
-import LoadingFlow from './LoadingFlow.tsx'
 import Drawer from './Drawer.tsx'
 import ProfilePage from './ProfilePage.tsx'
 import ShinyText from './ShinyText.tsx'
+import LoadingFlow from './LoadingFlow.tsx'
 import { InspectionOutcomesChart, TopViolationsPareto, AlertHoursStackedArea } from './VaultCharts.tsx'
 
 /*
@@ -39,7 +39,7 @@ import { InspectionOutcomesChart, TopViolationsPareto, AlertHoursStackedArea } f
   import ChatPanel from './ChatPanel.tsx'
 */
 
-type Tab = 'overview' | 'regulatory' | 'intel' | 'community' | 'market' | 'vision' | 'models' | 'insights'
+type Tab = 'overview' | 'regulatory' | 'intel' | 'community' | 'market' | 'vision' | 'models' | 'vault'
 
 interface ReportAgentInfo {
   agents_deployed: number
@@ -316,6 +316,42 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
   const [activeTab, setActiveTab] = useState<Tab>('overview')
   const [trends, setTrends] = useState<TrendData | null>(null)
 
+  // Resizable sidebar
+  const SIDEBAR_DEFAULT = 540
+  const SIDEBAR_MIN = 360
+  const SIDEBAR_MAX = 720
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT)
+  const isDragging = useRef(false)
+  const startX = useRef(0)
+  const startWidth = useRef(SIDEBAR_DEFAULT)
+
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    isDragging.current = true
+    startX.current = e.clientX
+    startWidth.current = sidebarWidth
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!isDragging.current) return
+      const delta = startX.current - ev.clientX // dragging left = wider sidebar
+      const newWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startWidth.current + delta))
+      setSidebarWidth(newWidth)
+    }
+
+    const onMouseUp = () => {
+      isDragging.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+  }, [sidebarWidth])
+
   /*
     Legacy ChatPanel state intentionally commented out (not deleted):
     const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -557,7 +593,7 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
     { key: 'market', label: 'Market', count: (neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0), isEmpty: () => !((neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0)) },
     { key: 'vision', label: 'Vision', count: neighborhoodData?.cctv?.cameras.length || 0, isEmpty: () => false },
     { key: 'models', label: 'Models' },
-    { key: 'insights', label: 'Insights' },
+    { key: 'vault', label: 'Vault' },
   ]
   const tabs = useMemo(
     () => allTabs.filter(t => !t.isEmpty || !(t.isEmpty?.() ?? false)),
@@ -585,29 +621,29 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
   return (
     <div className="h-screen flex flex-col bg-[#06080d]">
       {/* Top bar */}
-      <header className="flex items-center justify-between px-8 py-4 border-b border-white/[0.04]">
-        <div className="flex items-center gap-6">
+      <header className="flex items-center justify-between px-6 py-3 bg-white/[0.02] backdrop-blur-md border-b border-white/[0.06]">
+        <div className="flex items-center gap-5">
           <button
             type="button"
             onClick={onReset}
-            className="text-sm font-semibold uppercase tracking-wide hover:opacity-80 transition-opacity cursor-pointer"
+            className="text-sm font-semibold uppercase tracking-wide text-white/70 hover:text-white transition-colors duration-300 cursor-pointer"
           >
-            <ShinyText text="Aleithia" speed={2} color="#b5b5b5" shineColor="#ffffff" spread={120} direction="left" />
+            Aleithia
           </button>
-          <div className="h-3 w-px bg-white/[0.06]" />
-          <span className="text-xs font-mono text-white/25 tracking-wide">
-            {profile.business_type} <span className="text-white/[0.08] mx-1.5">/</span> <span className="text-white/40">{profile.neighborhood}</span>
+          <div className="h-3.5 w-px bg-white/10" />
+          <span className="text-xs font-mono text-white/30">
+            {profile.business_type} <span className="text-white/10 mx-1">/</span> <span className="text-white/50">{profile.neighborhood}</span>
           </span>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           <Timer running={loading} />
-          <button onClick={refreshData} className="text-[10px] font-mono uppercase tracking-wider text-white/15 hover:text-white/40 transition-colors cursor-pointer">
+          <button onClick={refreshData} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
             Refresh
           </button>
 
           <SignedOut>
             <SignInButton mode="modal">
-              <button className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
+              <button className="text-[10px] font-mono uppercase tracking-wider text-white/30 hover:text-white/60 transition-colors cursor-pointer">
                 Auth
               </button>
             </SignInButton>
@@ -619,30 +655,30 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
           </SignedOut>
 
           <SignedIn>
-            {user && <span className="text-[10px] font-mono text-white/20">{user.primaryEmailAddress?.emailAddress}</span>}
-            <button onClick={() => setProfileDrawerOpen(true)} className="text-[10px] font-mono uppercase tracking-wider text-white/15 hover:text-white/40 transition-colors cursor-pointer">
+            {user && <span className="text-[10px] font-mono text-white/25">{user.primaryEmailAddress?.emailAddress}</span>}
+            <button onClick={() => setProfileDrawerOpen(true)} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
               Profile
             </button>
-            <button onClick={() => signOut()} className="text-[10px] font-mono uppercase tracking-wider text-white/15 hover:text-white/40 transition-colors cursor-pointer">
+            <button onClick={() => signOut()} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
               Sign out
             </button>
           </SignedIn>
 
-          <button onClick={() => navigate('/start')} className="text-[10px] font-mono uppercase tracking-wider text-white/15 hover:text-white/40 transition-colors cursor-pointer">
+          <button onClick={() => navigate('/start')} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
             New Search
           </button>
         </div>
       </header>
 
       {error && (
-        <div className="mx-8 mt-5 p-5 bg-red-500/[0.04] border border-red-500/10 text-red-400/70 text-xs font-mono space-y-3">
+        <div className="mx-6 mt-4 p-4 bg-red-500/[0.06] border border-red-500/20 text-red-400/80 text-xs font-mono space-y-2">
           <p>{error}</p>
-          <p className="text-white/30">
-            API: {API_BASE}
+          <p className="text-white/50">
+            API: {API_BASE} — Restart dev server after changing <code className="bg-white/10 px-1">frontend/.env</code>. Deploy: <code className="bg-white/10 px-1">modal deploy modal_app/__init__.py</code>
           </p>
           <button
             onClick={() => { setError(null); setLoading(true); refreshData() }}
-            className="px-4 py-2 text-[10px] font-mono uppercase tracking-wider border border-white/[0.08] text-white/50 hover:text-white/80 hover:border-white/20 transition-all cursor-pointer"
+            className="mt-2 px-3 py-1.5 text-[10px] font-medium border border-white/20 text-white/70 hover:text-white hover:border-white/40 transition-colors cursor-pointer"
           >
             Retry
           </button>
@@ -652,28 +688,28 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
       {/* Main content */}
       <div className="flex-1 flex min-h-0">
         {/* Left: Data */}
-        <div className="flex-1 flex flex-col px-6 py-5 gap-6 overflow-y-auto">
-          {/* Pipeline + Sources — compact row */}
-          <div className="flex items-start gap-6">
-            <div className="flex-1"><PipelineMonitor /></div>
-            <div className="flex-1"><DataSourceBadge sources={sourceList} /></div>
-          </div>
+        <div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto">
+          {/* Pipeline Monitor */}
+          <PipelineMonitor />
+
+          {/* Data sources */}
+          <DataSourceBadge sources={sourceList} />
 
           {/* Tabs */}
-          <div className="flex gap-1 border-b border-white/[0.04]">
+          <div className="flex gap-0 border-b border-white/[0.06]">
             {tabs.map(tab => (
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
-                className={`flex items-center gap-2 px-5 py-3 text-xs font-medium transition-all border-b-2 -mb-px cursor-pointer ${
+                className={`flex items-center gap-2 px-5 py-2.5 text-xs font-medium transition-colors border-b-2 -mb-px cursor-pointer ${
                   activeTab === tab.key
-                    ? 'border-white/80 text-white'
-                    : 'border-transparent text-white/25 hover:text-white/50'
+                    ? 'border-white text-white'
+                    : 'border-transparent text-white/30 hover:text-white/60'
                 }`}
               >
                 {tab.label}
                 {tab.count !== undefined && tab.count > 0 && (
-                  <span className="font-mono text-[10px] text-white/15">
+                  <span className="font-mono text-[10px] text-white/20">
                     {tab.count}
                   </span>
                 )}
@@ -686,9 +722,9 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
           ) : (
             <>
               {activeTab === 'overview' && trends?.congestion.anomalies && trends.congestion.anomalies.length > 0 && (
-                <div className="border border-red-500/10 bg-red-500/[0.03] px-5 py-3.5 flex items-center gap-4">
-                  <span className="text-red-400/80 text-[10px] font-mono font-bold uppercase tracking-wider">Alert</span>
-                  <span className="text-xs text-white/40">
+                <div className="border border-red-500/20 bg-red-500/[0.04] px-4 py-3 flex items-center gap-3">
+                  <span className="text-red-400 text-xs font-mono font-bold">ALERT</span>
+                  <span className="text-xs text-white/50">
                     {trends.congestion.anomalies.length} traffic anomal{trends.congestion.anomalies.length === 1 ? 'y' : 'ies'} detected:
                     {' '}{trends.congestion.anomalies.map(a => a.road).join(', ')}
                   </span>
@@ -696,26 +732,31 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
               )}
 
               {activeTab === 'overview' && (
-                <div className="space-y-6">
-                  {/* Map + Risk */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <div className="h-[300px] min-h-0">
+                <div className="space-y-4">
+                  {/* Map hero (left) + Unified Risk/Insights panel (right) */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="h-[600px] min-h-0">
                       <MapView activeNeighborhood={profile.neighborhood} />
                     </div>
-                    <div className="min-h-0">
-                      {riskScore ? <RiskCard score={riskScore} /> : <div className="h-full border border-white/[0.04] bg-white/[0.01] p-8 flex items-center justify-center"><span className="text-[10px] font-mono text-white/15">Loading risk assessment</span></div>}
+
+                    <div className="min-h-0 flex flex-col border border-white/[0.06] bg-white/[0.01] overflow-x-hidden lg:max-h-[600px] lg:overflow-y-auto hide-scrollbar">
+                      {riskScore ? (
+                        <RiskCard score={riskScore} borderless />
+                      ) : (
+                        <div className="p-6 flex items-center justify-center">
+                          <span className="text-[10px] font-mono text-white/20">Loading risk assessment</span>
+                        </div>
+                      )}
+                      {neighborhoodData && (
+                        <InsightsCard data={neighborhoodData} profile={profile} onTabChange={(tab) => setActiveTab(tab as Tab)} borderless />
+                      )}
                     </div>
                   </div>
 
-                  {/* Demographics + Insights */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {neighborhoodData?.metrics && (
-                      <DemographicsCard metrics={neighborhoodData.metrics} demographics={neighborhoodData.demographics} />
-                    )}
-                    {neighborhoodData && (
-                      <InsightsCard data={neighborhoodData} profile={profile} onTabChange={(tab) => setActiveTab(tab as Tab)} />
-                    )}
-                  </div>
+                  {/* Full-width demographics strip */}
+                  {neighborhoodData?.metrics && (
+                    <DemographicsCard metrics={neighborhoodData.metrics} demographics={neighborhoodData.demographics} horizontal />
+                  )}
                 </div>
               )}
 
@@ -743,13 +784,14 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
               )}
 
               {activeTab === 'models' && (
-                <div className="space-y-6">
+                <div className="space-y-4">
                   <RecursiveAgentPanel />
+                  <CityGraph activeNeighborhood={profile.neighborhood} interactive />
                   <MLMonitor />
                 </div>
               )}
 
-              {activeTab === 'insights' && (
+              {activeTab === 'vault' && (
                 <VaultTab
                   onOpenGraph={() => navigate('/memory-graph')}
                   dataPoints={reportAgentInfo?.data_points ?? 0}
@@ -760,32 +802,41 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
           )}
         </div>
 
-        {/* Right: Report */}
-        <div className="w-96 border-l border-white/[0.06] p-5" style={{ boxShadow: '-4px 0 32px rgba(0, 0, 0, 0.2)' }}>
-          {/*
-            <ChatPanel
-              messages={messages}
-              onSend={(msg) => { setSuggestions([]); handleChat(msg) }}
-              loading={chatLoading}
-              isStreaming={isStreaming}
-              agentInfo={agentInfo}
-              agentActive={agentActive}
-              agentElapsedMs={agentElapsedMs}
-              statusMessage={statusMessage}
-              processStage={processStage}
-              chatQuestion={chatQuestion}
-              processLogs={processLogs.current}
-              memoryInfo={memoryInfo}
-              suggestions={suggestions}
+        {/* Right: Resizable Report Sidebar */}
+        <div className="relative shrink-0 flex" style={{ width: sidebarWidth }}>
+          {/* Drag handle */}
+          <div
+            onMouseDown={onDragStart}
+            className="absolute left-0 top-0 bottom-0 w-1.5 z-10 cursor-col-resize group hover:bg-[#2B95D6]/30 transition-colors"
+          >
+            <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-[#2B95D6]/40 group-hover:bg-[#2B95D6]/80 transition-colors" />
+          </div>
+          <div className="flex-1 p-4 overflow-y-auto" style={{ boxShadow: '-4px 0 24px rgba(43, 149, 214, 0.08)' }}>
+            {/*
+              <ChatPanel
+                messages={messages}
+                onSend={(msg) => { setSuggestions([]); handleChat(msg) }}
+                loading={chatLoading}
+                isStreaming={isStreaming}
+                agentInfo={agentInfo}
+                agentActive={agentActive}
+                agentElapsedMs={agentElapsedMs}
+                statusMessage={statusMessage}
+                processStage={processStage}
+                chatQuestion={chatQuestion}
+                processLogs={processLogs.current}
+                memoryInfo={memoryInfo}
+                suggestions={suggestions}
+              />
+            */}
+            <LocationReportPanel
+              profile={profile}
+              neighborhoodData={neighborhoodData}
+              riskScore={riskScore}
+              loading={loading}
+              agentInfo={reportAgentInfo}
             />
-          */}
-          <LocationReportPanel
-            profile={profile}
-            neighborhoodData={neighborhoodData}
-            riskScore={riskScore}
-            loading={loading}
-            agentInfo={reportAgentInfo}
-          />
+          </div>
         </div>
       </div>
 
@@ -828,7 +879,7 @@ function VisionTab({ cctv, parking, neighborhood }: { cctv: CCTVData | null; par
   const selectedCamera = expandedCam ? cameras.find(c => c.camera_id === expandedCam) : null
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Streetscape Intelligence */}
       <StreetscapeCard neighborhood={neighborhood} />
 
@@ -1029,60 +1080,56 @@ function VaultTab({
   const hoursReclaimed = dataPoints ? Math.round((dataPoints * 2) / 60 * 10) / 10 : 0
 
   return (
-    <div className="space-y-8">
-      {/* 1. Knowledge Graph — hero position */}
-      <div className="border border-white/[0.04] bg-white/[0.01] p-6">
-        <div className="flex items-center justify-between mb-5">
-          <div>
-            <h3 className="text-sm font-semibold text-white/80 mb-1">Knowledge Graph</h3>
-            <p className="text-[11px] text-white/30 leading-relaxed">
-              Interactive network of neighborhoods, regulations, and entities connected by semantic similarity.
-            </p>
-          </div>
-          <button
-            onClick={onOpenGraph}
-            className="px-4 py-2 text-[10px] font-mono uppercase tracking-wider border border-white/[0.08] text-white/40 hover:text-white/70 hover:border-white/20 transition-all cursor-pointer"
-          >
-            Fullscreen
-          </button>
-        </div>
-        {neighborhood && (
-          <div className="border border-white/[0.04] overflow-hidden">
-            <CityGraph activeNeighborhood={neighborhood} interactive />
-          </div>
-        )}
-        <div className="flex items-center gap-8 mt-4 pt-4 border-t border-white/[0.03]">
-          {[
-            { dot: 'bg-cyan-400', label: 'Neighborhoods' },
-            { dot: 'bg-violet-400', label: 'Regulations' },
-            { dot: 'bg-amber-400', label: 'Entities' },
-          ].map(l => (
-            <div key={l.label} className="flex items-center gap-2">
-              <div className={`w-1.5 h-1.5 rounded-full ${l.dot}`} />
-              <span className="text-[9px] font-mono text-white/20 uppercase tracking-wider">{l.label}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* 2. Analytics Charts */}
+    <div className="space-y-6">
+      {/* 1. Analytics Charts */}
       {neighborhoodData && (
-        <div className="space-y-6">
+        <div className="space-y-4">
           <InspectionOutcomesChart inspections={neighborhoodData.inspections ?? []} />
           <TopViolationsPareto inspections={neighborhoodData.inspections ?? []} />
           <AlertHoursStackedArea data={neighborhoodData} />
         </div>
       )}
 
-      {/* 3. Time reclaimed */}
-      <div className="border border-white/[0.04] bg-white/[0.01] p-6">
-        <div className="flex items-center gap-6">
-          <div className="text-3xl font-bold font-mono text-white tabular-nums">{hoursReclaimed > 0 ? `${hoursReclaimed}h` : '—'}</div>
-          <div>
-            <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mb-1">Time Reclaimed</div>
-            <p className="text-xs text-white/40 leading-relaxed">
-              {dataPoints ? `Estimated hours saved vs. manually reviewing ${dataPoints.toLocaleString()} data points.` : 'Hours saved by AI vs. manual review.'}
-            </p>
+      {/* 2. Neural Graph Visualization */}
+      <div className="border border-white/[0.06] bg-white/[0.02] p-5">
+        <h3 className="text-sm font-semibold mb-3">
+          <ShinyText text='The "Neural" Graph Visualization' speed={2} color="#b5b5b5" shineColor="#ffffff" spread={120} direction="left" />
+        </h3>
+        <p className="text-xs text-white/60 leading-relaxed mb-3">
+          The standout feature is the Knowledge Graph, which visually proves that content is connected.
+        </p>
+        {neighborhood && (
+          <div className="mb-4 border border-white/[0.06] rounded overflow-hidden">
+            <CityGraph activeNeighborhood={neighborhood} interactive />
+          </div>
+        )}
+        <ul className="text-xs text-white/50 space-y-2 list-disc list-inside mb-3">
+          <li><strong className="text-white/70">Nodes:</strong> Neighborhoods, regulations, entities</li>
+          <li><strong className="text-white/70">Edges:</strong> Connect nodes that share similar themes</li>
+          <li><strong className="text-white/70">Interactive:</strong> Drag nodes, filter by type</li>
+        </ul>
+        <button
+          onClick={onOpenGraph}
+          className="px-4 py-2 text-xs font-medium border border-white/20 text-white/70 hover:text-white hover:border-white/40 transition-colors cursor-pointer"
+        >
+          Open Full Knowledge Graph
+        </button>
+      </div>
+
+      {/* Visualizing the &quot;Attention Crisis&quot; */}
+      <div className="border border-white/[0.06] bg-white/[0.02] p-5">
+        <h3 className="text-sm font-semibold mb-3">
+          <ShinyText text='Visualizing the "Attention Crisis"' speed={2} color="#b5b5b5" shineColor="#ffffff" spread={120} direction="left" />
+        </h3>
+        <div className="space-y-4">
+          <div className="flex items-center gap-4 p-4 border border-white/[0.06]">
+            <div className="text-2xl font-bold font-mono text-white">{hoursReclaimed > 0 ? `${hoursReclaimed}h` : '—'}</div>
+            <div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-white/40 mb-1">Time Reclaimed</div>
+              <p className="text-xs text-white/50">
+                {dataPoints ? `Hours saved vs. manually reviewing ${dataPoints} data points.` : 'Hours saved by AI vs. manual review.'}
+              </p>
+            </div>
           </div>
         </div>
       </div>

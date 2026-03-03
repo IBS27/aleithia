@@ -1,6 +1,6 @@
 """Self-hosted LLM — Qwen3-8B via vLLM on H100 GPU.
 
-Provides streaming and non-streaming text generation for the Alethia reasoning engine.
+Provides streaming and non-streaming text generation for the Aleithia reasoning engine.
 Modal features: @modal.cls, @modal.enter, @modal.concurrent, gpu=H100, Image.run_commands()
 """
 import json
@@ -13,7 +13,7 @@ from modal_app.volume import app, volume, weights_volume, vllm_image, VOLUME_MOU
 MODEL_NAME = "Qwen/Qwen3-8B-AWQ"
 MODEL_DIR = f"{WEIGHTS_MOUNT}/Qwen3-8B-AWQ"
 
-SYSTEM_PROMPT = """You are Alethia, an AI-powered Chicago business intelligence analyst.
+SYSTEM_PROMPT = """You are Aleithia, an AI-powered Chicago business intelligence analyst.
 You analyze real-time data from 7+ pipelines covering permits, inspections, licenses,
 news, politics, demographics, and community sentiment across 77 Chicago neighborhoods.
 

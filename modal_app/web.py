@@ -30,7 +30,7 @@ from modal_app.pipelines.reddit import (
     search_reddit_fallback_runtime,
 )
 
-web_app = FastAPI(title="Alethia API", version="2.0")
+web_app = FastAPI(title="Aleithia API", version="2.0")
 
 web_app.add_middleware(
     CORSMiddleware,
@@ -634,7 +634,7 @@ def _aggregate_demographics(neighborhood: str) -> dict:
 
 
 def _logistic(x: float, x0: float, k: float) -> float:
-    """Logistic (sigmoid) normalization: f(x) = 1 / (1 + e^(-k(x - x₀)))."""
+    """Logistic (sigmoid) normalization: f(x) = 1 / (1 + e^(-k(x - x0)))."""
     import math
     return 1 / (1 + math.exp(-k * (x - x0)))
 
@@ -644,7 +644,7 @@ def _compute_risk_wlc(inspections: list, permits: list, licenses: list, news: li
 
     Methodology (ISO 31000-aligned):
       Logistic normalization of each input to [0, 1] risk scale,
-      then WLC aggregation: risk = Σ(wᵢ · rᵢ) / Σ(wᵢ) over available dimensions.
+      then WLC aggregation: risk = Sigma(wi * ri) / Sigma(wi) over available dimensions.
 
     Returns 0-10 risk score (higher = more risk).
     """
@@ -659,14 +659,14 @@ def _compute_risk_wlc(inspections: list, permits: list, licenses: list, news: li
 
     scored: list[tuple[str, float, float]] = []  # (dimension, risk, weight)
 
-    # ── Regulatory Compliance (25%) — inspection fail rate
+    # Regulatory Compliance (25%) — inspection fail rate
     total_inspections = len(inspections)
     if total_inspections > 0:
         failed = sum(1 for i in inspections if i.get("metadata", {}).get("raw_record", {}).get("results") in ("Fail", "Out of Business"))
         fail_rate = failed / total_inspections
         scored.append(("regulatory", _logistic(fail_rate, 0.22, 8), W["regulatory"]))
 
-    # ── Market Competition (20%) — license density + review quality
+    # Market Competition (20%) — license density + review quality
     license_count = len(licenses)
     if license_count > 0:
         scored.append(("market", _logistic(license_count, 12, 0.25), W["market"] * 0.5))
@@ -676,16 +676,16 @@ def _compute_risk_wlc(inspections: list, permits: list, licenses: list, news: li
         avg_rating = sum(ratings) / len(ratings)
         scored.append(("market", 1 - _logistic(avg_rating, 3.5, 3), W["market"] * 0.5))
 
-    # ── Economic Vitality (20%) — permit activity (inverted: more permits = lower risk)
+    # Economic Vitality (20%) — permit activity (inverted: more permits = lower risk)
     permit_count = len(permits)
     if permit_count > 0:
         scored.append(("economic", 1 - _logistic(permit_count, 8, 0.3), W["economic"]))
 
-    # ── Political Stability (10%) — legislative activity volume
+    # Political Stability (10%) — legislative activity volume
     if politics:
         scored.append(("political", _logistic(len(politics), 5, 0.4), W["political"]))
 
-    # ── Community Presence (10%) — news visibility (inverted: low visibility = higher risk)
+    # Community Presence (10%) — news visibility (inverted: low visibility = higher risk)
     if news:
         scored.append(("community", 1 - _logistic(len(news), 8, 0.3), W["community"]))
 
@@ -713,7 +713,7 @@ def _compute_metrics(name: str, inspections: list, permits: list, licenses: list
     # Business activity: normalized license count (0-100 scale)
     business_activity = min(100, len(licenses) * 8) if licenses else 0
 
-    # Risk score: WLC logistic model (same formula as frontend)
+    # Risk score: WLC logistic model
     risk_score = _compute_risk_wlc(inspections, permits, licenses, news, politics, reviews)
 
     # Sentiment: placeholder based on news volume (more news = more activity = higher)
@@ -799,7 +799,6 @@ async def chat(request: Request):
                 span.set_attribute("chat.has_profile", has_profile)
             # Phase 1: Agent gathering (returns synthesis_messages, NOT response text)
             from modal_app.instrumentation import inject_context
-
             orchestrate_query = modal.Function.from_name("alethia", "orchestrate_query")
             result = await orchestrate_query.remote.aio(
                 user_id=user_id,
@@ -1050,8 +1049,13 @@ async def status():
     except Exception:
         pass
 
-    from modal_app.vectordb import check_vectordb_health
-    vectordb_health = check_vectordb_health()
+    # VectorDB health check
+    vectordb_status = {"status": "unavailable"}
+    try:
+        from modal_app.vectordb import check_vectordb_health
+        vectordb_status = check_vectordb_health()
+    except Exception:
+        pass
 
     return {
         "pipelines": pipeline_status,
@@ -1062,9 +1066,9 @@ async def status():
             "t4_sentiment": "available",
             "t4_cctv": "available",
         },
+        "vectordb": vectordb_status,
         "costs": costs,
         "total_docs": sum(p.get("doc_count", 0) for p in pipeline_status.values()),
-        "vectordb": vectordb_health,
     }
 
 
@@ -1623,6 +1627,155 @@ async def neighborhood(name: str, business_type: str = ""):
             },
             "permit_count": len(permits),
             "license_count": len(licenses),
+        }
+    except Exception as e:
+        if span:
+            span.set_attribute("error", str(e))
+        raise
+    finally:
+        if span_ctx:
+            span_ctx.__exit__(None, None, None)
+
+
+# ── Social Media Trends ──────────────────────────────────────────────────────
+
+@web_app.get("/social-trends/{neighborhood}")
+async def social_trends(neighborhood: str, business_type: str = ""):
+    """LLM-synthesized social media trends from Reddit + TikTok data."""
+    from modal_app.instrumentation import get_tracer
+
+    tracer = get_tracer("alethia.web")
+    span_ctx = tracer.start_as_current_span("social-trends") if tracer else None
+    span = span_ctx.__enter__() if span_ctx else None
+    try:
+        if span:
+            span.set_attribute("openinference.span.kind", "CHAIN")
+            span.set_attribute("input.value", neighborhood)
+            span.set_attribute("social_trends.business_type", business_type or "general")
+
+        volume.reload()
+
+        # Validate neighborhood
+        valid_names = set(n.lower() for n in CHICAGO_NEIGHBORHOODS) | set(
+            n.lower() for n in COMMUNITY_AREA_MAP.values()
+        )
+        if neighborhood.lower() not in valid_names:
+            return JSONResponse({"error": f"Unknown neighborhood: {neighborhood}"}, status_code=404)
+
+        # Load and filter social data
+        all_reddit = _load_docs("reddit")
+        all_tiktok = [_normalize_tiktok_doc(d) for d in _load_docs("tiktok")]
+
+        reddit_docs = rank_reddit_docs(
+            _filter_by_neighborhood(all_reddit, neighborhood),
+            business_type=business_type or "small business",
+            neighborhood=neighborhood,
+            min_score=0,
+        )
+        tiktok_docs = _rank_tiktok_docs(all_tiktok, business_type or "small business", neighborhood)
+
+        reddit_count = len(reddit_docs)
+        tiktok_count = len(tiktok_docs)
+
+        if span:
+            span.set_attribute("social_trends.reddit_count", reddit_count)
+            span.set_attribute("social_trends.tiktok_count", tiktok_count)
+
+        # Short-circuit if no social content
+        if reddit_count == 0 and tiktok_count == 0:
+            return {
+                "neighborhood": neighborhood,
+                "business_type": business_type,
+                "trends": [],
+                "source_counts": {"reddit": 0, "tiktok": 0},
+            }
+
+        # Build content for LLM
+        reddit_snippets = []
+        for d in reddit_docs[:10]:
+            title = d.get("title", "")
+            content = d.get("content", "")[:300]
+            reddit_snippets.append(f"[Reddit] {title}: {content}")
+
+        tiktok_snippets = []
+        for d in tiktok_docs[:5]:
+            title = d.get("title", "")
+            transcript = d.get("content", "")[:500]
+            views = d.get("metadata", {}).get("views", "")
+            tiktok_snippets.append(f"[TikTok] {title} (views: {views}): {transcript}")
+
+        all_snippets = "\n\n".join(reddit_snippets + tiktok_snippets)
+
+        system_prompt = (
+            "Extract exactly 3 concise, business-relevant social media trends from the provided "
+            "posts/transcripts. Respond ONLY with a JSON array of 3 objects with `title` (max 8 words) "
+            "and `detail` (1-2 sentences). Focus on consumer behavior, neighborhood sentiment, "
+            "and emerging opportunities."
+        )
+        user_prompt = (
+            f"Neighborhood: {neighborhood}\n"
+            f"Business type: {business_type or 'general'}\n\n"
+            f"Social media content:\n{all_snippets}"
+        )
+
+        # Call GPT-4o (fast, no cold start) with Qwen3-8B fallback
+        from modal_app.openai_utils import openai_available, get_openai_client
+
+        msgs = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        if openai_available():
+            try:
+                client = get_openai_client()
+                oai_resp = await client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=msgs,
+                    max_tokens=512,
+                    temperature=0.4,
+                )
+                raw = oai_resp.choices[0].message.content or ""
+            except Exception as e:
+                print(f"GPT-4o social-trends failed, falling back to Qwen3: {e}")
+                llm_cls = modal.Cls.from_name("alethia", "AlethiaLLM")
+                llm = llm_cls()
+                raw = await llm.generate.remote.aio(msgs, max_tokens=512, temperature=0.4)
+        else:
+            llm_cls = modal.Cls.from_name("alethia", "AlethiaLLM")
+            llm = llm_cls()
+            raw = await llm.generate.remote.aio(msgs, max_tokens=512, temperature=0.4)
+
+        # Parse JSON response (strip code fences if present)
+        text = raw.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+
+        try:
+            trends = json.loads(text)
+        except json.JSONDecodeError:
+            # Try to extract JSON array from response
+            match = re.search(r"\[.*\]", text, re.DOTALL)
+            if match:
+                trends = json.loads(match.group())
+            else:
+                trends = []
+
+        # Validate structure
+        validated = []
+        for t in trends[:3]:
+            if isinstance(t, dict) and "title" in t and "detail" in t:
+                validated.append({"title": str(t["title"]), "detail": str(t["detail"])})
+
+        if span:
+            span.set_attribute("social_trends.trend_count", len(validated))
+
+        return {
+            "neighborhood": neighborhood,
+            "business_type": business_type,
+            "trends": validated,
+            "source_counts": {"reddit": reddit_count, "tiktok": tiktok_count},
         }
     except Exception as e:
         if span:
@@ -2562,8 +2715,7 @@ async def gpu_metrics():
 
 @web_app.get("/health")
 async def health():
-    from modal_app.vectordb import check_vectordb_health
-    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat(), "vectordb": check_vectordb_health()}
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 @web_app.post("/demo/scale")

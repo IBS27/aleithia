@@ -287,6 +287,16 @@ export interface CategoryScore {
   dataPoints: number
 }
 
+export interface SocialTrend {
+  title: string
+  detail: string
+}
+
+export interface SocialTrendsData {
+  trends: SocialTrend[]
+  source_counts: { reddit: number; tiktok: number }
+}
+
 export interface InsightsResult {
   categories: CategoryScore[]
   overall: number

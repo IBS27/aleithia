@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { memo, useEffect, useId, useState, useCallback } from 'react'
 
 export interface ShinyTextProps {
   text: string
@@ -14,7 +14,7 @@ export interface ShinyTextProps {
   className?: string
 }
 
-export default function ShinyText({
+function ShinyText({
   text = '',
   speed = 2,
   delay = 0,
@@ -29,44 +29,58 @@ export default function ShinyText({
 }: ShinyTextProps) {
   const id = useId().replace(/:/g, '')
   const [isPaused, setIsPaused] = useState(false)
+
   const duration = 1 / speed
   const gradientAngle = direction === 'left' ? 90 + spread / 2 : 90 - spread / 2
   const gradient = `linear-gradient(${gradientAngle}deg, ${color} 0%, ${color} 35%, ${shineColor} 50%, ${color} 65%, ${color} 100%)`
   const gradientSize = 300
+  const cls = `shiny-${id}`
 
-  const animationName = `shiny-${id}`
-  const keyframes = `
-    @keyframes ${animationName} {
-      0% { background-position: ${direction === 'left' ? `${gradientSize}%` : `-${gradientSize}%`} 50%; }
-      100% { background-position: ${direction === 'left' ? `-${gradientSize}%` : `${gradientSize}%`} 50%; }
-    }
-  `
+  // Inject ALL styles (including animation) as CSS so React never touches them.
+  // This prevents any re-render from restarting the CSS animation.
+  useEffect(() => {
+    const fromPos = direction === 'left' ? `${gradientSize}%` : `-${gradientSize}%`
+    const toPos = direction === 'left' ? `-${gradientSize}%` : `${gradientSize}%`
+
+    const style = document.createElement('style')
+    style.setAttribute('data-shiny', cls)
+    style.textContent = `
+      .${cls} {
+        background: ${gradient};
+        background-size: ${gradientSize * 2}% 100%;
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        -webkit-text-fill-color: transparent;
+        animation: ${cls}-sweep ${duration}s linear ${delay}s infinite;
+        animation-direction: ${yoyo ? 'alternate' : 'normal'};
+      }
+      @keyframes ${cls}-sweep {
+        0%   { background-position: ${fromPos} 50%; }
+        100% { background-position: ${toPos} 50%; }
+      }
+    `
+    document.head.appendChild(style)
+    return () => { style.remove() }
+  }, [cls, gradient, gradientSize, direction, duration, delay, yoyo])
+
+  const onEnter = useCallback(() => pauseOnHover && setIsPaused(true), [pauseOnHover])
+  const onLeave = useCallback(() => pauseOnHover && setIsPaused(false), [pauseOnHover])
 
   if (disabled) {
     return <span className={className} style={{ color }}>{text}</span>
   }
 
   return (
-    <>
-      <style>{keyframes}</style>
-      <span
-        className={`inline-block ${className}`}
-        style={{
-          background: gradient,
-          backgroundSize: `${gradientSize * 2}% 100%`,
-          backgroundPosition: `${direction === 'left' ? gradientSize : -gradientSize}% 50%`,
-          WebkitBackgroundClip: 'text',
-          backgroundClip: 'text',
-          color: 'transparent',
-          WebkitTextFillColor: 'transparent',
-          animation: isPaused && pauseOnHover ? 'none' : `${animationName} ${duration}s linear ${delay}s infinite`,
-          animationDirection: yoyo ? 'alternate' : 'normal',
-        }}
-        onMouseEnter={() => pauseOnHover && setIsPaused(true)}
-        onMouseLeave={() => pauseOnHover && setIsPaused(false)}
-      >
-        {text}
-      </span>
-    </>
+    <span
+      className={`inline-block ${cls} ${className}`}
+      style={isPaused && pauseOnHover ? { animationPlayState: 'paused' } : undefined}
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
+    >
+      {text}
+    </span>
   )
 }
+
+export default memo(ShinyText)

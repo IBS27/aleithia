@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { Routes, Route, useNavigate } from 'react-router-dom'
+import { Routes, Route, useNavigate, Navigate } from 'react-router-dom'
 import { useUser, useAuth } from '@clerk/clerk-react'
 import type { UserProfile } from './types/index.ts'
 import { api } from './api.ts'
@@ -143,6 +143,7 @@ function App() {
           )
         }
       />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
 }

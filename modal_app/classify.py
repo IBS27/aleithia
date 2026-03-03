@@ -190,24 +190,22 @@ async def process_queue_batch():
         await volume.commit.aio()
         print(f"Classified {len(docs)} documents: saved to {enriched_dir}")
 
-        # Upsert enriched docs to VectorAI DB for semantic search
+        # Upsert regulatory/legal docs to VectorAI DB for semantic retrieval
         try:
             from modal_app.vectordb import vectordb_available, build_embed_text, build_payload
             if vectordb_available():
-                vdb_cls = modal.Cls.from_name("alethia", "VectorDBService")
-                vdb = vdb_cls()
+                regulatory_docs = [d for d in docs if d.get("classification", {}).get("label", "") in ("regulatory", "legal")]
+                if regulatory_docs:
+                    vdb_cls = modal.Cls.from_name("alethia", "VectorDBService")
+                    vdb = vdb_cls()
 
-                embed_texts = [build_embed_text(d) for d in docs]
-                embeddings = vdb.embed_batch.remote(embed_texts)
+                    embed_texts = [build_embed_text(d) for d in regulatory_docs]
+                    payloads = [build_payload(d) for d in regulatory_docs]
+                    ids = [d.get("id", f"doc-{i}") for i, d in enumerate(regulatory_docs)]
 
-                doc_ids = [d.get("id", f"doc-{i}") for i, d in enumerate(docs)]
-                payloads = [
-                    build_payload(d, d.get("classification", {}), d.get("sentiment", {}))
-                    for d in docs
-                ]
-
-                vdb.batch_upsert_docs.remote(doc_ids, embeddings, payloads, "enriched")
-                print(f"VectorDB: upserted {len(docs)} docs to enriched collection")
+                    embeddings = vdb.embed_batch.remote(embed_texts)
+                    vdb.upsert_batch.remote("enriched", ids, embeddings, payloads)
+                    print(f"VectorDB: upserted {len(regulatory_docs)} regulatory docs to enriched collection")
         except Exception as e:
             print(f"VectorDB upsert failed (non-critical): {e}")
 

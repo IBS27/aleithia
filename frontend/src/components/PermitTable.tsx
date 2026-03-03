@@ -13,14 +13,6 @@ function statusStyle(status: string) {
   }
 }
 
-function ExternalIcon() {
-  return (
-    <svg className="w-3 h-3 text-white/15 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-      <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
-    </svg>
-  )
-}
-
 export default function PermitTable({ permits }: Props) {
   if (permits.length === 0) {
     return (
@@ -43,21 +35,17 @@ export default function PermitTable({ permits }: Props) {
 
         const address = [r.street_number, r.street_direction, r.street_name].filter(Boolean).join(' ')
         const fee = r.building_fee_paid ? `$${Number(r.building_fee_paid).toLocaleString()}` : null
-        const hasUrl = !!permit.url
 
-        const content = (
-          <>
+        return (
+          <div key={permit.id} className="border border-white/[0.06] bg-white/[0.01] p-4">
             <div className="flex items-start justify-between mb-2">
-              <div className="min-w-0 flex-1">
+              <div>
                 <h4 className="text-sm font-semibold text-white">{r.work_type || 'Building Permit'}</h4>
                 <p className="text-[10px] font-mono text-white/20 mt-0.5">{address}</p>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className={`text-[10px] font-mono uppercase px-2 py-0.5 border ${statusStyle(r.permit_status)}`}>
-                  {r.permit_status}
-                </span>
-                {hasUrl && <ExternalIcon />}
-              </div>
+              <span className={`text-[10px] font-mono uppercase px-2 py-0.5 border ${statusStyle(r.permit_status)}`}>
+                {r.permit_status}
+              </span>
             </div>
 
             {r.work_description && (
@@ -73,22 +61,6 @@ export default function PermitTable({ permits }: Props) {
               {fee && <span className="text-green-400/60">{fee}</span>}
               {r.issue_date && <span>{new Date(r.issue_date).toLocaleDateString()}</span>}
             </div>
-          </>
-        )
-
-        return hasUrl ? (
-          <a
-            key={permit.id}
-            href={permit.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block border border-white/[0.06] bg-white/[0.01] p-4 hover:bg-white/[0.04] hover:border-white/[0.12] transition-colors cursor-pointer"
-          >
-            {content}
-          </a>
-        ) : (
-          <div key={permit.id} className="border border-white/[0.06] bg-white/[0.01] p-4">
-            {content}
           </div>
         )
       })}

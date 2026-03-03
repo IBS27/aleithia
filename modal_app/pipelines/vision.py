@@ -293,7 +293,7 @@ def run_vision_pipeline(youtube_url: str, neighborhood: str = ""):
     Usage: modal run modal_app/pipelines/vision.py --youtube-url "https://youtube.com/watch?v=..." --neighborhood "Loop"
     """
     print("=" * 60)
-    print("Alethia Neighborhood Vision Pipeline")
+    print("Aleithia Neighborhood Vision Pipeline")
     print("=" * 60)
 
     print("\nStep 1: Extracting frames from YouTube video...")

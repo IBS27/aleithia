@@ -27,9 +27,14 @@ const WEIGHTS: Record<RiskProfile, Record<string, number>> = {
 export const LICENSE_MAP: Record<string, string[]> = {
   'Restaurant': ['retail food', 'restaurant', 'tavern', 'caterer'],
   'Coffee Shop': ['retail food', 'coffee'],
-  'Bar': ['tavern', 'liquor', 'late night'],
+  'Bar / Nightlife': ['tavern', 'liquor', 'late night'],
   'Retail Store': ['retail', 'general retail'],
-  'Salon': ['beauty', 'barber', 'nail'],
+  'Salon / Barbershop': ['beauty', 'barber', 'nail'],
+  'Grocery / Convenience': ['retail food', 'grocery', 'convenience'],
+  'Fitness Studio': ['health club', 'fitness', 'gym'],
+  'Professional Services': ['professional', 'consulting', 'office'],
+  'Food Truck': ['mobile food', 'food truck', 'peddler'],
+  'Bakery': ['retail food', 'bakery'],
 }
 
 function signal(score: number): { signal: InsightSignal; signalLabel: string } {

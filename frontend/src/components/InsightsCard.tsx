@@ -7,6 +7,7 @@ interface Props {
   data: NeighborhoodData
   profile: UserProfile
   onTabChange?: (tab: string) => void
+  borderless?: boolean
 }
 
 const CATEGORY_TAB_MAP: Record<string, string> = {
@@ -57,7 +58,7 @@ function CategoryRow({ cat, expanded, onToggle, evidence, onViewAll }: {
   cat: CategoryScore
   expanded: boolean
   onToggle: () => void
-  evidence: Array<{ label: string; detail: string; url?: string }>
+  evidence: Array<{ label: string; detail: string }>
   onViewAll?: () => void
 }) {
   return (
@@ -102,40 +103,11 @@ function CategoryRow({ cat, expanded, onToggle, evidence, onViewAll }: {
                 Source Documents
               </div>
               {evidence.slice(0, 5).map((ev, i) => (
-                ev.url ? (
-                  <a
-                    key={i}
-                    href={ev.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 text-[11px] hover:bg-white/[0.03] rounded px-1 -mx-1 py-0.5 transition-colors cursor-pointer"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <span className="text-white/10">&#9679;</span>
-                    <span className="text-white/40 flex-1 truncate hover:text-white/60">{ev.label}</span>
-                    <span className="text-white/15 font-mono text-[10px] shrink-0">{ev.detail}</span>
-                    <svg className="w-2.5 h-2.5 text-white/15 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                      <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
-                    </svg>
-                  </a>
-                ) : onViewAll ? (
-                  <button
-                    key={i}
-                    type="button"
-                    className="flex items-center gap-2 text-[11px] w-full text-left hover:bg-white/[0.03] rounded px-1 -mx-1 py-0.5 transition-colors cursor-pointer"
-                    onClick={(e) => { e.stopPropagation(); onViewAll() }}
-                  >
-                    <span className="text-white/10">&#9679;</span>
-                    <span className="text-white/40 flex-1 truncate hover:text-white/60">{ev.label}</span>
-                    <span className="text-white/15 font-mono text-[10px] shrink-0">{ev.detail}</span>
-                  </button>
-                ) : (
-                  <div key={i} className="flex items-center gap-2 text-[11px]">
-                    <span className="text-white/10">&#9679;</span>
-                    <span className="text-white/40 flex-1 truncate">{ev.label}</span>
-                    <span className="text-white/15 font-mono text-[10px] shrink-0">{ev.detail}</span>
-                  </div>
-                )
+                <div key={i} className="flex items-center gap-2 text-[11px]">
+                  <span className="text-white/10">&#9679;</span>
+                  <span className="text-white/40 flex-1 truncate">{ev.label}</span>
+                  <span className="text-white/15 font-mono text-[10px] shrink-0">{ev.detail}</span>
+                </div>
               ))}
               {onViewAll && (
                 <button
@@ -154,7 +126,7 @@ function CategoryRow({ cat, expanded, onToggle, evidence, onViewAll }: {
   )
 }
 
-export default function InsightsCard({ data, profile, onTabChange }: Props) {
+export default function InsightsCard({ data, profile, onTabChange, borderless }: Props) {
   const [riskProfile, setRiskProfile] = useState<RiskProfile>('conservative')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [streetscape, setStreetscape] = useState<StreetscapeData | null>(null)
@@ -172,36 +144,32 @@ export default function InsightsCard({ data, profile, onTabChange }: Props) {
   )
 
   const evidenceMap = useMemo(() => {
-    const map: Record<string, Array<{ label: string; detail: string; url?: string }>> = {}
+    const map: Record<string, Array<{ label: string; detail: string }>> = {}
 
     map.regulatory = (data.inspections || []).slice(0, 5).map(i => ({
       label: (i.metadata?.raw_record as Record<string, string>)?.dba_name || i.title,
       detail: (i.metadata?.raw_record as Record<string, string>)?.results || 'Inspected',
-      url: i.url || undefined,
     }))
 
     map.economic = [
       ...(data.permits || []).slice(0, 3).map(p => ({
         label: `${(p.metadata?.raw_record as Record<string, string>)?.work_type || 'Permit'} — ${(p.metadata?.raw_record as Record<string, string>)?.street_name || ''}`,
         detail: (p.metadata?.raw_record as Record<string, string>)?.permit_status || 'Active',
-        url: p.url || undefined,
       })),
       ...(data.licenses || []).slice(0, 2).map(l => ({
         label: (l.metadata?.raw_record as Record<string, string>)?.doing_business_as_name || l.title,
         detail: (l.metadata?.raw_record as Record<string, string>)?.license_description || 'License',
-        url: l.url || undefined,
       })),
     ]
 
     map.market = (data.reviews || []).slice(0, 5).map(r => ({
       label: (r.metadata?.business_name as string) || r.title,
       detail: r.metadata?.rating ? `${r.metadata.rating}/5` : '',
-      url: r.url || undefined,
     }))
 
     map.demographic = data.demographics ? [{
       label: 'Census / ACS Data',
-      detail: `${data.demographics.total_population?.toLocaleString() || '\u2014'} residents`,
+      detail: `${data.demographics.total_population?.toLocaleString() || '—'} residents`,
     }] : []
 
     map.safety = [
@@ -212,7 +180,6 @@ export default function InsightsCard({ data, profile, onTabChange }: Props) {
       ...(data.traffic || []).slice(0, 2).map(t => ({
         label: t.title || 'Traffic segment',
         detail: (t.metadata?.congestion_level as string) || '',
-        url: t.url || undefined,
       })),
     ]
 
@@ -220,12 +187,10 @@ export default function InsightsCard({ data, profile, onTabChange }: Props) {
       ...(data.news || []).slice(0, 3).map(n => ({
         label: n.title,
         detail: n.source,
-        url: n.url || undefined,
       })),
       ...(data.reddit || []).slice(0, 2).map(r => ({
         label: r.title,
         detail: 'reddit',
-        url: r.url || undefined,
       })),
     ]
 
@@ -235,11 +200,11 @@ export default function InsightsCard({ data, profile, onTabChange }: Props) {
   if (insights.coverageCount === 0) return null
 
   return (
-    <div className="border border-white/[0.06] bg-white/[0.02]">
+    <div className={borderless ? 'shrink-0' : 'border border-white/[0.06] bg-white/[0.02]'}>
       {/* Header */}
       <div className="px-5 pt-5 pb-3 flex items-center justify-between">
         <div className="text-[10px] font-mono uppercase tracking-wider text-white/30">
-          Risk Assessment Score
+          Opportunity Assessment
         </div>
         <div className="flex gap-0 border border-white/[0.08] rounded overflow-hidden">
           {PROFILES.map(p => (

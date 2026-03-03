@@ -5,14 +5,6 @@ interface Props {
   realestate: Document[]
 }
 
-function ExternalIcon() {
-  return (
-    <svg className="w-3 h-3 text-white/15 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-      <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
-    </svg>
-  )
-}
-
 export default function MarketPanel({ reviews, realestate }: Props) {
   const hasContent = reviews.length > 0 || realestate.length > 0
 
@@ -40,17 +32,9 @@ export default function MarketPanel({ reviews, realestate }: Props) {
             const velocity = (review.metadata?.velocity_label as string) || ''
 
             return (
-              <a
-                key={review.id}
-                href={review.url || undefined}
-                target={review.url ? '_blank' : undefined}
-                rel={review.url ? 'noopener noreferrer' : undefined}
-                className={`block border border-white/[0.06] bg-white/[0.01] p-4 transition-colors ${
-                  review.url ? 'hover:bg-white/[0.04] hover:border-white/[0.12] cursor-pointer' : ''
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
+              <div key={review.id} className="border border-white/[0.06] bg-white/[0.01] p-4">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
                     <h4 className="text-sm font-semibold text-white mb-1">{review.title}</h4>
                     <div className="flex items-center gap-3 text-[10px] font-mono text-white/15 flex-wrap">
                       {rating > 0 && (
@@ -72,9 +56,18 @@ export default function MarketPanel({ reviews, realestate }: Props) {
                       ))}
                     </div>
                   </div>
-                  {review.url && <ExternalIcon />}
+                  {review.url && (
+                    <a
+                      href={review.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] font-mono uppercase tracking-wider text-white/25 hover:text-white/50 ml-4 shrink-0 transition-colors"
+                    >
+                      View
+                    </a>
+                  )}
                 </div>
-              </a>
+              </div>
             )
           })}
         </div>
@@ -93,17 +86,9 @@ export default function MarketPanel({ reviews, realestate }: Props) {
             const listingType = (listing.metadata?.listing_type as string) || ''
 
             return (
-              <a
-                key={listing.id}
-                href={listing.url || undefined}
-                target={listing.url ? '_blank' : undefined}
-                rel={listing.url ? 'noopener noreferrer' : undefined}
-                className={`block border border-white/[0.06] bg-white/[0.01] p-4 transition-colors ${
-                  listing.url ? 'hover:bg-white/[0.04] hover:border-white/[0.12] cursor-pointer' : ''
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
+              <div key={listing.id} className="border border-white/[0.06] bg-white/[0.01] p-4">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
                     <h4 className="text-sm font-semibold text-white mb-1">{listing.title}</h4>
                     <div className="flex items-center gap-3 text-[10px] font-mono text-white/15 flex-wrap">
                       {propertyType && (
@@ -120,9 +105,18 @@ export default function MarketPanel({ reviews, realestate }: Props) {
                       )}
                     </div>
                   </div>
-                  {listing.url && <ExternalIcon />}
+                  {listing.url && (
+                    <a
+                      href={listing.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] font-mono uppercase tracking-wider text-white/25 hover:text-white/50 ml-4 shrink-0 transition-colors"
+                    >
+                      View
+                    </a>
+                  )}
                 </div>
-              </a>
+              </div>
             )
           })}
         </div>

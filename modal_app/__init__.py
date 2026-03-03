@@ -1,4 +1,4 @@
-"""Alethia Modal app — all functions must be transitively imported here for discovery.
+"""Aleithia Modal app — all functions must be transitively imported here for discovery.
 
 These imports run at deploy time (locally) so Modal can discover all functions.
 Inside containers, each function only imports its own dependencies, so we guard

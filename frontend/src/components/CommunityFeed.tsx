@@ -44,14 +44,6 @@ function transcriptHeadline(raw: string): string {
   return trimmed.replace(/^[\d,.\s]+[KMB]?\s*/i, '').trim()
 }
 
-function ExternalIcon() {
-  return (
-    <svg className="w-3 h-3 text-white/15 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-      <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
-    </svg>
-  )
-}
-
 interface Props {
   reddit: Document[]
   tiktok: Document[]
@@ -83,17 +75,9 @@ export default function CommunityFeed({ reddit, tiktok }: Props) {
             const numComments = (post.metadata?.num_comments as number) || 0
 
             return (
-              <a
-                key={post.id}
-                href={post.url || undefined}
-                target={post.url ? '_blank' : undefined}
-                rel={post.url ? 'noopener noreferrer' : undefined}
-                className={`block border border-white/[0.06] bg-white/[0.01] p-4 transition-colors ${
-                  post.url ? 'hover:bg-white/[0.04] hover:border-white/[0.12] cursor-pointer' : ''
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
+              <div key={post.id} className="border border-white/[0.06] bg-white/[0.01] p-4">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
                     <h4 className="text-sm font-semibold text-white mb-1">{post.title}</h4>
                     {post.content && (
                       <p className="text-xs text-white/30 leading-relaxed mb-2">
@@ -112,9 +96,18 @@ export default function CommunityFeed({ reddit, tiktok }: Props) {
                       {numComments > 0 && <span>{numComments} comments</span>}
                     </div>
                   </div>
-                  {post.url && <ExternalIcon />}
+                  {post.url && (
+                    <a
+                      href={post.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] font-mono uppercase tracking-wider text-white/25 hover:text-white/50 ml-4 shrink-0 transition-colors"
+                    >
+                      View
+                    </a>
+                  )}
                 </div>
-              </a>
+              </div>
             )
           })}
         </div>
@@ -145,17 +138,9 @@ export default function CommunityFeed({ reddit, tiktok }: Props) {
             const contentText = cleanTikTokContent(video.content)
 
             return (
-              <a
-                key={video.id}
-                href={video.url || undefined}
-                target={video.url ? '_blank' : undefined}
-                rel={video.url ? 'noopener noreferrer' : undefined}
-                className={`block border border-white/[0.06] bg-white/[0.01] p-4 transition-colors ${
-                  video.url ? 'hover:bg-white/[0.04] hover:border-white/[0.12] cursor-pointer' : ''
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
+              <div key={video.id} className="border border-white/[0.06] bg-white/[0.01] p-4">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
                     <h4 className="text-sm font-semibold text-white mb-1">{titleText}</h4>
                     {contentText && (
                       <p className="text-xs text-white/30 leading-relaxed mb-2">
@@ -174,9 +159,18 @@ export default function CommunityFeed({ reddit, tiktok }: Props) {
                       ))}
                     </div>
                   </div>
-                  {video.url && <ExternalIcon />}
+                  {video.url && (
+                    <a
+                      href={video.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] font-mono uppercase tracking-wider text-white/25 hover:text-white/50 ml-4 shrink-0 transition-colors"
+                    >
+                      Watch
+                    </a>
+                  )}
                 </div>
-              </a>
+              </div>
             )
           })}
         </div>

@@ -217,7 +217,7 @@ def ingest_worldpop_demographics():
     """Pull WorldPop age/sex demographics for all Chicago neighborhoods.
 
     Writes one JSON file per neighborhood to /data/raw/demographics/worldpop/
-    in the standard Alethia document format.
+    in the standard Aleithia document format.
     """
     _init_ee()
 
@@ -233,7 +233,7 @@ def ingest_worldpop_demographics():
             print(f"[WorldPop] Querying {neighborhood}...")
             demo = _extract_neighborhood_demographics(neighborhood, lat, lon, radius)
 
-            # Build standard Alethia document format
+            # Build standard Aleithia document format
             doc_id = hashlib.md5(f"worldpop-{neighborhood}-2020".encode()).hexdigest()[:12]
             doc = {
                 "id": f"worldpop-{doc_id}",

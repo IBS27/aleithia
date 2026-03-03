@@ -1,4 +1,3 @@
-import { motion } from 'framer-motion'
 import type { NeighborhoodMetrics } from '../types/index.ts'
 
 interface Demographics {
@@ -18,6 +17,7 @@ interface Demographics {
 interface Props {
   metrics: NeighborhoodMetrics
   demographics?: Demographics | null
+  horizontal?: boolean
 }
 
 function fmt$(v: number): string {
@@ -25,13 +25,7 @@ function fmt$(v: number): string {
   return `$${v}`
 }
 
-function barGradient(value: number): string {
-  if (value >= 70) return 'from-emerald-400/80 to-green-500/60'
-  if (value >= 40) return 'from-amber-400/80 to-yellow-500/60'
-  return 'from-red-400/80 to-rose-500/60'
-}
-
-export default function DemographicsCard({ metrics, demographics }: Props) {
+export default function DemographicsCard({ metrics, demographics, horizontal }: Props) {
   const hasDemographics = demographics && demographics.total_population && demographics.total_population > 0
 
   const items = [
@@ -47,120 +41,119 @@ export default function DemographicsCard({ metrics, demographics }: Props) {
     { label: 'Sentiment', value: metrics.sentiment || 0 },
   ]
 
+  if (horizontal) {
+    const hasDemo = demographics && demographics.total_population && demographics.total_population > 0
+    const censusItems = hasDemo ? [
+      { label: 'Population', value: demographics!.total_population!.toLocaleString() },
+      { label: 'Income', value: fmt$(demographics!.median_household_income || 0) },
+      { label: 'Rent', value: fmt$(demographics!.median_gross_rent || 0) },
+      { label: 'Age', value: `${demographics!.median_age || 0}` },
+      { label: 'Unemployment', value: `${demographics!.unemployment_rate || 0}%` },
+      { label: 'Renters', value: `${demographics!.renter_pct || 0}%` },
+    ] : []
+
+    return (
+      <div className="border border-white/[0.06] bg-white/[0.01] p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">
+            {metrics.neighborhood} Metrics
+          </h3>
+          <div className="flex items-center gap-4">
+            {scores.map(score => (
+              <div key={score.label} className="flex items-center gap-2">
+                <span className="text-[9px] font-mono uppercase tracking-wider text-white/20">{score.label}</span>
+                <div className="w-16 bg-white/[0.04] h-1">
+                  <div className="h-1 bg-white/40 transition-all" style={{ width: `${Math.min(score.value, 100)}%` }} />
+                </div>
+                <span className="text-[10px] font-mono text-white/20">{score.value.toFixed(1)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {censusItems.map(ci => (
+            <div key={ci.label} className="bg-white/[0.02] border border-white/[0.04] px-3 py-2">
+              <span className="text-sm font-bold font-mono text-white">{ci.value}</span>
+              <span className="text-[9px] font-mono uppercase tracking-wider text-white/20 ml-2">{ci.label}</span>
+            </div>
+          ))}
+          {items.map(item => (
+            <div key={item.label} className="bg-white/[0.02] border border-white/[0.04] px-3 py-2">
+              <span className="text-sm font-bold font-mono text-white">{item.fmt(item.value)}</span>
+              <span className="text-[9px] font-mono uppercase tracking-wider text-white/20 ml-2">{item.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="relative rounded-xl overflow-hidden p-[1px] bg-gradient-to-br from-neutral-700/60 via-neutral-800/40 to-neutral-900/60">
-      {/* Halo */}
-      <motion.div
-        className="absolute w-14 h-14 rounded-full bg-blue-400/15 blur-2xl"
-        animate={{
-          top: ['12%', '75%', '75%', '12%', '12%'],
-          left: ['80%', '80%', '15%', '15%', '80%'],
-        }}
-        transition={{ duration: 14, repeat: Infinity, ease: 'linear' }}
-      />
+    <div className="border border-white/[0.06] bg-white/[0.01] p-5">
+      <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30 mb-4">
+        {metrics.neighborhood} Metrics
+      </h3>
 
-      <div className="relative rounded-[11px] border border-white/[0.06] bg-gradient-to-br from-neutral-900/90 to-black/70 backdrop-blur-md p-5 overflow-hidden">
-        {/* Rotating ray */}
-        <motion.div
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[160px] h-[30px] rounded-full bg-white/[0.03] blur-2xl pointer-events-none"
-          animate={{ rotate: [0, 360] }}
-          transition={{ duration: 16, repeat: Infinity, ease: 'linear' }}
-        />
-
-        {/* Top accent line */}
-        <motion.div
-          className="absolute top-0 left-[10%] w-[80%] h-[1px] bg-gradient-to-r from-transparent via-white/20 to-transparent"
-          animate={{ opacity: [0.3, 0.6, 0.3] }}
-          transition={{ duration: 6, repeat: Infinity }}
-        />
-
-        <h3 className="text-[10px] font-mono font-medium uppercase tracking-[0.15em] text-white/35 mb-4 relative z-10">
-          {metrics.neighborhood} Metrics
-        </h3>
-
-        {/* Census Demographics */}
-        {hasDemographics && (
-          <div className="mb-5 pb-4 border-b border-white/[0.06] relative z-10">
-            <div className="text-[10px] font-mono uppercase tracking-[0.12em] text-white/25 mb-3">Census Data</div>
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { value: demographics!.total_population!.toLocaleString(), label: 'Population' },
-                { value: demographics!.median_household_income ? fmt$(demographics!.median_household_income) : '\u2014', label: 'Median Income' },
-                { value: demographics!.median_gross_rent ? fmt$(demographics!.median_gross_rent) : '\u2014', label: 'Median Rent' },
-                { value: demographics!.unemployment_rate ? `${demographics!.unemployment_rate}%` : '\u2014', label: 'Unemployment' },
-                { value: demographics!.median_age ? String(demographics!.median_age) : '\u2014', label: 'Median Age' },
-                { value: demographics!.renter_pct ? `${demographics!.renter_pct}%` : '\u2014', label: 'Renters' },
-              ].map((item, i) => (
-                <motion.div
-                  key={item.label}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  className="bg-white/[0.03] border border-white/[0.06] rounded-lg p-3 hover:bg-white/[0.05] transition-colors"
-                >
-                  <div className="text-lg font-bold font-mono text-white/90">{item.value}</div>
-                  <div className="text-[9px] font-mono uppercase tracking-[0.12em] text-white/25 mt-0.5">{item.label}</div>
-                </motion.div>
-              ))}
+      {/* Census Demographics */}
+      {hasDemographics && (
+        <div className="mb-5 pb-4 border-b border-white/[0.06]">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mb-3">Census Data</div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-white/[0.02] border border-white/[0.04] p-3">
+              <div className="text-lg font-bold font-mono text-white">{demographics!.total_population!.toLocaleString()}</div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mt-0.5">Population</div>
+            </div>
+            <div className="bg-white/[0.02] border border-white/[0.04] p-3">
+              <div className="text-lg font-bold font-mono text-white">{demographics!.median_household_income ? fmt$(demographics!.median_household_income) : '\u2014'}</div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mt-0.5">Median Income</div>
+            </div>
+            <div className="bg-white/[0.02] border border-white/[0.04] p-3">
+              <div className="text-lg font-bold font-mono text-white">{demographics!.median_gross_rent ? fmt$(demographics!.median_gross_rent) : '\u2014'}</div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mt-0.5">Median Rent</div>
+            </div>
+            <div className="bg-white/[0.02] border border-white/[0.04] p-3">
+              <div className="text-lg font-bold font-mono text-white">{demographics!.unemployment_rate ? `${demographics!.unemployment_rate}%` : '\u2014'}</div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mt-0.5">Unemployment</div>
+            </div>
+            <div className="bg-white/[0.02] border border-white/[0.04] p-3">
+              <div className="text-lg font-bold font-mono text-white">{demographics!.median_age ? String(demographics!.median_age) : '\u2014'}</div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mt-0.5">Median Age</div>
+            </div>
+            <div className="bg-white/[0.02] border border-white/[0.04] p-3">
+              <div className="text-lg font-bold font-mono text-white">{demographics!.renter_pct ? `${demographics!.renter_pct}%` : '\u2014'}</div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mt-0.5">Renters</div>
             </div>
           </div>
-        )}
-
-        {/* Activity metrics */}
-        <div className="grid grid-cols-2 gap-2 mb-5 relative z-10">
-          {items.map((item, i) => (
-            <motion.div
-              key={item.label}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: (hasDemographics ? 6 : 0) * 0.05 + i * 0.05 }}
-              className="bg-white/[0.03] border border-white/[0.06] rounded-lg p-3 hover:bg-white/[0.05] transition-colors"
-            >
-              <div className="text-lg font-bold font-mono text-white/90">{item.fmt(item.value)}</div>
-              <div className="text-[9px] font-mono uppercase tracking-[0.12em] text-white/25 mt-0.5">{item.label}</div>
-            </motion.div>
-          ))}
         </div>
+      )}
 
-        {/* Score bars */}
-        <div className="space-y-4 relative z-10">
-          {scores.map((score, i) => (
-            <div key={score.label}>
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[10px] font-mono text-white/35 uppercase tracking-[0.12em]">{score.label}</span>
-                <motion.span
-                  className="text-[11px] font-mono font-semibold text-white/50"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.3 + i * 0.1 }}
-                >
-                  {score.value.toFixed(1)}
-                </motion.span>
-              </div>
-              <div className="relative w-full h-2 bg-white/[0.06] rounded-full overflow-hidden">
-                <motion.div
-                  className={`h-full rounded-full bg-gradient-to-r ${barGradient(score.value)}`}
-                  initial={{ width: 0 }}
-                  animate={{ width: `${Math.min(score.value, 100)}%` }}
-                  transition={{ duration: 0.8, delay: 0.2 + i * 0.1, ease: 'easeOut' }}
-                />
-                <motion.div
-                  className="absolute top-0 h-full w-6 bg-gradient-to-r from-transparent via-white/15 to-transparent rounded-full"
-                  animate={{ left: ['-10%', `${Math.min(score.value, 100) + 5}%`] }}
-                  transition={{ duration: 1.5, delay: 1 + i * 0.3, repeat: Infinity, repeatDelay: 4 }}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Bottom line */}
-        <motion.div
-          className="absolute bottom-0 left-[10%] w-[80%] h-[1px] bg-gradient-to-r from-transparent via-white/15 to-transparent"
-          animate={{ opacity: [0.4, 0.2, 0.4] }}
-          transition={{ duration: 6, repeat: Infinity }}
-        />
+      {/* Activity metrics */}
+      <div className="grid grid-cols-2 gap-2 mb-5">
+        {items.map(item => (
+          <div key={item.label} className="bg-white/[0.02] border border-white/[0.04] p-3">
+            <div className="text-lg font-bold font-mono text-white">{item.fmt(item.value)}</div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-white/20 mt-0.5">{item.label}</div>
+          </div>
+        ))}
       </div>
+
+      <div className="space-y-3">
+        {scores.map(score => (
+          <div key={score.label}>
+            <div className="flex items-center justify-between text-[10px] font-mono mb-1">
+              <span className="text-white/30 uppercase tracking-wider">{score.label}</span>
+              <span className="text-white/20">{score.value.toFixed(1)}</span>
+            </div>
+            <div className="w-full bg-white/[0.04] h-1">
+              <div
+                className="h-1 bg-white/40 transition-all"
+                style={{ width: `${Math.min(score.value, 100)}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+
     </div>
   )
 }

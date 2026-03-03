@@ -1,6 +1,8 @@
+import { useState, useEffect } from 'react'
 import { jsPDF } from 'jspdf'
-import type { NeighborhoodData, RiskScore, UserProfile, Document } from '../types/index.ts'
+import type { NeighborhoodData, RiskScore, UserProfile, Document, SocialTrend } from '../types/index.ts'
 import { computeInsights, LICENSE_MAP } from '../insights.ts'
+import { api } from '../api.ts'
 
 interface AgentInfo {
   agents_deployed: number
@@ -998,6 +1000,29 @@ function generatePdf(
 // ── Component ───────────────────────────────────────────────────────
 
 export default function LocationReportPanel({ profile, neighborhoodData, loading, agentInfo: _agentInfo }: Props) {
+  const [socialTrends, setSocialTrends] = useState<SocialTrend[]>([])
+  const [socialLoading, setSocialLoading] = useState(false)
+  const [socialError, setSocialError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!profile.neighborhood) return
+    let cancelled = false
+    setSocialLoading(true)
+    setSocialError(null)
+    setSocialTrends([])
+    api.socialTrends(profile.neighborhood, profile.business_type)
+      .then((data) => {
+        if (!cancelled) setSocialTrends(data.trends)
+      })
+      .catch((err) => {
+        if (!cancelled) setSocialError(err.message || 'Failed to load social trends')
+      })
+      .finally(() => {
+        if (!cancelled) setSocialLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [profile.neighborhood, profile.business_type])
+
   const insights = neighborhoodData
     ? computeInsights(neighborhoodData, profile, 'conservative')
     : null
@@ -1091,7 +1116,28 @@ export default function LocationReportPanel({ profile, neighborhoodData, loading
               </div>
             </div>
 
-            {/* 5. Competitive Landscape */}
+            {/* 5. Social Media Trends */}
+            <div>
+              <p className="text-[10px] font-mono uppercase tracking-wider text-cyan-300/70 mb-2">
+                Social Media Trends
+              </p>
+              <div className="space-y-2">
+                {socialLoading ? (
+                  <p className="text-[11px] text-cyan-300/50 animate-pulse">Analyzing social signals…</p>
+                ) : socialError ? (
+                  <p className="text-[11px] text-red-400/70">{socialError}</p>
+                ) : socialTrends.length > 0 ? socialTrends.map((trend) => (
+                  <div key={trend.title} className="border border-cyan-500/20 bg-cyan-500/[0.05] p-3">
+                    <p className="text-xs font-semibold text-cyan-300">{trend.title}</p>
+                    <p className="text-[11px] text-white/65 mt-1 leading-relaxed">{trend.detail}</p>
+                  </div>
+                )) : (
+                  <p className="text-[11px] text-white/40">No social media data available for this neighborhood.</p>
+                )}
+              </div>
+            </div>
+
+            {/* 6. Competitive Landscape */}
             <div>
               <p className="text-[10px] font-mono uppercase tracking-wider text-blue-300/70 mb-2">
                 Competitive Landscape {competitors.length > 0 && <span className="text-white/30">({competitors.length})</span>}
@@ -1114,7 +1160,7 @@ export default function LocationReportPanel({ profile, neighborhoodData, loading
               )}
             </div>
 
-            {/* 6. Regulatory Checklist */}
+            {/* 7. Regulatory Checklist */}
             {regulatory && (
               <div>
                 <p className="text-[10px] font-mono uppercase tracking-wider text-violet-300/70 mb-2">Regulatory Checklist</p>
@@ -1122,12 +1168,16 @@ export default function LocationReportPanel({ profile, neighborhoodData, loading
                   {/* Inspection pass rate */}
                   <div className="border border-white/[0.06] bg-white/[0.02] p-3">
                     <p className="text-[10px] font-mono uppercase tracking-wider text-white/40 mb-1">Inspections</p>
-                    <p className="text-sm font-semibold text-white/90">
-                      {regulatory.passRate}% pass rate
-                      <span className="text-[10px] text-white/40 font-normal ml-2">
-                        ({regulatory.passed}/{regulatory.total} passed, {regulatory.failed} failed)
-                      </span>
-                    </p>
+                    {regulatory.total > 0 ? (
+                      <p className="text-sm font-semibold text-white/90">
+                        {regulatory.passRate}% pass rate
+                        <span className="text-[10px] text-white/40 font-normal ml-2">
+                          ({regulatory.passed}/{regulatory.total} passed, {regulatory.failed} failed)
+                        </span>
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-white/40">No inspection data available.</p>
+                    )}
                     {regulatory.recentInspections.length > 0 && (
                       <div className="mt-2 space-y-1">
                         {regulatory.recentInspections.map((i, idx) => (

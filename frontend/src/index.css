@@ -50,6 +50,8 @@
   .glow-warning { box-shadow: var(--glow-warning); }
   .glow-danger { box-shadow: var(--glow-danger); }
   .border-glow-primary { box-shadow: 0 0 0 1px rgba(43, 149, 214, 0.4), var(--glow-primary); }
+  .hide-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+  .hide-scrollbar::-webkit-scrollbar { display: none; }
 }
 
 @keyframes scroll-x {

@@ -48,7 +48,6 @@ const SPONSOR_LOGOS = [
   { node: <ModelLogo name="Qwen3-8B" />, large: true },
   { node: <HfLogoWithName name="BART-large-MNLI" />, large: true },
   { node: <ModelLogo name="RoBERTa-Sentiment" />, large: true },
-  { node: <ActianVectorAILogo />, large: true },
 ]
 
 function makeStatic(app: Application) {
@@ -192,9 +191,7 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
                 />
               </h1>
               <p className="text-base sm:text-lg text-white/50 mb-12 max-w-xl mx-auto leading-relaxed">
-                Live data sources,
-                opportunity briefs, and neighborhood insights — before you sign
-                the lease.
+                Enterprise-grade intelligence for small businesses.
               </p>
               <div className="flex items-center justify-center gap-4">
                 <button
@@ -660,19 +657,14 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
         </div>
       </section>
 
-      {/* ── Memory Graph (chain links) ── */}
+      {/* ── Memory Graph ── */}
       <section className="relative border-t border-white/[0.04]">
         <div className="px-10 py-16 max-w-7xl mx-auto text-left">
-          <div className="flex items-center gap-4 mb-2">
-            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white">
-              Memory Graph
-            </h2>
-            <span className="text-sm font-mono text-white/40 italic">
-              Intelligence in the links.
-            </span>
-          </div>
+          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-2">
+            Memory Graph
+          </h2>
           <p className="text-sm text-white/50 mb-8 max-w-xl">
-            Documents connected by semantic similarity, powered by Actian VectorAI DB with HNSW-indexed 384-dim embeddings for sub-15ms retrieval.
+            Documents connected by semantic similarity.
           </p>
           <button
             onClick={onViewSource}

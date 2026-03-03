@@ -202,64 +202,69 @@ export default function MemoryGraphPage({ onBack }: Props) {
 
   return (
     <div className="min-h-screen bg-[#06080d] text-white flex flex-col">
-      <nav className="flex items-center justify-between px-8 py-3 border-b border-white/[0.04] shrink-0">
-        <div className="flex items-center gap-6">
-          <button
-            type="button"
-            onClick={onBack}
-            className="text-sm font-semibold tracking-tight text-white uppercase hover:text-white/80 transition-colors cursor-pointer"
-          >
-            Aleithia
-          </button>
-          <div className="h-3 w-px bg-white/[0.06]" />
-          <span className="text-[10px] font-mono uppercase tracking-wider text-white/25">Knowledge Graph</span>
-        </div>
-
-        <div className="flex items-center gap-3">
-          {!showCityGraph && (
-            <>
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder="Search documents..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-56 px-3 py-1.5 text-xs font-mono bg-white/[0.04] border border-white/[0.06] text-white placeholder-white/20 focus:outline-none focus:border-white/15 transition-colors"
-                />
-                {searchQuery && (
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono text-white/30">
-                    {matchCount}
-                  </span>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => setSlideshowActive((prev) => !prev)}
-                className={`px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider border transition-colors cursor-pointer ${
-                  slideshowActive
-                    ? '!bg-white !text-[#06080d] border-white'
-                    : 'border-white/[0.08] text-white/30 hover:text-white/60 hover:border-white/20'
-                }`}
-              >
-                {slideshowActive ? 'Stop' : 'Slideshow'}
-              </button>
-            </>
-          )}
-          <span className="text-[10px] font-mono text-white/20">
-            {showCityGraph
-              ? `${cityGraph.nodes.length} nodes · ${cityGraph.edges.length} edges`
-              : `${documents.length} docs${hasMore ? ' +' : ''}`}
-          </span>
-          <button
-            type="button"
-            onClick={onBack}
-            className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider border border-white/[0.08] text-white/30 hover:text-white/60 hover:border-white/20 transition-colors cursor-pointer"
-          >
-            Back
-          </button>
-        </div>
-        {!showCityGraph && <div id="memory-graph-legend" className="sr-only" aria-hidden="true" />}
+      <nav className="flex items-center justify-between px-10 py-5 bg-[#06080d]/95 backdrop-blur-md border-b border-white/[0.06] shrink-0">
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-lg font-semibold tracking-tight text-white uppercase hover:text-white/80 transition-colors cursor-pointer"
+        >
+          Aleithia
+        </button>
+        <button
+          type="button"
+          onClick={onBack}
+          className="px-4 py-2 text-sm font-medium border border-white/20 text-white/80 hover:text-white hover:border-white/40 transition-colors cursor-pointer"
+        >
+          Back
+        </button>
       </nav>
+
+      {/* Toolbar */}
+      <div className="flex items-center gap-4 px-10 py-3 bg-[#06080d]/95 backdrop-blur-md border-b border-white/[0.06] shrink-0">
+        {!showCityGraph && (
+          <>
+            <div className="relative flex-1 max-w-sm">
+              <input
+                type="text"
+                placeholder="Search documents..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full px-3 py-1.5 text-sm bg-white/[0.06] border border-white/[0.1] text-white placeholder-white/30 focus:outline-none focus:border-white/30 transition-colors"
+              />
+              {searchQuery && (
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono text-white/40">
+                  {matchCount} found
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setSlideshowActive((prev) => !prev)}
+              className={`px-4 py-1.5 text-sm font-medium border transition-colors cursor-pointer ${
+                slideshowActive
+                  ? '!bg-white !text-[#06080d] border-white'
+                  : 'border-white/20 text-white/60 hover:text-white hover:border-white/40'
+              }`}
+            >
+              {slideshowActive ? 'Stop Slideshow' : 'Slideshow'}
+            </button>
+          </>
+        )}
+        {/* Stats */}
+        <span className="text-xs font-mono text-white/30 ml-auto">
+          {showCityGraph
+            ? `${cityGraph.nodes.length} nodes, ${cityGraph.edges.length} edges`
+            : `${documents.length} docs loaded${hasMore ? ' (more available)' : ''}`}
+        </span>
+        {!showCityGraph && (
+          <div className="ml-4 flex items-center gap-4 text-[10px] font-mono text-white/40">
+            <span>Status: Forgotten · Expiring · New</span>
+            <span>Connections: Doc→Memory · Similarity (weak/strong)</span>
+            <span>Relations: updates · extends · derives</span>
+          </div>
+        )}
+        {!showCityGraph && <div id="memory-graph-legend" className="sr-only" aria-hidden="true" />}
+      </div>
 
       <div ref={containerRef} className="flex-1 min-h-[60vh] w-full">
         {showCityGraph ? (
