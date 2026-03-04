@@ -2002,7 +2002,13 @@ def _parse_social_trends_response(raw: str) -> list[dict]:
                     parsed = None
 
     if isinstance(parsed, dict):
-        parsed = parsed.get("trends", parsed.get("items", []))
+        parsed = (
+            parsed.get("trends")
+            or parsed.get("items")
+            or parsed.get("insights")
+            or parsed.get("data")
+            or []
+        )
 
     if not isinstance(parsed, list):
         return []
@@ -2011,8 +2017,21 @@ def _parse_social_trends_response(raw: str) -> list[dict]:
     for item in parsed:
         if not isinstance(item, dict):
             continue
-        title = _trim_words(str(item.get("title", "") or ""), 8)
-        detail = str(item.get("detail", "") or "").strip()
+        title = _trim_words(
+            str(
+                item.get("title")
+                or item.get("name")
+                or item.get("headline")
+                or ""
+            ),
+            8,
+        )
+        detail = str(
+            item.get("detail")
+            or item.get("description")
+            or item.get("summary")
+            or ""
+        ).strip()
         if title and detail:
             normalized.append({"title": title, "detail": detail})
         if len(normalized) >= 3:
@@ -2153,30 +2172,46 @@ async def social_trends(neighborhood: str, business_type: str = ""):
             llm = llm_cls()
             raw = await llm.generate.remote.aio(msgs, max_tokens=512, temperature=0.4)
 
-        # Parse JSON response (strip code fences if present)
-        text = raw.strip()
-        if text.startswith("```"):
-            text = re.sub(r"^```(?:json)?\s*", "", text)
-            text = re.sub(r"\s*```$", "", text)
+        validated = _parse_social_trends_response(raw)
 
-        try:
-            trends = json.loads(text)
-        except json.JSONDecodeError:
-            # Try to extract JSON array from response
-            match = re.search(r"\[.*\]", text, re.DOTALL)
-            if match:
-                trends = json.loads(match.group())
-            else:
-                trends = []
+        # GPT-5 occasionally emits unexpected wrapper keys/empty object.
+        # Retry once with stricter output instructions before returning empty.
+        if not validated and openai_available():
+            try:
+                client = get_openai_client()
+                social_model = get_social_trends_model()
+                retry_msgs = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Return valid JSON only with shape "
+                            "{\"trends\":[{\"title\":\"...\",\"detail\":\"...\"}, ...]} and exactly 3 items. "
+                            "No markdown, no explanation."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Neighborhood: {neighborhood}\n"
+                            f"Business type: {business_type or 'general'}\n\n"
+                            f"Social media content:\n{all_snippets}"
+                        ),
+                    },
+                ]
+                retry_kwargs = {
+                    "model": social_model,
+                    "messages": retry_msgs,
+                    "max_completion_tokens": 512,
+                    "response_format": {"type": "json_object"},
+                }
+                if not _is_gpt5_family_model(social_model):
+                    retry_kwargs["temperature"] = 0.4
 
-        if isinstance(trends, dict):
-            trends = trends.get("trends", [])
-
-        # Validate structure
-        validated = []
-        for t in trends[:3]:
-            if isinstance(t, dict) and "title" in t and "detail" in t:
-                validated.append({"title": str(t["title"]), "detail": str(t["detail"])})
+                retry_resp = await client.chat.completions.create(**retry_kwargs)
+                retry_raw = retry_resp.choices[0].message.content or ""
+                validated = _parse_social_trends_response(retry_raw)
+            except Exception:
+                pass
 
         if span:
             span.set_attribute("social_trends.trend_count", len(validated))
