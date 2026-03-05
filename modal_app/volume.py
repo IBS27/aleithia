@@ -13,13 +13,17 @@ RAW_DATA_PATH = f"{VOLUME_MOUNT}/raw"
 PROCESSED_DATA_PATH = f"{VOLUME_MOUNT}/processed"
 CACHE_PATH = f"{VOLUME_MOUNT}/cache"
 
-# Arize AX tracing packages (shared across images)
-_arize_packages = [
+# Arize AX tracing packages safe for all images.
+_arize_core_packages = [
     "arize-otel",
     "openinference-instrumentation",
-    "openinference-instrumentation-openai",
     "opentelemetry-api",
     "opentelemetry-sdk",
+]
+
+# OpenAI-specific instrumentation; only install in images that include openai.
+_arize_openai_packages = [
+    "openinference-instrumentation-openai",
 ]
 
 # Internal base (no local source — derived images add pip_install then local source last)
@@ -29,8 +33,9 @@ _base = (
         "httpx==0.27.0",
         "pydantic==2.9.0",
         "feedparser==6.0.11",
-        "openai==1.50.0",
-        *_arize_packages,
+        "openai>=1.69.0,<2",
+        *_arize_core_packages,
+        *_arize_openai_packages,
     )
 )
 
@@ -56,7 +61,7 @@ vllm_image = (
         "vllm>=0.8.0",
         "transformers>=4.45.0",
         "torch>=2.4.0",
-        *_arize_packages,
+        *_arize_core_packages,
     )
     .add_local_python_source("modal_app", copy=True)
 )
@@ -69,7 +74,7 @@ classify_image = (
         "torch>=2.4.0",
         "httpx==0.27.0",
         "pydantic==2.9.0",
-        *_arize_packages,
+        *_arize_core_packages,
     )
     .add_local_python_source("modal_app", copy=True)
 )
@@ -106,10 +111,11 @@ video_image = (
 label_image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
-        "openai==1.50.0",
+        "openai>=1.69.0,<2",
         "httpx==0.27.0",
         "pillow==10.4.0",
-        *_arize_packages,
+        *_arize_core_packages,
+        *_arize_openai_packages,
     )
     .add_local_python_source("modal_app", copy=True)
 )
@@ -146,7 +152,7 @@ if _build_vectordb:
         .run_commands(
             "apt-get update -qq && apt-get install -y -qq python3 python3-pip python3-venv > /dev/null 2>&1 && ln -sf /usr/bin/python3 /usr/bin/python",
             "python3 -m pip install --break-system-packages actiancortex sentence-transformers==3.3.1 'torch>=2.4.0' 'grpcio>=1.60.0' httpx==0.27.0 pydantic==2.9.0 "
-            + " ".join(_arize_packages),
+            + " ".join(_arize_core_packages),
         )
         .add_local_python_source("modal_app", copy=True)
     )

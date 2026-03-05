@@ -6,6 +6,21 @@ def test_parse_social_trends_response_handles_invalid_json() -> None:
     assert parsed == []
 
 
+def test_parse_social_trends_response_supports_wrapper_and_alias_fields() -> None:
+    raw = (
+        '{"insights":[{"name":"Coffee demand shift","description":"Posts show increased morning demand."},'
+        '{"headline":"Lunch crowd growth","summary":"Creators report noon line growth."},'
+        '{"title":"Value-seeking behavior","detail":"Users mention deals and budget options."}]}'
+    )
+    parsed = web._parse_social_trends_response(raw)
+
+    assert len(parsed) == 3
+    assert parsed[0]["title"] == "Coffee demand shift"
+    assert parsed[0]["detail"] == "Posts show increased morning demand."
+    assert parsed[1]["title"] == "Lunch crowd growth"
+    assert parsed[1]["detail"] == "Creators report noon line growth."
+
+
 def test_deterministic_social_fallback_returns_three_trends() -> None:
     ranked_docs = [
         (

@@ -1972,8 +1972,13 @@ def _deterministic_social_fallback_trends(
 
 
 def _is_gpt5_family_model(model_name: str) -> bool:
-    """GPT-5 family rejects temperature and max_tokens in chat completions."""
-    return (model_name or "").strip().lower().startswith("gpt-5")
+    """GPT-5 family rejects temperature and max_tokens in chat completions.
+
+    DEPRECATED: use ``openai_utils.is_gpt5_family_model`` instead.
+    Kept temporarily for any call-sites outside of social-trends/vision-assess.
+    """
+    from modal_app.openai_utils import is_gpt5_family_model
+    return is_gpt5_family_model(model_name)
 
 
 def _parse_social_trends_response(raw: str) -> list[dict]:
@@ -2097,7 +2102,8 @@ async def social_trends(neighborhood: str, business_type: str = ""):
                 "source_counts": {"reddit": 0, "tiktok": 0},
             }
 
-        # Build content for LLM
+        # Keep GPT input shape aligned with the earlier GPT-4o flow for stability:
+        # up to 10 Reddit + 5 TikTok snippets in simple source-tagged text form.
         reddit_snippets = []
         for d in reddit_docs[:10]:
             title = d.get("title", "")
@@ -2113,11 +2119,29 @@ async def social_trends(neighborhood: str, business_type: str = ""):
 
         all_snippets = "\n\n".join(reddit_snippets + tiktok_snippets)
 
+        ranked_docs = _rank_social_docs_deterministic(
+            reddit_docs=reddit_docs,
+            tiktok_docs=tiktok_docs,
+            business_type=business_type or "small business",
+            neighborhood=neighborhood,
+            max_total=15,
+        )
+        if not ranked_docs:
+            # Defensive fallback: preserve deterministic behavior even on malformed docs.
+            ranked_docs = [
+                ("reddit", doc, 0.0) for doc in reddit_docs[:10]
+            ] + [
+                ("tiktok", doc, 0.0) for doc in tiktok_docs[:5]
+            ]
+
         system_prompt = (
-            "Extract exactly 3 concise, business-relevant social media trends from the provided "
-            "posts/transcripts. Respond ONLY with a JSON object: {\"trends\": [ ... ]} containing 3 objects "
-            "with `title` (max 8 words) and `detail` (1-2 sentences). Focus on consumer behavior, neighborhood sentiment, "
-            "and emerging opportunities."
+            "You are a local market analyst. Given social media posts from a specific neighborhood, "
+            "synthesize exactly 3 actionable insights tailored to someone opening or running a "
+            f"{business_type or 'small business'} in {neighborhood}. "
+            "Each insight should connect what locals are saying online to a concrete implication "
+            "for that business type — e.g. unmet demand, competitive gaps, peak-hour patterns, or shifting customer preferences. "
+            "Respond ONLY with a JSON object: {\"trends\": [ ... ]} containing 3 objects "
+            "with `title` (max 8 words) and `detail` (1-2 sentences explaining the insight and why it matters for the business)."
         )
         user_prompt = (
             f"Neighborhood: {neighborhood}\n"
@@ -2127,6 +2151,7 @@ async def social_trends(neighborhood: str, business_type: str = ""):
 
         # GPT synthesis over deterministic ranked snippets.
         from modal_app.openai_utils import (
+            build_chat_kwargs,
             get_openai_client,
             get_social_trends_model,
             openai_available,
@@ -2137,28 +2162,40 @@ async def social_trends(neighborhood: str, business_type: str = ""):
             {"role": "user", "content": user_prompt},
         ]
 
+        retry_used = False
+        fallback_used = False
         if openai_available():
             try:
                 client = get_openai_client()
                 social_model = get_social_trends_model()
-                create_kwargs = {
-                    "model": social_model,
-                    "messages": msgs,
-                    "max_completion_tokens": 512,
-                    "response_format": {"type": "json_object"},
-                }
-                if not _is_gpt5_family_model(social_model):
-                    create_kwargs["temperature"] = 0.4
+                create_kwargs = build_chat_kwargs(
+                    social_model,
+                    msgs,
+                    max_completion_tokens=512,
+                    gpt5_max_completion_tokens=2048,
+                    temperature=0.4,
+                    response_format={"type": "json_object"},
+                )
 
                 oai_resp = await client.chat.completions.create(**create_kwargs)
                 raw = oai_resp.choices[0].message.content or ""
+
+                # --- diagnostic logging ---
+                choice = oai_resp.choices[0]
+                finish = getattr(choice, "finish_reason", None)
+                usage = getattr(oai_resp, "usage", None)
+                print(
+                    f"[social-trends] model={social_model} finish_reason={finish} "
+                    f"usage={usage} raw_preview={raw[:200]!r}"
+                )
             except Exception as e:
+                print(f"[social-trends] OpenAI call failed: {e!r}")
                 if not ENABLE_ALETHIA_LLM:
                     return JSONResponse(
                         {"error": f"Social trends synthesis unavailable: OpenAI failed and AlethiaLLM is disabled ({e})"},
                         status_code=503,
                     )
-                print(f"OpenAI social-trends failed, falling back to Qwen3: {e}")
+                print(f"[social-trends] falling back to Qwen3")
                 llm_cls = modal.Cls.from_name("alethia", "AlethiaLLM")
                 llm = llm_cls()
                 raw = await llm.generate.remote.aio(msgs, max_tokens=512, temperature=0.4)
@@ -2175,9 +2212,10 @@ async def social_trends(neighborhood: str, business_type: str = ""):
         validated = _parse_social_trends_response(raw)
 
         # GPT-5 occasionally emits unexpected wrapper keys/empty object.
-        # Retry once with stricter output instructions before returning empty.
+        # Retry once with stricter output instructions before deterministic fallback.
         if not validated and openai_available():
             try:
+                retry_used = True
                 client = get_openai_client()
                 social_model = get_social_trends_model()
                 retry_msgs = [
@@ -2198,22 +2236,68 @@ async def social_trends(neighborhood: str, business_type: str = ""):
                         ),
                     },
                 ]
-                retry_kwargs = {
-                    "model": social_model,
-                    "messages": retry_msgs,
-                    "max_completion_tokens": 512,
-                    "response_format": {"type": "json_object"},
-                }
-                if not _is_gpt5_family_model(social_model):
-                    retry_kwargs["temperature"] = 0.4
+                retry_kwargs = build_chat_kwargs(
+                    social_model,
+                    retry_msgs,
+                    max_completion_tokens=512,
+                    gpt5_max_completion_tokens=2048,
+                    temperature=0.4,
+                    response_format={"type": "json_object"},
+                )
 
                 retry_resp = await client.chat.completions.create(**retry_kwargs)
                 retry_raw = retry_resp.choices[0].message.content or ""
+
+                # --- diagnostic logging (retry) ---
+                retry_choice = retry_resp.choices[0]
+                retry_finish = getattr(retry_choice, "finish_reason", None)
+                retry_usage = getattr(retry_resp, "usage", None)
+                print(
+                    f"[social-trends] retry model={social_model} finish_reason={retry_finish} "
+                    f"usage={retry_usage} raw_preview={retry_raw[:200]!r}"
+                )
+
                 validated = _parse_social_trends_response(retry_raw)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[social-trends] retry failed: {e!r}")
+
+        if len(validated) < 3:
+            fallback_used = True
+            fallback_trends = _deterministic_social_fallback_trends(
+                ranked_docs=ranked_docs,
+                business_type=business_type or "small business",
+                neighborhood=neighborhood,
+                count=3,
+            )
+            seen = {(item.get("title", ""), item.get("detail", "")) for item in validated}
+            for trend in fallback_trends:
+                key = (trend.get("title", ""), trend.get("detail", ""))
+                if key in seen:
+                    continue
+                validated.append({"title": trend["title"], "detail": trend["detail"]})
+                seen.add(key)
+                if len(validated) >= 3:
+                    break
+
+        # Final contract guardrail: when social docs exist, always return exactly 3 trends.
+        if len(validated) < 3:
+            fallback_used = True
+            biz_label = (business_type or "small businesses").strip()
+            while len(validated) < 3:
+                idx = len(validated) + 1
+                title = "Market Signal Overview" if idx == 1 else f"Market Signal Overview {idx}"
+                detail = (
+                    f"Social activity is present for {biz_label} in {neighborhood}. "
+                    "Use this as directional signal and validate against permits, reviews, and foot-traffic."
+                )
+                validated.append({"title": title, "detail": detail})
+
+        validated = validated[:3]
 
         if span:
+            span.set_attribute("social_trends.ranked_count", len(ranked_docs))
+            span.set_attribute("social_trends.retry_used", retry_used)
+            span.set_attribute("social_trends.fallback_used", fallback_used)
             span.set_attribute("social_trends.trend_count", len(validated))
 
         return {
@@ -2752,6 +2836,7 @@ def _load_parking_for_neighborhood(name: str) -> dict | None:
 async def vision_assess(neighborhood: str):
     """AI-powered street assessment using OpenAI vision on collected frames."""
     from modal_app.openai_utils import (
+        build_chat_kwargs,
         get_openai_client,
         get_vision_assess_model,
         openai_available,
@@ -2809,38 +2894,49 @@ async def vision_assess(neighborhood: str):
         return JSONResponse({"error": "Failed to read frame images"}, status_code=500)
 
     model_name = get_vision_assess_model()
-    try:
-        create_kwargs = {
-            "model": model_name,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are an urban commercial real estate analyst. Analyze street-level images and provide a structured assessment. "
-                        "Return JSON with this schema: {\"storefront_viability\": {\"score\": 1-10, \"available_spaces\": str, \"condition\": str}, "
-                        "\"competitor_presence\": {\"restaurants\": str, \"retail\": str, \"notable_businesses\": [str]}, "
-                        "\"pedestrian_activity\": {\"level\": \"high\"|\"medium\"|\"low\", \"demographics\": str, \"peak_indicators\": str}, "
-                        "\"infrastructure\": {\"transit_access\": str, \"parking\": str, \"road_condition\": str}, "
-                        "\"overall_recommendation\": str (2-3 sentences)}"
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": f"Assess this area in {neighborhood}, Chicago for small business viability. Analyze the street scenes:"},
-                        *image_content,
-                    ],
-                },
+    vision_messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are an urban commercial real estate analyst. Analyze street-level images and provide a structured assessment. "
+                "Return JSON with this schema: {\"storefront_viability\": {\"score\": 1-10, \"available_spaces\": str, \"condition\": str}, "
+                "\"competitor_presence\": {\"restaurants\": str, \"retail\": str, \"notable_businesses\": [str]}, "
+                "\"pedestrian_activity\": {\"level\": \"high\"|\"medium\"|\"low\", \"demographics\": str, \"peak_indicators\": str}, "
+                "\"infrastructure\": {\"transit_access\": str, \"parking\": str, \"road_condition\": str}, "
+                "\"overall_recommendation\": str (2-3 sentences)}"
+            ),
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": f"Assess this area in {neighborhood}, Chicago for small business viability. Analyze the street scenes:"},
+                *image_content,
             ],
-            "max_completion_tokens": 600,
-            "response_format": {"type": "json_object"},
-        }
-        if not _is_gpt5_family_model(model_name):
-            create_kwargs["temperature"] = 0.3
+        },
+    ]
+    try:
+        create_kwargs = build_chat_kwargs(
+            model_name,
+            vision_messages,
+            max_completion_tokens=600,
+            gpt5_max_completion_tokens=2048,
+            temperature=0.3,
+            response_format={"type": "json_object"},
+        )
 
         resp = await client.chat.completions.create(**create_kwargs)
+        raw_content = resp.choices[0].message.content or "{}"
 
-        assessment = json.loads(resp.choices[0].message.content or "{}")
+        # --- diagnostic logging ---
+        choice = resp.choices[0]
+        finish = getattr(choice, "finish_reason", None)
+        usage = getattr(resp, "usage", None)
+        print(
+            f"[vision-assess] model={model_name} finish_reason={finish} "
+            f"usage={usage} raw_preview={raw_content[:200]!r}"
+        )
+
+        assessment = json.loads(raw_content)
         return {
             "assessment": assessment,
             "frame_count": len(image_content),
@@ -2848,6 +2944,7 @@ async def vision_assess(neighborhood: str):
             "model": model_name,
         }
     except Exception as e:
+        print(f"[vision-assess] failed: {e!r}")
         return JSONResponse({"error": f"Vision assessment failed: {e}"}, status_code=500)
 
 
@@ -3093,12 +3190,20 @@ async def get_graph_stats():
 
 
 @web_app.get("/gpu-metrics")
-async def gpu_metrics():
-    """Live GPU utilization from active containers."""
+async def gpu_metrics(probe_h100: bool = False):
+    """Live GPU utilization from active containers.
+
+    By default, this endpoint does not probe AlethiaLLM to avoid waking H100
+    on every dashboard poll. Set `probe_h100=true` for explicit diagnostics.
+    """
     import asyncio
 
     results = {
-        "h100_llm": {"status": "disabled" if not ENABLE_ALETHIA_LLM else "cold"},
+        "h100_llm": (
+            {"status": "disabled"}
+            if not ENABLE_ALETHIA_LLM
+            else {"status": "cold", "inferred": True, "reason": "probe_skipped"}
+        ),
         "t4_classifier": {"status": "cold"},
         "t4_sentiment": {"status": "cold"},
         "t4_cctv": {"status": "cold"},
@@ -3106,7 +3211,7 @@ async def gpu_metrics():
 
     # Query non-batched GPU classes directly (batched classes can't have extra methods)
     gpu_classes = [("TrafficAnalyzer", "t4_cctv")]
-    if ENABLE_ALETHIA_LLM:
+    if ENABLE_ALETHIA_LLM and probe_h100:
         gpu_classes.insert(0, ("AlethiaLLM", "h100_llm"))
 
     async def _fetch(cls_name: str, key: str):
