@@ -79,6 +79,7 @@ backend/test.db.backup
 
 # Markdown docs — only keep planning docs and CLAUDE.md
 *.md
+!AGENTS.md
 !CLAUDE.md
 !docs/plans/*.md
 !docs/data_sources.md
