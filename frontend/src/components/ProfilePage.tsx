@@ -1,11 +1,9 @@
 import { useEffect, useState } from 'react'
-import { useUser, useAuth } from '@clerk/clerk-react'
 import { api } from '../api.ts'
 import type { UserQuery } from '../api.ts'
 
 interface Props {
   onClose?: () => void
-  token?: string | null
   onProfileUpdate?: () => void
   /** When true, used inside Drawer - compact layout, no nav */
   embedded?: boolean
@@ -26,9 +24,7 @@ const BUSINESS_TYPES = [
   'Professional Services', 'Food Truck', 'Bakery',
 ]
 
-export default function ProfilePage({ onClose, token, onProfileUpdate, embedded = false }: Props) {
-  const { user } = useUser()
-  const { getToken } = useAuth()
+export default function ProfilePage({ onClose, onProfileUpdate, embedded = false }: Props) {
   const [businessType, setBusinessType] = useState('')
   const [neighborhood, setNeighborhood] = useState('')
   const [riskTolerance, setRiskTolerance] = useState('medium')
@@ -45,15 +41,9 @@ export default function ProfilePage({ onClose, token, onProfileUpdate, embedded 
   useEffect(() => {
     const loadProfile = async () => {
       try {
-        const sessionToken = token || await getToken()
-        if (!sessionToken) {
-          setLoading(false)
-          return
-        }
-
         const [profileResult, queryResult] = await Promise.allSettled([
-          api.getUserProfile(sessionToken),
-          api.getUserQueries(sessionToken, 5),
+          api.getUserProfile(),
+          api.getUserQueries(5),
         ])
 
         if (profileResult.status === 'fulfilled') {
@@ -80,7 +70,7 @@ export default function ProfilePage({ onClose, token, onProfileUpdate, embedded 
     }
 
     loadProfile()
-  }, [token, getToken])
+  }, [])
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -89,14 +79,11 @@ export default function ProfilePage({ onClose, token, onProfileUpdate, embedded 
     setMessage('')
 
     try {
-      const sessionToken = token || await getToken()
-      if (!sessionToken) throw new Error('No session token')
-      
-      await api.updateUserProfile(sessionToken, businessType, neighborhood, riskTolerance)
+      await api.updateUserProfile(businessType, neighborhood, riskTolerance)
       setMessage('Profile updated successfully!')
       onProfileUpdate?.()
 
-      const refreshedQueries = await api.getUserQueries(sessionToken, 5)
+      const refreshedQueries = await api.getUserQueries(5)
       setRecentQueries(refreshedQueries)
 
       setTimeout(() => setMessage(''), 3000)
@@ -107,24 +94,16 @@ export default function ProfilePage({ onClose, token, onProfileUpdate, embedded 
     }
   }
 
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-[#06080d] text-white flex items-center justify-center">
-        <p>Please sign in to access your profile.</p>
-      </div>
-    )
-  }
-
   return (
     <div className={`bg-[#06080d] text-white p-6 ${embedded ? '' : 'min-h-screen'}`}>
       <div className="max-w-2xl mx-auto">
-        {embedded && <p className="text-xs font-mono text-white/40 mb-4">{user.primaryEmailAddress?.emailAddress}</p>}
+        {embedded && <p className="text-xs font-mono text-white/40 mb-4">Local workspace profile</p>}
         {!embedded && (
           <div className="mb-8">
             <div className="flex items-center justify-between">
               <div>
                 <h1 className="text-3xl font-bold mb-2">Profile</h1>
-                <p className="text-white/40">{user.primaryEmailAddress?.emailAddress}</p>
+                <p className="text-white/40">Saved locally for this app instance.</p>
               </div>
               {onClose && (
                 <button

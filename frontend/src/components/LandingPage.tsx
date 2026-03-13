@@ -1,6 +1,5 @@
 import { Suspense, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { SignedIn, SignedOut, SignInButton, SignUpButton, useUser } from '@clerk/clerk-react'
 import Spline from '@splinetool/react-spline'
 import BlurText from './BlurText'
 import type { Application } from '@splinetool/runtime'
@@ -87,7 +86,6 @@ const MIN_LOAD_TIME_MS = 700
 const MAX_LOAD_TIME_MS = 5000
 
 export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }: Props) {
-  const { user } = useUser()
   const navigate = useNavigate()
   const [isReady, setIsReady] = useState(false)
   const [heroLoaded, setHeroLoaded] = useState(false)
@@ -147,27 +145,18 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
           </div>
           {/* HUD-style quadrant nav: top-right */}
           <div className="col-start-3 row-start-1 flex items-center justify-end gap-3 px-6 lg:px-10 py-5">
-            <SignedOut>
-              <SignInButton mode="modal">
-                <button className="pointer-events-auto px-4 py-2 text-sm font-medium text-white/80 hover:text-white transition-colors cursor-pointer font-mono uppercase text-[10px] tracking-wider">
-                  Sign In
-                </button>
-              </SignInButton>
-              <SignUpButton mode="modal">
-                <button className="pointer-events-auto px-6 py-2 text-sm font-medium !bg-white !text-[#06080d] hover:!bg-white/90 transition-colors cursor-pointer">
-                  Get Started
-                </button>
-              </SignUpButton>
-            </SignedOut>
-            <SignedIn>
-              <span className="text-xs font-mono text-white/40 mr-2">{user?.primaryEmailAddress?.emailAddress}</span>
-              <button
-                onClick={onGetStarted}
-                className="pointer-events-auto px-6 py-2 text-sm font-medium !bg-white !text-[#06080d] hover:!bg-white/90 transition-colors cursor-pointer"
-              >
-                Get Started
-              </button>
-            </SignedIn>
+            <button
+              onClick={onViewWhyUs}
+              className="pointer-events-auto px-4 py-2 text-sm font-medium text-white/80 hover:text-white transition-colors cursor-pointer font-mono uppercase text-[10px] tracking-wider"
+            >
+              Why Aleithia
+            </button>
+            <button
+              onClick={onGetStarted}
+              className="pointer-events-auto px-6 py-2 text-sm font-medium !bg-white !text-[#06080d] hover:!bg-white/90 transition-colors cursor-pointer"
+            >
+              Get Started
+            </button>
           </div>
 
           {/* Hero: center viewport */}

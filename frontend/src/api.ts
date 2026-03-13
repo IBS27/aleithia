@@ -2,6 +2,28 @@ import type { DataSources, GeoJSON, NeighborhoodData, Document, CCTVTimeseries, 
 
 // Modal deployed endpoint — set via VITE_MODAL_URL, fallback to local proxy
 export const API_BASE = import.meta.env.VITE_MODAL_URL || '/api/data'
+const LOCAL_USER_ID_KEY = 'aleithia.localUserId'
+
+function getLocalUserId(): string {
+  if (typeof window === 'undefined') {
+    return 'local-user'
+  }
+
+  const existing = window.localStorage.getItem(LOCAL_USER_ID_KEY)?.trim()
+  if (existing) {
+    return existing
+  }
+
+  const generated = `local-${crypto.randomUUID()}`
+  window.localStorage.setItem(LOCAL_USER_ID_KEY, generated)
+  return generated
+}
+
+function withLocalUserId(init: RequestInit = {}): RequestInit {
+  const headers = new Headers(init.headers)
+  headers.set('x-user-id', getLocalUserId())
+  return { ...init, headers }
+}
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, init)
@@ -161,43 +183,32 @@ export const api = {
     }
   },
   
-  // User profile endpoints (require Clerk token)
-  getUserProfile: (token: string) => fetchJSON<SavedSettings>('/user/profile', {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
-  }),
+  getUserProfile: () => fetchJSON<SavedSettings>('/user/profile', withLocalUserId()),
   
-  updateUserProfile: (token: string, businessType: string, neighborhood: string, riskTolerance?: string) =>
-    fetchJSON<SavedSettings>('/user/profile', {
+  updateUserProfile: (businessType: string, neighborhood: string, riskTolerance?: string) =>
+    fetchJSON<SavedSettings>('/user/profile', withLocalUserId({
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
       },
       body: JSON.stringify({
         business_type: businessType,
         neighborhood,
         risk_tolerance: riskTolerance,
       }),
-    }),
+    })),
 
-  getUserQueries: (token: string, limit = 10) =>
-    fetchJSON<UserQuery[]>(`/user/queries?limit=${limit}`, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-      },
-    }),
+  getUserQueries: (limit = 10) =>
+    fetchJSON<UserQuery[]>(`/user/queries?limit=${limit}`, withLocalUserId()),
 
-  createUserQuery: (token: string, payload: { query_text: string; business_type: string; neighborhood: string }) =>
-    fetchJSON<UserQuery>('/user/queries', {
+  createUserQuery: (payload: { query_text: string; business_type: string; neighborhood: string }) =>
+    fetchJSON<UserQuery>('/user/queries', withLocalUserId({
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
       },
       body: JSON.stringify(payload),
-    }),
+    })),
 
   cctvFrameUrl: (cameraId: string) =>
     `${API_BASE}/cctv/frame/${encodeURIComponent(cameraId)}`,

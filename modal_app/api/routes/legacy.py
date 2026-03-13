@@ -15,6 +15,7 @@ from modal_app.volume import PROCESSED_DATA_PATH, volume
 router = APIRouter()
 
 SETTINGS_PATH = Path(PROCESSED_DATA_PATH) / "user_settings.json"
+DEFAULT_USER_ID = os.environ.get("ALEITHIA_DEFAULT_USER_ID", "local-user").strip() or "local-user"
 
 
 class UserSettingsPayload(BaseModel):
@@ -88,20 +89,22 @@ async def user_memories(user_id: str = ""):
 
 @router.get("/user/settings")
 async def get_user_settings(x_user_id: str = Header(default="")):
-    if not x_user_id:
+    user_id = x_user_id.strip()
+    if not user_id:
         return JSONResponse({"error": "Missing x-user-id header"}, status_code=401)
     store = read_settings_store()
-    entry = store.get(x_user_id)
+    entry = store.get(user_id)
     if not entry:
         return JSONResponse({"error": "No settings found"}, status_code=404)
-    return {"user_id": x_user_id, "location_type": entry.get("location_type", ""), "neighborhood": entry.get("neighborhood", "")}
+    return {"user_id": user_id, "location_type": entry.get("location_type", ""), "neighborhood": entry.get("neighborhood", "")}
 
 
 @router.put("/user/settings")
 async def put_user_settings(payload: UserSettingsPayload, x_user_id: str = Header(default="")):
-    if not x_user_id:
+    user_id = x_user_id.strip()
+    if not user_id:
         return JSONResponse({"error": "Missing x-user-id header"}, status_code=401)
     store = read_settings_store()
-    store[x_user_id] = {"location_type": payload.location_type, "neighborhood": payload.neighborhood}
+    store[user_id] = {"location_type": payload.location_type, "neighborhood": payload.neighborhood}
     write_settings_store(store)
-    return {"user_id": x_user_id, "location_type": payload.location_type, "neighborhood": payload.neighborhood}
+    return {"user_id": user_id, "location_type": payload.location_type, "neighborhood": payload.neighborhood}

@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { SignedIn, SignedOut, SignInButton, SignUpButton, useClerk, useUser } from '@clerk/clerk-react'
 import type { UserProfile, NeighborhoodData, DataSources, RiskScore, CCTVData, ParkingData } from '../types/index.ts'
 import { api, API_BASE, fetchTrends, type TrendData } from '../api.ts'
 import RiskCard from './RiskCard.tsx'
@@ -271,14 +270,11 @@ function computeRiskScore(data: NeighborhoodData, profile: UserProfile): RiskSco
 interface Props {
   profile: UserProfile
   onReset: () => void
-  token?: string | null
   onProfileUpdate?: () => void
   initialProfileDrawerOpen?: boolean
 }
 
-export default function Dashboard({ profile, onReset, token, onProfileUpdate, initialProfileDrawerOpen = false }: Props) {
-  const { signOut } = useClerk()
-  const { user } = useUser()
+export default function Dashboard({ profile, onReset, onProfileUpdate, initialProfileDrawerOpen = false }: Props) {
   const navigate = useNavigate()
   const location = useLocation()
   const [profileDrawerOpen, setProfileDrawerOpen] = useState(
@@ -469,29 +465,9 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
           <button onClick={refreshData} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
             Refresh
           </button>
-
-          <SignedOut>
-            <SignInButton mode="modal">
-              <button className="text-[10px] font-mono uppercase tracking-wider text-white/30 hover:text-white/60 transition-colors cursor-pointer">
-                Auth
-              </button>
-            </SignInButton>
-            <SignUpButton mode="modal">
-              <button className="text-[10px] font-mono uppercase tracking-wider text-white hover:text-white/80 transition-colors cursor-pointer">
-                Initialize
-              </button>
-            </SignUpButton>
-          </SignedOut>
-
-          <SignedIn>
-            {user && <span className="text-[10px] font-mono text-white/25">{user.primaryEmailAddress?.emailAddress}</span>}
-            <button onClick={() => setProfileDrawerOpen(true)} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
-              Profile
-            </button>
-            <button onClick={() => signOut()} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
-              Sign out
-            </button>
-          </SignedIn>
+          <button onClick={() => setProfileDrawerOpen(true)} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
+            Profile
+          </button>
 
           <button onClick={() => navigate('/start')} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
             New Search
@@ -659,7 +635,6 @@ export default function Dashboard({ profile, onReset, token, onProfileUpdate, in
         width="max-w-md"
       >
         <ProfilePage
-          token={token}
           onClose={() => setProfileDrawerOpen(false)}
           onProfileUpdate={onProfileUpdate}
           embedded

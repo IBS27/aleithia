@@ -1,46 +1,21 @@
-"""Clerk authentication utilities."""
+"""User context helpers for local, unauthenticated mode."""
 
 import os
 from typing import Optional
-import jwt
-from fastapi import HTTPException, Request
+from fastapi import Request
 
-CLERK_PUB_KEY = os.getenv("CLERK_SECRET_KEY", "").strip()
+DEFAULT_USER_ID = os.getenv("ALEITHIA_DEFAULT_USER_ID", "local-user").strip() or "local-user"
 
 
-def verify_clerk_token(authorization: Optional[str]) -> str:
-    """
-    Verify Clerk JWT token and extract user ID.
-    
-    Token format: "Bearer <jwt_token>"
-    """
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing authorization header")
-    parts = authorization.split(" ")
-    if len(parts) != 2 or parts[0] != "Bearer":
-        raise HTTPException(status_code=401, detail="Invalid authorization header format")
-    token = parts[1]
-    
-    try:
-        # Decode without verification if no secret (development mode)
-        # In production, verify with CLERK_SECRET_KEY
-        if CLERK_PUB_KEY:
-            payload = jwt.decode(token, CLERK_PUB_KEY, algorithms=["HS256"])
-        else:
-            # Development: decode without verification
-            payload = jwt.decode(token, options={"verify_signature": False})
-        
-        user_id = payload.get("sub")
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token: missing sub claim")
-        return user_id
-    except jwt.DecodeError as e:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Auth error: {str(e)}")
+def resolve_user_id(request: Optional[Request] = None) -> str:
+    """Return the local user id, allowing an optional explicit override header."""
+    if request is None:
+        return DEFAULT_USER_ID
+
+    header_user_id = request.headers.get("x-user-id", "").strip()
+    return header_user_id or DEFAULT_USER_ID
 
 
 def extract_user_id(request: Request) -> str:
-    """FastAPI dependency to extract and verify user ID from Clerk token."""
-    authorization = request.headers.get("authorization")
-    return verify_clerk_token(authorization)
+    """FastAPI dependency used by profile/history routes in local mode."""
+    return resolve_user_id(request)

@@ -1,6 +1,5 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { Routes, Route, useNavigate, Navigate } from 'react-router-dom'
-import { useUser, useAuth } from '@clerk/clerk-react'
 import type { UserProfile } from './types/index.ts'
 import { api } from './api.ts'
 import LandingPage from './components/LandingPage.tsx'
@@ -17,54 +16,22 @@ const HowItWorks = lazy(() => import('./components/HowItWorks.tsx'))
 const MemoryGraphPage = lazy(() => import('./components/MemoryGraphPage.tsx'))
 
 function App() {
-  const { isLoaded, isSignedIn, user } = useUser()
-  const { getToken } = useAuth()
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [savedProfile, setSavedProfile] = useState<UserProfile | null>(null)
-  const [token, setToken] = useState<string | null>(null)
   const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false)
   const navigate = useNavigate()
-
-  useEffect(() => {
-    if (!isLoaded || !isSignedIn || !user) return
-
-    let cancelled = false
-
-    const loadToken = async () => {
-      try {
-        const sessionToken = await getToken()
-        if (!cancelled) {
-          setToken(sessionToken)
-        }
-      } catch (error) {
-        console.error('Failed to get token:', error)
-      }
-    }
-
-    loadToken()
-
-    return () => {
-      cancelled = true
-    }
-  }, [isLoaded, isSignedIn, user, getToken])
 
   const handleProfileSubmit = async (p: UserProfile) => {
     setProfile(p)
     setSessionDrawerOpen(false)
     navigate('/analysis')
 
-    if (isSignedIn && user && token) {
-      try {
-        await api.updateUserProfile(token, p.business_type, p.neighborhood)
-        setSavedProfile(p)
-      } catch {
-        // Non-blocking save failure
-      }
+    try {
+      await api.updateUserProfile(p.business_type, p.neighborhood)
+      setSavedProfile(p)
+    } catch {
+      // Non-blocking save failure
     }
-  }
-
-  if (!isLoaded) {
-    return <div className="min-h-screen bg-[#06080d]" />
   }
 
   return (
@@ -80,12 +47,11 @@ function App() {
             <Dashboard
               profile={profile ?? savedProfile!}
               onReset={() => { setProfile(null); navigate('/') }}
-              token={token}
               onProfileUpdate={() => setSavedProfile(null)}
               initialProfileDrawerOpen
             />
           ) : (
-            <ProfilePage token={token} onClose={() => navigate('/')} onProfileUpdate={() => setSavedProfile(null)} />
+            <ProfilePage onClose={() => navigate('/')} onProfileUpdate={() => setSavedProfile(null)} />
           )
         }
       />
@@ -131,7 +97,6 @@ function App() {
             <Dashboard
               profile={profile ?? savedProfile!}
               onReset={() => { setProfile(null); navigate('/') }}
-              token={token}
               onProfileUpdate={() => setSavedProfile(null)}
             />
           ) : (
