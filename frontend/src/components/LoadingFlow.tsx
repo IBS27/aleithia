@@ -23,9 +23,9 @@ const FLOW_STAGES = [
   },
   {
     id: 'vector',
-    label: 'VECTOR INDEX',
-    sub: 'VectorAI DB — 384-dim HNSW',
-    detail: 'Embedding documents with all-MiniLM-L6-v2, upserting to 15 collections for semantic retrieval',
+    label: 'ENRICHED DOCS',
+    sub: 'Processed data on Modal Volume',
+    detail: 'Saving classified and sentiment-scored documents for downstream briefs, alerts, and analysis',
     icon: 'queue',
   },
   {

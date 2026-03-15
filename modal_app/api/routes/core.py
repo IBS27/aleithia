@@ -43,14 +43,6 @@ async def status():
     except Exception:
         pass
 
-    vectordb_status = {"status": "unavailable"}
-    try:
-        from modal_app.vectordb import check_vectordb_health_async
-
-        vectordb_status = await check_vectordb_health_async()
-    except Exception:
-        pass
-
     return {
         "pipelines": pipeline_status,
         "enriched_docs": enriched_count,
@@ -60,7 +52,6 @@ async def status():
             "t4_sentiment": "available",
             "t4_cctv": "available",
         },
-        "vectordb": vectordb_status,
         "costs": costs,
         "total_docs": sum(item.get("doc_count", 0) for item in pipeline_status.values()),
     }

@@ -15,7 +15,7 @@ const ARCH_FLOW: { id: string; label: string; sub: string; color: string; accent
   { id: 'ingest', label: 'Ingestion', sub: '14 pipelines', color: 'text-cyan-400', accent: 'border-cyan-500/30 bg-cyan-500/[0.04]' },
   { id: 'queue', label: 'doc_queue', sub: 'modal.Queue', color: 'text-white/50', accent: 'border-white/[0.08] bg-white/[0.02]' },
   { id: 'enrich', label: 'Enrichment', sub: 'T4 GPUs', color: 'text-amber-400', accent: 'border-amber-500/30 bg-amber-500/[0.04]' },
-  { id: 'vector', label: 'VectorAI DB', sub: '384d HNSW', color: 'text-emerald-400', accent: 'border-emerald-500/30 bg-emerald-500/[0.04]' },
+  { id: 'processed', label: 'Processed Docs', sub: 'Modal Volume', color: 'text-emerald-400', accent: 'border-emerald-500/30 bg-emerald-500/[0.04]' },
   { id: 'llm', label: 'Qwen3-8B', sub: 'H100 vLLM', color: 'text-violet-400', accent: 'border-violet-500/30 bg-violet-500/[0.04]' },
   { id: 'agents', label: 'Agent Swarm', sub: '4 types .spawn()', color: 'text-pink-400', accent: 'border-pink-500/30 bg-pink-500/[0.04]' },
 ]
@@ -66,7 +66,7 @@ export default function HowItWorks({ onBack }: Props) {
           Architecture & Backend Logic
         </h1>
         <p className="text-base text-white/50 mb-6">
-          Aleithia ingests Chicago-area data from 14 pipelines, enriches it with 5 GPU model classes, indexes it in VectorAI DB, and delivers insights through an agent swarm and recursive analyst. All compute runs on Modal (33+ serverless functions, 21 Modal features).
+          Aleithia ingests Chicago-area data from 14 pipelines, enriches it with 5 GPU model classes, stores processed outputs on Modal volumes, and delivers insights through an agent swarm and recursive analyst. All compute runs on Modal across serverless functions, queues, volumes, and GPU workers.
         </p>
 
         {/* Live stats bar */}
@@ -140,7 +140,7 @@ export default function HowItWorks({ onBack }: Props) {
           </div>
 
           <p className={`${BODY}`}>
-            Pipelines push documents to <span className={CODE}>modal.Queue</span>. The classifier drains the queue every 2 minutes, enriches with classification + sentiment, then upserts to VectorAI DB. The agent swarm fans out at query time via <span className={CODE}>.spawn()</span>, queries VectorAI DB for semantic retrieval, gathers results, and synthesizes with the LLM.
+            Pipelines push documents to <span className={CODE}>modal.Queue</span>. The classifier drains the queue every 2 minutes, enriches with classification + sentiment, writes processed JSON to shared storage, and the agent swarm fans out at query time via <span className={CODE}>.spawn()</span> to gather relevant signals and synthesize them with the LLM.
           </p>
         </section>
       </main>
@@ -252,34 +252,32 @@ export default function HowItWorks({ onBack }: Props) {
             <li><span className={CODE}>SentimentAnalyzer</span> — twitter-roberta-base-sentiment (T4): positive/negative/neutral with confidence score</li>
           </ul>
           <p className={`${BODY} mt-4`}>
-            After enrichment, documents are upserted to VectorAI DB (<span className={CODE}>build_embed_text</span> + <span className={CODE}>batch_upsert_docs</span>) and pushed to <span className={CODE}>impact_queue</span> for Lead Analyst scoring. Enriched docs saved to <span className={CODE}>/data/processed/enriched/</span>.
+            After enrichment, documents are pushed to <span className={CODE}>impact_queue</span> for Lead Analyst scoring and saved to <span className={CODE}>/data/processed/enriched/</span> for downstream consumers.
           </p>
         </section>
 
-        {/* VectorAI DB — visual */}
+        {/* Processed document store */}
         <section className="mb-20">
-          <h2 className={SECTION_TITLE}>VectorAI DB — Semantic Search</h2>
+          <h2 className={SECTION_TITLE}>Processed Document Store</h2>
           <p className={BODY}>
-            <span className={CODE}>modal_app/vectordb.py</span> — Actian VectorAI DB with HNSW-indexed vectors for sub-15ms semantic retrieval.
+            <span className={CODE}>/data/processed/enriched/</span> stores classification and sentiment outputs as JSON so agents, briefs, and API routes can reuse enriched documents without rerunning the GPU pipeline.
           </p>
 
           <div className="mt-6 border border-emerald-500/20 bg-emerald-500/[0.02] p-5">
-            {/* Header */}
             <div className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="text-[11px] font-mono font-bold text-emerald-300 uppercase tracking-wider">VectorDBService</span>
+                <span className="text-[11px] font-mono font-bold text-emerald-300 uppercase tracking-wider">Enriched JSON Store</span>
               </div>
-              <span className="text-[8px] font-mono text-white/20">@modal.cls, min_containers=1</span>
+              <span className="text-[8px] font-mono text-white/20">shared via Modal Volume</span>
             </div>
 
-            {/* Config grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
               {[
-                { label: 'Embeddings', value: '384-dim', sub: 'all-MiniLM-L6-v2' },
-                { label: 'Index', value: 'HNSW', sub: 'cosine similarity' },
-                { label: 'Collections', value: '15', sub: '14 sources + enriched' },
-                { label: 'Latency', value: '<15ms', sub: 'search p95' },
+                { label: 'Format', value: 'JSON', sub: 'one doc per file' },
+                { label: 'Source', value: 'T4 GPUs', sub: 'classifier + sentiment' },
+                { label: 'Path', value: '/data', sub: 'processed/enriched' },
+                { label: 'Use', value: 'Reuse', sub: 'briefs + alerts + analysis' },
               ].map(c => (
                 <div key={c.label} className="text-center border border-white/[0.04] bg-white/[0.02] p-2.5">
                   <p className="text-sm font-mono font-bold text-white/50">{c.value}</p>
@@ -289,14 +287,12 @@ export default function HowItWorks({ onBack }: Props) {
               ))}
             </div>
 
-            {/* API methods */}
             <div className="space-y-1.5">
               {[
-                { method: 'embed_batch(texts)', desc: '→ list[384-dim vectors]' },
-                { method: 'batch_upsert_docs(...)', desc: '→ write to collection + flush' },
-                { method: 'search(embedding, filter)', desc: '→ top-K results with payloads' },
-                { method: 'search_neighborhood(...)', desc: '→ enriched collection, filtered' },
-                { method: 'health_check()', desc: '→ status + per-collection counts' },
+                { method: 'process_queue_batch()', desc: '→ classify + score sentiment + write enriched docs' },
+                { method: 'impact_queue', desc: '→ handoff for lead-analyst scoring' },
+                { method: '/brief + /neighborhood', desc: '→ reuse saved docs and source files at query time' },
+                { method: 'Modal Volume', desc: '→ shared storage across API and worker containers' },
               ].map(m => (
                 <div key={m.method} className="flex items-center gap-2 py-1.5 border-b border-white/[0.03] last:border-0">
                   <span className={CODE}>{m.method}</span>
@@ -307,7 +303,7 @@ export default function HowItWorks({ onBack }: Props) {
           </div>
 
           <p className={`${BODY} mt-4`}>
-            Documents embedded at ingestion in <span className={CODE}>classify.py</span>. At query time, <span className={CODE}>orchestrate_query()</span> pre-computes the embedding once and shares it across all agent spawns. All operations guarded by <span className={CODE}>vectordb_available()</span>.
+            The enrichment pipeline writes once and downstream routes reuse those saved outputs alongside raw source data. This keeps the non-LLM flows simple and avoids recomputing classification work on every request.
           </p>
         </section>
 
@@ -334,7 +330,7 @@ export default function HowItWorks({ onBack }: Props) {
         <section className="mb-20">
           <h2 className={SECTION_TITLE}>Agent Swarm</h2>
           <p className={BODY}>
-            <span className={CODE}>modal_app/agents.py</span> — At query time, <span className={CODE}>orchestrate_query()</span> pre-computes a VectorDB embedding, fans out 4 agent types via <span className={CODE}>.spawn()</span>. W3C trace context propagation links spans across containers.
+            <span className={CODE}>modal_app/agents.py</span> — At query time, <span className={CODE}>orchestrate_query()</span> fans out 4 agent types via <span className={CODE}>.spawn()</span>. W3C trace context propagation links spans across containers.
           </p>
 
           {/* Visual fan-out diagram */}
@@ -342,7 +338,7 @@ export default function HowItWorks({ onBack }: Props) {
             {/* Orchestrator node */}
             <div className="border border-white/[0.12] bg-white/[0.04] px-6 py-3 text-center z-10">
               <span className="text-[10px] font-mono font-bold text-white/60 uppercase tracking-wider">orchestrate_query()</span>
-              <p className="text-[8px] font-mono text-white/20 mt-0.5">pre-compute embedding → .spawn() × 4</p>
+              <p className="text-[8px] font-mono text-white/20 mt-0.5">prepare query → .spawn() × 4</p>
             </div>
 
             {/* Trunk line */}
@@ -549,12 +545,12 @@ export default function HowItWorks({ onBack }: Props) {
           <p className={BODY}>
             <span className={CODE}>modal_app/instrumentation.py</span> — Arize AX tracing via OpenTelemetry. Connected spans across web → orchestrator → agents → LLM. OpenAI auto-instrumentor for all GPT-4o calls.
           </p>
-          <ul className="list-disc list-inside text-sm text-white/60 space-y-2 mt-4">
-            <li><span className={CODE}>init_tracing()</span> — Arize register with space ID + API key</li>
-            <li><span className={CODE}>get_tracer(name)</span> — Named tracer per module (alethia.web, alethia.agents, alethia.vectordb, etc.)</li>
-            <li><span className={CODE}>inject_context()</span> / <span className={CODE}>extract_context()</span> — W3C trace context propagation across Modal containers via <span className={CODE}>.spawn()</span></li>
-            <li>VectorDB operations traced: embed, batch_upsert, search, health_check</li>
-          </ul>
+            <ul className="list-disc list-inside text-sm text-white/60 space-y-2 mt-4">
+              <li><span className={CODE}>init_tracing()</span> — Arize register with space ID + API key</li>
+              <li><span className={CODE}>get_tracer(name)</span> — Named tracer per module (alethia.web, alethia.agents, alethia.classify, etc.)</li>
+              <li><span className={CODE}>inject_context()</span> / <span className={CODE}>extract_context()</span> — W3C trace context propagation across Modal containers via <span className={CODE}>.spawn()</span></li>
+              <li>Tracing covers web requests, classifiers, agents, and LLM calls</li>
+            </ul>
         </section>
 
         {/* API endpoints */}
@@ -569,7 +565,7 @@ export default function HowItWorks({ onBack }: Props) {
               { method: 'POST', path: '/analyze', desc: 'Deep Dive: GPT-4o code gen → modal.Sandbox execution' },
               { method: 'GET', path: '/neighborhood/{name}', desc: 'Full neighborhood data (includes transit + parking fields)' },
               { method: 'GET', path: '/alerts', desc: 'Regulatory alerts' },
-              { method: 'GET', path: '/status', desc: 'Pipeline status + VectorDB health' },
+              { method: 'GET', path: '/status', desc: 'Pipeline status + GPU availability' },
               { method: 'GET', path: '/metrics', desc: 'Neighborhood metrics' },
               { method: 'GET', path: '/sources', desc: 'Data source catalog' },
               { method: 'GET', path: '/news', desc: 'News documents' },
@@ -590,7 +586,7 @@ export default function HowItWorks({ onBack }: Props) {
               { method: 'GET', path: '/impact-briefs/{id}', desc: 'Single impact brief by ID' },
               { method: 'POST', path: '/impact-briefs/analyze', desc: 'Manually trigger impact analysis' },
               { method: 'GET', path: '/gpu-metrics', desc: 'Live GPU utilization and model stats' },
-              { method: 'GET', path: '/health', desc: 'Health check (includes VectorDB status)' },
+              { method: 'GET', path: '/health', desc: 'Health check' },
             ].map((e) => (
               <div key={e.path} className="flex flex-wrap items-baseline gap-2 py-2 border-b border-white/[0.04] last:border-0">
                 <span className={`${CODE} w-14`}>{e.method}</span>
@@ -614,7 +610,7 @@ export default function HowItWorks({ onBack }: Props) {
               { label: 'Modal Volume', color: 'text-amber-400', accent: 'border-amber-500/25 bg-amber-500/[0.03]' },
               { label: 'doc_queue', color: 'text-violet-400', accent: 'border-violet-500/25 bg-violet-500/[0.03]' },
               { label: 'classify.py', color: 'text-pink-400', accent: 'border-pink-500/25 bg-pink-500/[0.03]' },
-              { label: 'VectorDB', color: 'text-emerald-400', accent: 'border-emerald-500/25 bg-emerald-500/[0.03]' },
+              { label: 'Processed Docs', color: 'text-emerald-400', accent: 'border-emerald-500/25 bg-emerald-500/[0.03]' },
               { label: 'Lead Analyst', color: 'text-violet-400', accent: 'border-violet-500/25 bg-violet-500/[0.03]' },
             ].map((step, i, arr) => (
               <div key={step.label} className="flex items-center flex-shrink-0">
@@ -641,7 +637,6 @@ export default function HowItWorks({ onBack }: Props) {
               { path: '/data/processed/impact_briefs/', desc: 'Lead Analyst briefs' },
               { path: '/data/processed/geo/', desc: 'GeoJSON for Mapbox' },
               { path: '/data/cache/', desc: 'HTTP cache' },
-              { path: '/data/vectordb/', desc: 'VectorAI DB data' },
             ].map(v => (
               <div key={v.path} className="flex items-center gap-2 py-1.5 px-2 border border-white/[0.03] bg-white/[0.01]">
                 <span className="text-[9px] font-mono text-white/40">{v.path}</span>
@@ -662,7 +657,7 @@ export default function HowItWorks({ onBack }: Props) {
               { fn: 'news_ingester', interval: '30 min', purpose: 'RSS + NewsAPI polling' },
               { fn: 'reddit_ingester', interval: '1 hr', purpose: 'Reddit subreddit scraping' },
               { fn: 'public_data_ingester', interval: 'Daily', purpose: 'Chicago Data Portal sync' },
-              { fn: 'process_queue_batch', interval: '2 min', purpose: 'Drain doc_queue → GPU classification + VectorDB upsert' },
+              { fn: 'process_queue_batch', interval: '2 min', purpose: 'Drain doc_queue → GPU classification + enriched doc writes' },
               { fn: 'data_reconciler', interval: '5 min', purpose: 'Pipeline freshness check, auto-restart stale ingesters, cost tracking' },
               { fn: 'scan_enriched_docs', interval: '5 min', purpose: 'Lead Analyst impact scanning → E2B worker dispatch' },
             ].map(c => (
@@ -679,16 +674,16 @@ export default function HowItWorks({ onBack }: Props) {
         <section className="mb-20">
           <h2 className={SECTION_TITLE}>Self-Healing Reconciler</h2>
           <p className={BODY}>
-            <span className={CODE}>modal_app/reconciler.py</span> runs every 5 minutes. Checks freshness per data source against configurable thresholds. Auto-spawns stale pipelines with backoff (max 3 restarts per source per hour). Includes VectorDB health monitoring. Cost tracking via <span className={CODE}>modal.Dict</span> (per-function GPU seconds × rate).
+            <span className={CODE}>modal_app/reconciler.py</span> runs every 5 minutes. Checks freshness per data source against configurable thresholds. Auto-spawns stale pipelines with backoff (max 3 restarts per source per hour). Cost tracking via <span className={CODE}>modal.Dict</span> (per-function GPU seconds × rate).
           </p>
         </section>
 
         {/* Modal features */}
         <section className="mb-20">
-          <h2 className={SECTION_TITLE}>Modal Features Used (21)</h2>
+          <h2 className={SECTION_TITLE}>Modal Features Used</h2>
           <div className="flex flex-wrap gap-2">
             {[
-              'modal.App', 'modal.Volume (2)', 'modal.Secret', 'modal.Image (15)',
+              'modal.App', 'modal.Volume (2)', 'modal.Secret', 'modal.Image',
               'modal.Period', '.map()', 'gpu="T4"', 'gpu="H100"',
               '@modal.cls + @modal.enter(snap=True)', '@modal.concurrent',
               '@modal.batched', 'modal.Queue', 'modal.Retries', '.spawn()',

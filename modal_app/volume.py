@@ -1,5 +1,4 @@
 """Modal app definition, volume, and image configuration."""
-import os
 import modal
 
 app = modal.App("alethia")
@@ -139,25 +138,6 @@ parking_image = (
     )
     .add_local_python_source("modal_app", copy=True)
 )
-
-# VectorAI DB: Actian vector database + embedding model + Python client
-# VectorAI DB image: requires actiancortex (private package) + vectoraidb binary.
-# The image from_registry("williamimoh/actian-vectorai-db:1.0b") provides both,
-# but needs Python installed. Set VECTORDB_IMAGE=1 env var to enable this image.
-# When disabled, all VectorDB code degrades gracefully via vectordb_available().
-_build_vectordb = os.environ.get("VECTORDB_IMAGE", "").strip() == "1"
-if _build_vectordb:
-    vectordb_image = (
-        modal.Image.from_registry("williamimoh/actian-vectorai-db:1.0b")
-        .run_commands(
-            "apt-get update -qq && apt-get install -y -qq python3 python3-pip python3-venv > /dev/null 2>&1 && ln -sf /usr/bin/python3 /usr/bin/python",
-            "python3 -m pip install --break-system-packages actiancortex sentence-transformers==3.3.1 'torch>=2.4.0' 'grpcio>=1.60.0' httpx==0.27.0 pydantic==2.9.0 "
-            + " ".join(_arize_core_packages),
-        )
-        .add_local_python_source("modal_app", copy=True)
-    )
-else:
-    vectordb_image = None
 
 # TikTok scraper: Playwright + Kernel cloud browser
 tiktok_image = (

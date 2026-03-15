@@ -5,7 +5,7 @@ import BlurText from './BlurText'
 import type { Application } from '@splinetool/runtime'
 import CityGlobe from './CityGlobe'
 import LogoLoop from './LogoLoop'
-import { ActianVectorAILogo, ArizeAILogo, ModelLogo, OpenAILogo } from './SponsorLogos'
+import { ArizeAILogo, ModelLogo, OpenAILogo } from './SponsorLogos'
 
 const SPONSOR_LOGO_SVGS = {
   modal: '/logo/modal-wordmark.svg',
@@ -282,18 +282,10 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
                 glow: 'hover:shadow-[0_0_30px_-5px_rgba(59,130,246,0.15)]',
               },
               {
-                logo: <ActianVectorAILogo />,
-                name: 'Actian VectorAI DB',
-                role: 'Vector Search',
-                desc: 'HNSW-indexed 384-dim embeddings. Sub-15ms semantic retrieval across 15 collections.',
-                color: 'border-purple-500/20 hover:border-purple-500/40',
-                glow: 'hover:shadow-[0_0_30px_-5px_rgba(168,85,247,0.15)]',
-              },
-              {
                 logo: <ArizeAILogo />,
                 name: 'Arize AI',
                 role: 'Observability',
-                desc: 'OpenTelemetry tracing. Connected spans across web, agents, LLM, and VectorDB containers.',
+                desc: 'OpenTelemetry tracing. Connected spans across web, agents, LLM, and pipeline containers.',
                 color: 'border-orange-500/20 hover:border-orange-500/40',
                 glow: 'hover:shadow-[0_0_30px_-5px_rgba(249,115,22,0.15)]',
               },
@@ -587,11 +579,11 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
             <div className="grid grid-cols-3 gap-3 w-full max-w-lg">
               <div className="border border-purple-500/20 bg-purple-500/[0.04] p-3 text-center">
                 <span className="text-[10px] font-mono font-bold text-purple-300 uppercase tracking-wider">
-                  VectorAI DB
+                  Processed Docs
                 </span>
-                <p className="text-[8px] font-mono text-white/20 mt-1">384-dim HNSW</p>
-                <p className="text-[8px] font-mono text-white/15">15 collections</p>
-                <p className="text-[7px] font-mono text-purple-400/40 mt-1">min_containers=1</p>
+                <p className="text-[8px] font-mono text-white/20 mt-1">enriched JSON</p>
+                <p className="text-[8px] font-mono text-white/15">Modal Volume</p>
+                <p className="text-[7px] font-mono text-purple-400/40 mt-1">/data/processed/enriched</p>
               </div>
               <div className="border border-violet-500/20 bg-violet-500/[0.04] p-3 text-center">
                 <span className="text-[10px] font-mono font-bold text-violet-300 uppercase tracking-wider">
@@ -616,11 +608,9 @@ export default function LandingPage({ onGetStarted, onViewSource, onViewWhyUs }:
               <div className="flex items-start gap-3">
                 <span className="text-white/20 text-xs mt-0.5">*</span>
                 <p className="text-[11px] text-white/30 leading-relaxed">
-                  VectorAI DB runs as a <span className="text-white/50">Modal container</span> with
-                  the server process started at boot. Data persists on a <span className="text-white/50">Modal Volume</span> at{' '}
-                  <span className="font-mono text-[10px] text-white/40">/data/vectordb</span>. All
-                  inter-service calls use Modal's internal RPC — no public network traffic between
-                  services.
+                  Enriched documents persist on a <span className="text-white/50">Modal Volume</span> at{' '}
+                  <span className="font-mono text-[10px] text-white/40">/data/processed/enriched</span>.
+                  Services communicate through Modal's internal RPC, queues, and shared volume storage.
                 </p>
               </div>
             </div>

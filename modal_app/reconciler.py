@@ -160,9 +160,6 @@ async def data_reconciler():
 
     print(f"Reconciler: {len(stale_sources)} stale, {len(restarted)} restarted, {len(skipped)} skipped (backoff)")
 
-    from modal_app.vectordb import check_vectordb_health
-    status_report["vectordb"] = check_vectordb_health()
-
     print(f"Status: {json.dumps(status_report, indent=2, default=str)}")
 
     return {

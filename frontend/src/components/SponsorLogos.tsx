@@ -39,21 +39,6 @@ export function OpenAILogo() {
   )
 }
 
-export function ActianVectorAILogo() {
-  return (
-    <svg className={cls} viewBox="0 0 200 32" xmlns="http://www.w3.org/2000/svg">
-      <rect x="2" y="4" width="24" height="24" rx="4" strokeWidth="2" stroke="currentColor" fill="none" />
-      <circle cx="10" cy="12" r="2" fill="currentColor" />
-      <circle cx="18" cy="10" r="2" fill="currentColor" />
-      <circle cx="14" cy="20" r="2" fill="currentColor" />
-      <line x1="10" y1="12" x2="18" y2="10" stroke="currentColor" strokeWidth="1" opacity="0.5" />
-      <line x1="10" y1="12" x2="14" y2="20" stroke="currentColor" strokeWidth="1" opacity="0.5" />
-      <line x1="18" y1="10" x2="14" y2="20" stroke="currentColor" strokeWidth="1" opacity="0.5" />
-      <text x="34" y="22" fontFamily="system-ui, sans-serif" fontWeight="600" fontSize="13" fill="currentColor">VectorAI DB</text>
-    </svg>
-  )
-}
-
 export function ModelLogo({ name }: { name: string }) {
   return (
     <svg className={cls} viewBox={`0 0 ${Math.max(120, name.length * 11 + 36)} 32`} xmlns="http://www.w3.org/2000/svg">

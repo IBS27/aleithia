@@ -11,8 +11,8 @@ from pathlib import Path
 import modal
 
 from modal_app.costs import track_cost
-from modal_app.runtime import get_impact_queue, get_modal_cls, get_raw_doc_queue
-from modal_app.volume import app, volume, classify_image, VOLUME_MOUNT, PROCESSED_DATA_PATH
+from modal_app.runtime import get_impact_queue, get_raw_doc_queue
+from modal_app.volume import app, volume, classify_image, PROCESSED_DATA_PATH
 
 # Event bus: pipelines push raw docs, classifier drains and enriches
 doc_queue = get_raw_doc_queue()
@@ -196,28 +196,6 @@ async def process_queue_batch():
 
         await volume.commit.aio()
         print(f"Classified {len(docs)} documents: saved to {enriched_dir}")
-
-        # Upsert regulatory/legal docs to VectorAI DB for semantic retrieval
-        try:
-            from modal_app.vectordb import vectordb_available, build_embed_text, build_payload
-            if vectordb_available():
-                regulatory_docs = [
-                    d for d in docs
-                    if (d.get("classification", {}).get("labels") or [""])[0] in ("regulatory", "legal")
-                ]
-                if regulatory_docs:
-                    vdb_cls = get_modal_cls("VectorDBService")
-                    vdb = vdb_cls()
-
-                    embed_texts = [build_embed_text(d) for d in regulatory_docs]
-                    payloads = [build_payload(d, d.get("classification", {}), d.get("sentiment", {})) for d in regulatory_docs]
-                    ids = [d.get("id", f"doc-{i}") for i, d in enumerate(regulatory_docs)]
-
-                    embeddings = vdb.embed_batch.remote(embed_texts)
-                    vdb.batch_upsert_docs.remote(ids, embeddings, payloads, "enriched")
-                    print(f"VectorDB: upserted {len(regulatory_docs)} regulatory docs to enriched collection")
-        except Exception as e:
-            print(f"VectorDB upsert failed (non-critical): {e}")
 
         # Push high-confidence docs to impact queue for Lead Analyst
         try:

@@ -24,7 +24,7 @@ from modal_app.pipelines.reddit import (
     reddit_docs_are_weak,
     search_reddit_fallback_runtime,
 )
-from modal_app.runtime import get_modal_cls, get_modal_function
+from modal_app.runtime import get_modal_function
 from modal_app.volume import app, volume, base_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
 
 ADJACENT_NEIGHBORHOODS = {
@@ -53,13 +53,120 @@ BUSINESS_KEYWORDS = {
     "gym": ["fitness", "gym", "health club", "recreation"],
 }
 
+REGULATORY_KEYWORDS = ["zoning", "license", "permit", "ordinance", "compliance"]
+FEDERAL_REGULATORY_KEYWORDS = ["food", "health", "safety", "labor"]
+ENRICHED_REG_SCAN_LIMIT = 150
+ENRICHED_REG_RESULT_LIMIT = 30
+
+
+def _regulatory_keyword_groups(business_type: str) -> tuple[list[str], list[str]]:
+    """Return business-specific and generic regulatory keywords."""
+    business_key = (business_type or "").strip().lower()
+    business_keywords = BUSINESS_KEYWORDS.get(business_key, [business_key] if business_key else [])
+    return business_keywords, list(REGULATORY_KEYWORDS)
+
+
+def _regulation_identity(doc: dict) -> str:
+    """Build a stable dedupe key for regulation-like documents."""
+    doc_id = str(doc.get("id") or "").strip()
+    if doc_id:
+        return doc_id
+    title = str(doc.get("title") or "").strip().lower()
+    timestamp = str(doc.get("timestamp") or doc.get("date") or "").strip()
+    return f"{title}|{timestamp}"
+
+
+def _parse_timestamp_sort_key(timestamp_str: str | None) -> float:
+    """Parse an ISO timestamp into a sortable epoch value."""
+    if not timestamp_str:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(str(timestamp_str).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _append_regulation_entry(
+    regulations: list[dict],
+    seen_ids: set[str],
+    doc: dict,
+    *,
+    type_value: str = "",
+    status: str = "",
+    agency: str = "",
+    date: str = "",
+    relevance: str = "related",
+    freshness: str = "cached",
+    extra: dict | None = None,
+) -> bool:
+    """Append a normalized regulation entry if it has not already been seen."""
+    identity = _regulation_identity(doc)
+    if identity in seen_ids:
+        return False
+
+    seen_ids.add(identity)
+    entry = {
+        "title": str(doc.get("title") or ""),
+        "type": type_value,
+        "status": status,
+        "agency": agency,
+        "date": date,
+        "relevance": relevance,
+        "freshness": freshness,
+    }
+    if extra:
+        entry.update(extra)
+    regulations.append(entry)
+    return True
+
+
+def _score_enriched_regulatory_doc(doc: dict, business_type: str) -> dict | None:
+    """Return a ranked enriched-doc match or None when the doc is not relevant."""
+    classification = doc.get("classification", {}) or {}
+    labels = classification.get("labels", []) or []
+    top_label = str(labels[0] if labels else "").strip().lower()
+    if top_label not in {"regulatory", "legal"}:
+        return None
+
+    business_keywords, regulatory_keywords = _regulatory_keyword_groups(business_type)
+    metadata = doc.get("metadata", {}) or {}
+    text = " ".join(
+        [
+            str(doc.get("title") or ""),
+            str(doc.get("content") or ""),
+            str(metadata.get("matter_type") or ""),
+            str(metadata.get("status") or ""),
+            str(metadata.get("agency") or ""),
+        ]
+    ).lower()
+
+    business_hits = sum(1 for keyword in business_keywords if keyword and keyword in text)
+    if business_hits == 0:
+        return None
+
+    regulatory_hits = sum(1 for keyword in regulatory_keywords if keyword in text)
+    scores = classification.get("scores", []) or []
+    cls_score = float(scores[0]) if scores and isinstance(scores[0], (int, float)) else 0.0
+
+    return {
+        "doc": doc,
+        "score": business_hits * 10 + regulatory_hits * 3 + cls_score,
+        "timestamp": _parse_timestamp_sort_key(doc.get("timestamp")),
+        "top_label": top_label,
+        "business_hits": business_hits,
+        "text": text,
+    }
+
 
 async def _fetch_legistar_inline(business_type: str, limit: int = 30) -> list[dict]:
     """Fetch live Chicago City Council legislation from Legistar REST API."""
     import httpx
 
-    keywords = BUSINESS_KEYWORDS.get(business_type.lower(), [business_type.lower()])
-    keywords += ["zoning", "license", "permit", "ordinance"]
+    business_keywords, regulatory_keywords = _regulatory_keyword_groups(business_type)
+    keywords = business_keywords + regulatory_keywords
 
     results = []
     try:
@@ -102,7 +209,8 @@ async def _fetch_federal_register_inline(business_type: str, since_days: int = 7
     import httpx
     from datetime import timedelta
 
-    keywords = BUSINESS_KEYWORDS.get(business_type.lower(), [business_type.lower()])
+    business_keywords, regulatory_keywords = _regulatory_keyword_groups(business_type)
+    keywords = business_keywords + regulatory_keywords
     agencies = ["small-business-administration", "food-and-drug-administration",
                 "occupational-safety-and-health-administration", "environmental-protection-agency"]
 
@@ -126,7 +234,7 @@ async def _fetch_federal_register_inline(business_type: str, since_days: int = 7
                 title = (doc.get("title") or "").lower()
                 abstract = (doc.get("abstract") or "").lower()
                 text = f"{title} {abstract}"
-                if any(kw in text for kw in keywords + ["food", "health", "safety", "labor"]):
+                if any(kw in text for kw in keywords + FEDERAL_REGULATORY_KEYWORDS):
                     results.append({
                         "id": f"fedreg-{doc.get('document_number', '')}",
                         "title": doc.get("title", ""),
@@ -512,34 +620,37 @@ async def regulatory_agent(business_type: str, trace_context: dict | None = None
         except Exception as e:
             print(f"Live regulatory fetch failed, falling back to volume: {e}")
 
-        live_ids = set()
+        business_keywords, regulatory_keywords = _regulatory_keyword_groups(business_type)
+        seen_ids: set[str] = set()
 
         # Add live Legistar results
         for item in live_legistar:
-            live_ids.add(item["id"])
-            report["regulations"].append({
-                "title": item["title"],
-                "type": item.get("type", ""),
-                "status": item.get("status", ""),
-                "date": item.get("date", ""),
-                "relevance": "direct",
-                "freshness": "live",
-            })
-            report["data_points"] += 1
+            if _append_regulation_entry(
+                report["regulations"],
+                seen_ids,
+                item,
+                type_value=str(item.get("type", "")),
+                status=str(item.get("status", "")),
+                date=str(item.get("date", "")),
+                relevance="direct",
+                freshness="live",
+            ):
+                report["data_points"] += 1
 
         # Add live Federal Register results
         for item in live_federal:
-            live_ids.add(item["id"])
-            report["regulations"].append({
-                "title": item["title"],
-                "type": item.get("type", "federal"),
-                "agency": item.get("agency", ""),
-                "date": item.get("date", ""),
-                "url": item.get("url", ""),
-                "relevance": "federal",
-                "freshness": "live",
-            })
-            report["data_points"] += 1
+            if _append_regulation_entry(
+                report["regulations"],
+                seen_ids,
+                item,
+                type_value=str(item.get("type", "federal")),
+                agency=str(item.get("agency", "")),
+                date=str(item.get("date", "")),
+                relevance="federal",
+                freshness="live",
+                extra={"url": item.get("url", "")},
+            ):
+                report["data_points"] += 1
 
         report["freshness"]["legistar"] = {
             "source": "live_api",
@@ -562,26 +673,28 @@ async def regulatory_agent(business_type: str, trace_context: dict | None = None
             for json_file in sorted(source_dir.rglob("*.json"), reverse=True)[:50]:
                 try:
                     doc = json.loads(json_file.read_text())
-                    doc_id = doc.get("id", "")
-                    if doc_id in live_ids:
-                        continue  # Already have live version
                     content = f"{doc.get('title', '')} {doc.get('content', '')}".lower()
-                    keywords = [business_type.lower(), "zoning", "license", "permit", "ordinance"]
+                    keywords = business_keywords + regulatory_keywords
                     if source_name == "federal":
-                        keywords += ["food", "health", "safety", "labor"]
+                        keywords += FEDERAL_REGULATORY_KEYWORDS
                     if any(kw in content for kw in keywords):
                         ts = doc.get("timestamp")
-                        if ts and (newest_ts is None or ts > newest_ts):
-                            newest_ts = ts
-                        report["regulations"].append({
-                            "title": doc.get("title", ""),
-                            "type": doc.get("metadata", {}).get("matter_type", "") if source_name == "politics" else "federal",
-                            "status": doc.get("metadata", {}).get("status", ""),
-                            "agency": doc.get("metadata", {}).get("agency", "") if source_name == "federal" else "",
-                            "relevance": "direct" if business_type.lower() in content else "related",
-                            "freshness": "cached",
-                        })
-                        report["data_points"] += 1
+                        metadata = doc.get("metadata", {}) or {}
+                        added = _append_regulation_entry(
+                            report["regulations"],
+                            seen_ids,
+                            doc,
+                            type_value=str(metadata.get("matter_type", "")) if source_name == "politics" else "federal",
+                            status=str(metadata.get("status", "")),
+                            agency=str(metadata.get("agency", "")) if source_name == "federal" else "",
+                            date=str(ts or ""),
+                            relevance="direct" if business_type.lower() in content else "related",
+                            freshness="cached",
+                        )
+                        if added:
+                            if ts and (newest_ts is None or _parse_timestamp_sort_key(ts) > _parse_timestamp_sort_key(newest_ts)):
+                                newest_ts = ts
+                            report["data_points"] += 1
                 except Exception:
                     continue
 
@@ -589,26 +702,54 @@ async def regulatory_agent(business_type: str, trace_context: dict | None = None
                 cached_freshness = compute_freshness(timestamp_str=newest_ts)
                 report["freshness"][f"{source_name}_cached"] = cached_freshness
 
-        # 2b. Query VectorAI DB for semantically similar regulatory docs
-        try:
-            from modal_app.vectordb import vectordb_available
-            if vectordb_available():
-                vdb_cls = get_modal_cls("VectorDBService")
-                vdb = vdb_cls()
-                query_text = f"{business_type} regulatory compliance zoning permits licenses"
-                query_embedding = vdb.embed_text.remote(query_text)
-                vectordb_docs = vdb.search.remote(query_embedding, "enriched", top_k=30)
-                if vectordb_docs:
-                    report["findings"] = report.get("findings", {})
-                    report["findings"]["vectordb"] = {
-                        "count": len(vectordb_docs),
-                        "avg_score": round(sum(d["score"] for d in vectordb_docs) / len(vectordb_docs), 4),
-                    }
-                    report["data_points"] += len(vectordb_docs)
-                    if span:
-                        span.set_attribute("agent.vectordb_results", len(vectordb_docs))
-        except Exception as e:
-            print(f"VectorDB query failed (falling back to file scan): {e}")
+        # 2b. Scan enriched regulatory/legal docs as a bounded local fallback
+        enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
+        enriched_matches: list[dict] = []
+        if enriched_dir.exists():
+            for json_file in sorted(enriched_dir.rglob("*.json"), reverse=True)[:ENRICHED_REG_SCAN_LIMIT]:
+                try:
+                    doc = json.loads(json_file.read_text())
+                    if not isinstance(doc, dict):
+                        continue
+                    scored = _score_enriched_regulatory_doc(doc, business_type)
+                    if scored is not None:
+                        enriched_matches.append(scored)
+                except Exception:
+                    continue
+
+        enriched_matches.sort(key=lambda item: (item["score"], item["timestamp"]), reverse=True)
+        enriched_added = 0
+        newest_enriched_ts = None
+        for match in enriched_matches:
+            if enriched_added >= ENRICHED_REG_RESULT_LIMIT:
+                break
+            doc = match["doc"]
+            metadata = doc.get("metadata", {}) or {}
+            doc_ts = str(doc.get("timestamp") or "")
+            added = _append_regulation_entry(
+                report["regulations"],
+                seen_ids,
+                doc,
+                type_value=str(metadata.get("matter_type") or metadata.get("type") or match["top_label"]),
+                status=str(metadata.get("status", "")),
+                agency=str(metadata.get("agency", "")),
+                date=doc_ts,
+                relevance="direct" if business_type.lower() in match["text"] else "related",
+                freshness="cached",
+            )
+            if not added:
+                continue
+            enriched_added += 1
+            report["data_points"] += 1
+            if doc_ts and (newest_enriched_ts is None or _parse_timestamp_sort_key(doc_ts) > _parse_timestamp_sort_key(newest_enriched_ts)):
+                newest_enriched_ts = doc_ts
+
+        if enriched_added:
+            enriched_freshness = compute_freshness(timestamp_str=newest_enriched_ts)
+            enriched_freshness.update({"source": "processed_enriched", "count": enriched_added})
+            report["freshness"]["enriched_regulatory"] = enriched_freshness
+        if span:
+            span.set_attribute("agent.enriched_regulatory_results", enriched_added)
 
         # 2c. Enrich top regulations with GPT-4o impact summaries
         report["regulations"] = await _enrich_regulations_with_impact(
