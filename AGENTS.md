@@ -18,7 +18,7 @@ Instructions for coding agents working in this repository. Keep this file practi
 - `modal_app/`: the main Modal application and the production-facing API in `modal_app/web.py`.
 - `data/`: checked-in processed data used by local workflows.
 - `scripts/`: maintenance utilities and a local pipeline harness.
-- `tests/`: pytest coverage for ranking, retrieval, tracing, vector DB behavior, and risk scoring.
+- `tests/`: pytest coverage for ranking, retrieval, tracing, Modal web contracts, and risk scoring.
 
 ## Architecture rules that matter
 
@@ -28,6 +28,8 @@ Instructions for coding agents working in this repository. Keep this file practi
 - `frontend/src/api.ts` uses `VITE_MODAL_URL` when set, and otherwise falls back to `/api/data`.
 - The app currently runs in local, unauthenticated mode. Frontend profile/history calls attach an `x-user-id` header from localStorage, and `backend/auth.py` falls back to `ALEITHIA_DEFAULT_USER_ID` when no header is provided.
 - Many frontend endpoints are implemented only in `modal_app/web.py`, not in `backend/`. This includes `/analyze`, `/status`, `/metrics`, `/gpu-metrics`, `/trends/*`, `/vision/*`, `/parking/*`, `/social-trends/*`, and `/graph/full`.
+- Actian VectorAI DB is no longer part of the supported `modal_app` architecture. Do not add new `vectordb` wiring, health fields, image config, or Modal discovery imports unless the task explicitly restores that integration.
+- `modal_app/agents.py::regulatory_agent` should be understood as a live-fetch plus cache fallback flow: fetch Legistar and Federal Register inline, deduplicate against raw volume data under `politics/` and `federal_register/`, then optionally write fresh live results back to the volume.
 - Do not add or modify a route in `backend/` if the frontend call is supposed to hit the deployed Modal API. Verify the real owner first.
 - New Modal functions and endpoints must remain discoverable from `modal_app/__init__.py`. If a new module is not imported there, `modal deploy modal_app/__init__.py` may not pick it up.
 
@@ -36,6 +38,7 @@ Instructions for coding agents working in this repository. Keep this file practi
 - The real Modal app object is `modal.App("alethia")` in `modal_app/volume.py`, but some legacy code still references other app names. Verify `modal.Function.from_name(...)` usage before changing deployment-related code.
 - `backend/routes/modal_routes.py` still mentions `modal/app.py` in an error message. The current deploy entrypoint is `modal_app/__init__.py`.
 - Auth was removed from the app, but several database columns, Pydantic models, and frontend types still use the name `clerk_user_id`. Preserve those field names unless the task explicitly includes a contract/schema migration.
+- Product-facing frontend pages and old planning docs may still mention VectorAI DB or VectorDB health/status. Treat live code paths as source of truth and update copy narrowly when it would otherwise become false.
 - Checked-in datasets live under repo-root `data/`, but `backend/routes/data_routes.py` currently resolves its `DATA_DIR` relative to `backend/`. Be careful with any path logic in that file.
 - `backend/database.py` defaults to `sqlite:///./test.db`. Run backend commands from `backend/` or set `DATABASE_URL` explicitly, otherwise SQLite may be created in an unexpected directory.
 - `backend/test.db` is checked in. Do not delete or rewrite local DB/data artifacts unless the task explicitly requires it.
@@ -83,6 +86,8 @@ Instructions for coding agents working in this repository. Keep this file practi
 - Preserve JSON key names unless the task explicitly changes the contract.
 - Keep local user resolution compatible with the current unauthenticated flow in `backend/auth.py`: optional `x-user-id` override plus `ALEITHIA_DEFAULT_USER_ID` fallback.
 - If you touch legacy Modal user settings routes, note that `modal_app/api/routes/legacy.py` still requires an explicit `x-user-id` header instead of using the backend fallback helper.
+- If you touch `modal_app/api/routes/core.py`, verify the real emitted contract before adding status fields. `/status` should reflect active pipeline/GPU/cost reporting, not removed VectorDB health metadata.
+- If you touch `modal_app/agents.py::regulatory_agent`, preserve the non-VectorDB path: concurrent live API fetches, dedup against cached volume docs, cached-freshness reporting, and live-result write-back.
 - When adding or renaming source/document fields, update downstream readers, ranking logic, and tests in the same change.
 - Avoid silent architectural cleanup outside scope. If you discover dead paths, stale messages, or inconsistencies, note them in your final response unless the task asked you to fix them.
 
