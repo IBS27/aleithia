@@ -5,9 +5,14 @@ import copy
 import json
 import re
 import urllib.request
-from datetime import datetime, timezone
 from pathlib import Path
 
+from backend.read_helpers import filter_docs_by_neighborhood_match
+from backend.shared_data import (
+    load_first_existing_json,
+    load_json_docs_from_directory,
+    scan_source_directories,
+)
 from modal_app.api.cache import cache
 from modal_app.common import (
     CHICAGO_NEIGHBORHOODS,
@@ -26,19 +31,12 @@ def load_docs(source: str, limit: int = 200) -> list[dict]:
     cache_key = f"docs:{source}:{limit}"
 
     def _loader() -> list[dict]:
-        docs = []
         source_dir = Path(RAW_DATA_PATH) / source
-        if not source_dir.exists():
-            return docs
-        for json_file in sorted(source_dir.rglob("*.json"), reverse=True)[:limit]:
-            try:
-                parsed = json.loads(json_file.read_text())
-                if isinstance(parsed, dict):
-                    docs.append(parsed)
-            except Exception as exc:
-                print(f"_load_docs [{source}]: corrupted JSON {json_file.name}: {exc}")
-                continue
-        return docs
+        return load_json_docs_from_directory(
+            source_dir,
+            limit=limit,
+            on_error=lambda json_file, exc: print(f"_load_docs [{source}]: corrupted JSON {json_file.name}: {exc}"),
+        )
 
     return copy.deepcopy(cache.get_or_set(cache_key, 10.0, _loader))
 
@@ -63,28 +61,25 @@ def sanitize_business_type(value: str) -> str:
 
 def filter_by_neighborhood(docs: list[dict], neighborhood: str) -> list[dict]:
     """Filter documents by neighborhood with multi-strategy matching."""
-    if not neighborhood:
-        return docs
-    nb_lower = neighborhood.lower()
     nb_community_area = neighborhood_to_ca(neighborhood)
-
-    matched = []
-    for doc in docs:
-        geo = doc.get("geo", {})
-        if geo.get("neighborhood", "").lower() == nb_lower:
-            matched.append(doc)
-            continue
-        if nb_community_area and geo.get("community_area") == nb_community_area:
-            matched.append(doc)
-            continue
-        title = doc.get("title", "").lower()
-        if nb_lower in title:
-            matched.append(doc)
-            continue
-        if len(nb_lower) > 4 and nb_lower in doc.get("content", "").lower()[:500]:
-            matched.append(doc)
-            continue
-    return matched
+    return filter_docs_by_neighborhood_match(
+        docs,
+        neighborhood,
+        geo_substring_fields=(),
+        geo_exact_field_values={
+            field: value
+            for field, value in {
+                "neighborhood": neighborhood.lower(),
+                "community_area": nb_community_area,
+            }.items()
+            if value is not None
+        },
+        raw_record_fields=(),
+        include_title=True,
+        include_content=True,
+        content_limit=500,
+        min_content_match_length=5,
+    )
 
 
 BUSINESS_TYPE_KEYWORDS: dict[str, list[str]] = {
@@ -240,13 +235,7 @@ def load_demographics_summary() -> dict:
     ]
 
     def _loader() -> dict:
-        for summary_path in candidate_paths:
-            if summary_path.exists():
-                try:
-                    return json.loads(summary_path.read_text())
-                except Exception as exc:
-                    print(f"Failed to load demographics summary ({summary_path}): {exc}")
-        return {}
+        return load_first_existing_json(candidate_paths, default={})
 
     return copy.deepcopy(cache.get_or_set("demographics:summary", 60.0, _loader))
 
@@ -364,38 +353,9 @@ def get_source_stats() -> dict[str, dict]:
     """Shared source scan used by status/metrics/sources/summary."""
 
     def _loader() -> dict[str, dict]:
-        stats: dict[str, dict] = {}
-        for source in NON_SENSOR_PIPELINE_SOURCES:
-            source_dir = Path(RAW_DATA_PATH) / source
-            if not source_dir.exists():
-                stats[source] = {
-                    "doc_count": 0,
-                    "active": False,
-                    "last_update": None,
-                    "neighborhoods_covered": set(),
-                }
-                continue
-
-            json_files = list(source_dir.rglob("*.json"))
-            latest = max(json_files, key=lambda f: f.stat().st_mtime) if json_files else None
-            neighborhoods = set()
-            for jf in json_files[:100]:
-                try:
-                    doc = json.loads(jf.read_text())
-                except Exception:
-                    continue
-                if isinstance(doc, dict):
-                    nb = doc.get("geo", {}).get("neighborhood", "")
-                    if nb:
-                        neighborhoods.add(nb)
-
-            stats[source] = {
-                "doc_count": len(json_files),
-                "active": bool(json_files),
-                "last_update": datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc).isoformat() if latest else None,
-                "neighborhoods_covered": neighborhoods,
-            }
-        return stats
+        return scan_source_directories(
+            {source: Path(RAW_DATA_PATH) / source for source in NON_SENSOR_PIPELINE_SOURCES}
+        )
 
     raw_stats = cache.get_or_set("sources:stats", 15.0, _loader)
     copied: dict[str, dict] = {}

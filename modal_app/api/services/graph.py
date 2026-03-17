@@ -2,71 +2,14 @@
 from __future__ import annotations
 
 import copy
-import json
 from pathlib import Path
 
+from backend.read_helpers import transform_doc_for_graph
+from backend.shared_data import load_first_matching_json, load_json_file
 from modal_app.api.cache import cache
 from modal_app.api.services.documents import load_docs
 from modal_app.common import CHICAGO_NEIGHBORHOODS, NEIGHBORHOOD_CENTROIDS, detect_neighborhood
 from modal_app.volume import PROCESSED_DATA_PATH, volume
-
-
-def transform_doc_for_graph(doc: dict) -> dict:
-    memories = doc.get("memories", doc.get("memoryEntries", []))
-    memory_entries = []
-    for memory in memories:
-        rels = memory.get("memoryRelations")
-        if isinstance(rels, dict):
-            rels = [
-                {"targetMemoryId": key, "relationType": value}
-                for key, value in rels.items()
-                if value in ("updates", "extends", "derives")
-            ]
-        entry = {
-            "id": memory.get("id", ""),
-            "documentId": doc.get("id", ""),
-            "content": memory.get("memory", memory.get("content")),
-            "summary": memory.get("summary"),
-            "title": memory.get("title"),
-            "createdAt": memory.get("createdAt", memory.get("created_at")),
-            "updatedAt": memory.get("updatedAt", memory.get("updated_at")),
-            "isLatest": memory.get("isLatest", True),
-            "isForgotten": memory.get("isForgotten"),
-            "forgetAfter": memory.get("forgetAfter"),
-            "relation": memory.get("relation") or memory.get("changeType"),
-            "memoryRelations": rels if isinstance(rels, list) else memory.get("memoryRelations"),
-            "updatesMemoryId": memory.get("updatesMemoryId"),
-            "nextVersionId": memory.get("nextVersionId"),
-            "parentMemoryId": memory.get("parentMemoryId"),
-            "rootMemoryId": memory.get("rootMemoryId"),
-            "metadata": memory.get("metadata"),
-            "spaceId": memory.get("spaceId"),
-            "spaceContainerTag": memory.get("spaceContainerTag"),
-        }
-        memory_entries.append(entry)
-
-    out = {
-        "id": doc.get("id", ""),
-        "customId": doc.get("customId"),
-        "title": doc.get("title"),
-        "content": doc.get("content"),
-        "summary": doc.get("summary"),
-        "url": doc.get("url"),
-        "source": doc.get("source"),
-        "type": doc.get("type", doc.get("documentType")),
-        "status": doc.get("status", "done"),
-        "metadata": doc.get("metadata"),
-        "createdAt": doc.get("createdAt", doc.get("created_at")),
-        "updatedAt": doc.get("updatedAt", doc.get("updated_at")),
-        "memoryEntries": memory_entries,
-    }
-    if doc.get("x") is not None:
-        out["x"] = doc["x"]
-    if doc.get("y") is not None:
-        out["y"] = doc["y"]
-    if doc.get("summaryEmbedding") is not None:
-        out["summaryEmbedding"] = doc["summaryEmbedding"]
-    return out
 
 
 def build_city_graph_fallback() -> dict:
@@ -118,15 +61,13 @@ async def load_full_graph() -> dict:
     cache_key = f"graph:full:{int(existing.stat().st_mtime)}"
 
     def _loader() -> dict:
-        for path in candidate_paths:
-            if path.exists():
-                try:
-                    data = json.loads(path.read_text())
-                    if data.get("nodes") is not None:
-                        return data
-                except Exception as exc:
-                    print(f"graph/full: failed to read {path}: {exc}")
-                    continue
+        data = load_first_matching_json(
+            candidate_paths,
+            predicate=lambda payload: isinstance(payload, dict) and payload.get("nodes") is not None,
+            default=None,
+        )
+        if data is not None:
+            return data
         return build_city_graph_fallback()
 
     return copy.deepcopy(cache.get_or_set(cache_key, 10.0, _loader))
@@ -141,6 +82,6 @@ def load_city_graph() -> dict:
     cache_key = f"graph:city:{int(graph_path.stat().st_mtime)}"
 
     def _loader() -> dict:
-        return json.loads(graph_path.read_text())
+        return load_json_file(graph_path, default={"nodes": [], "edges": [], "stats": {}})
 
     return copy.deepcopy(cache.get_or_set(cache_key, 10.0, _loader))

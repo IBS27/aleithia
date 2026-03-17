@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import copy
-import json
 import time
 from datetime import datetime
 from pathlib import Path
 
+from backend.shared_data import load_json_file
 from modal_app.api.cache import cache
 from modal_app.common import NEIGHBORHOOD_CENTROIDS, parse_timestamp
 from modal_app.volume import PROCESSED_DATA_PATH, volume
@@ -21,12 +21,7 @@ def load_fake_cctv() -> dict:
     cache_key = f"cctv:fake:{int(fake_path.stat().st_mtime)}" if fake_path.exists() else "cctv:fake:missing"
 
     def _loader() -> dict:
-        if fake_path.exists():
-            try:
-                return json.loads(fake_path.read_text())
-            except Exception:
-                pass
-        return {}
+        return load_json_file(fake_path, default={})
 
     return copy.deepcopy(cache.get_or_set(cache_key, 15.0, _loader))
 
@@ -116,10 +111,9 @@ async def load_cctv_latest_index() -> dict[str, dict]:
     cache_key = f"cctv:latest_index:{int(CCTV_LATEST_INDEX_PATH.stat().st_mtime)}"
 
     def _loader() -> dict[str, dict]:
-        try:
-            parsed = json.loads(CCTV_LATEST_INDEX_PATH.read_text())
-        except Exception as exc:
-            print(f"cctv_index_corrupt: {exc}")
+        parsed = load_json_file(CCTV_LATEST_INDEX_PATH, default=None)
+        if parsed is None:
+            print("cctv_index_corrupt: failed to parse latest index")
             return {}
 
         if not isinstance(parsed, dict):
@@ -279,11 +273,8 @@ async def aggregate_timeseries_for_neighborhood(name: str, camera_ids: list[str]
     hourly: dict[int, list[dict]] = {hour: [] for hour in range(24)}
     for cam_id in camera_ids:
         ts_path = ts_dir / f"{cam_id}.json"
-        if not ts_path.exists():
-            continue
-        try:
-            entries = json.loads(ts_path.read_text())
-        except Exception:
+        entries = load_json_file(ts_path, default=None)
+        if not isinstance(entries, list):
             continue
         for entry in entries:
             ts_str = entry.get("timestamp", "")
@@ -342,8 +333,4 @@ def load_parking_for_neighborhood(name: str) -> dict | None:
     candidates = sorted(analysis_dir.glob(f"{slug}_*.json"), reverse=True)
     if not candidates:
         return None
-
-    try:
-        return json.loads(candidates[0].read_text())
-    except Exception:
-        return None
+    return load_json_file(candidates[0], default=None)

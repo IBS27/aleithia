@@ -39,18 +39,18 @@ _base = (
 )
 
 # add_local_python_source must be LAST — no pip_install after it
-base_image = _base.add_local_python_source("modal_app", copy=True)
+base_image = _base.add_local_python_source("backend", "modal_app", copy=True)
 
-reddit_image = _base.pip_install("asyncpraw==7.7.1").add_local_python_source("modal_app", copy=True)
+reddit_image = _base.pip_install("asyncpraw==7.7.1").add_local_python_source("backend", "modal_app", copy=True)
 
 politics_image = _base.pip_install(
     "pymupdf==1.24.0",
     "pdfplumber==0.11.0",
-).add_local_python_source("modal_app", copy=True)
+).add_local_python_source("backend", "modal_app", copy=True)
 
-data_image = _base.pip_install("pandas==2.2.0").add_local_python_source("modal_app", copy=True)
+data_image = _base.pip_install("pandas==2.2.0").add_local_python_source("backend", "modal_app", copy=True)
 
-graph_image = _base.pip_install("networkx==3.3", "pandas==2.2.0").add_local_python_source("modal_app", copy=True)
+graph_image = _base.pip_install("networkx==3.3", "pandas==2.2.0").add_local_python_source("backend", "modal_app", copy=True)
 
 # vLLM image for self-hosted LLM (Qwen3-8B on H100)
 # vLLM includes its own optimized attention kernels; flash-attn is optional
@@ -62,7 +62,7 @@ vllm_image = (
         "torch>=2.4.0",
         *_arize_core_packages,
     )
-    .add_local_python_source("modal_app", copy=True)
+    .add_local_python_source("backend", "modal_app", copy=True)
 )
 
 # Classification image for DocClassifier + SentimentAnalyzer (T4)
@@ -75,7 +75,7 @@ classify_image = (
         "pydantic==2.9.0",
         *_arize_core_packages,
     )
-    .add_local_python_source("modal_app", copy=True)
+    .add_local_python_source("backend", "modal_app", copy=True)
 )
 
 # Web API image
@@ -84,7 +84,7 @@ web_image = (
         "fastapi>=0.115.0",
         "uvicorn>=0.34.0",
     )
-    .add_local_python_source("modal_app", copy=True)
+    .add_local_python_source("backend", "modal_app", copy=True)
 )
 
 # Sandbox image for AI-generated data analysis scripts (no local source — standalone code)
@@ -96,7 +96,7 @@ sandbox_image = (
 # Lead Analyst: recursive agent architecture with E2B sandbox workers
 lead_analyst_image = (
     _base.pip_install("e2b-code-interpreter>=1.0.0")
-    .add_local_python_source("modal_app", copy=True)
+    .add_local_python_source("backend", "modal_app", copy=True)
 )
 
 # Vision pipeline images
@@ -104,7 +104,7 @@ video_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
     .pip_install("yt-dlp==2024.8.6")
-    .add_local_python_source("modal_app", copy=True)
+    .add_local_python_source("backend", "modal_app", copy=True)
 )
 
 label_image = (
@@ -116,14 +116,14 @@ label_image = (
         *_arize_core_packages,
         *_arize_openai_packages,
     )
-    .add_local_python_source("modal_app", copy=True)
+    .add_local_python_source("backend", "modal_app", copy=True)
 )
 
 yolo_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("libgl1-mesa-glx", "libglib2.0-0")
     .pip_install("ultralytics==8.3.40", "opencv-python-headless==4.9.0.80", "httpx==0.27.0", "pydantic==2.9.0")
-    .add_local_python_source("modal_app", copy=True)
+    .add_local_python_source("backend", "modal_app", copy=True)
 )
 
 # Parking detection: SegFormer + YOLOv8m + SAHI for satellite imagery analysis
@@ -149,7 +149,7 @@ tiktok_image = (
         "pydantic==2.9.0",
     )
     .run_commands("playwright install chromium")
-    .add_local_python_source("modal_app")
+    .add_local_python_source("backend", "modal_app")
 )
 
 # TikTok transcription: yt-dlp + Whisper on GPU
@@ -163,5 +163,5 @@ transcribe_image = (
         "httpx==0.27.0",
         "pydantic==2.9.0",
     )
-    .add_local_python_source("modal_app")
+    .add_local_python_source("backend", "modal_app")
 )

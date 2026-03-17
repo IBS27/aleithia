@@ -2,23 +2,71 @@
 
 from __future__ import annotations
 
+from typing import Iterable, Mapping
 
-def filter_docs_by_neighborhood(docs: list[dict], neighborhood: str) -> list[dict]:
-    """Filter documents that match a neighborhood using existing backend heuristics."""
-    nb = neighborhood.lower()
+
+def filter_docs_by_neighborhood_match(
+    docs: list[dict],
+    neighborhood: str,
+    *,
+    geo_substring_fields: Iterable[str] = ("neighborhood", "community_area_name"),
+    geo_exact_field_values: Mapping[str, object] | None = None,
+    raw_record_fields: Iterable[str] = ("address", "community_area_name"),
+    include_title: bool = True,
+    include_content: bool = True,
+    content_limit: int | None = None,
+    min_content_match_length: int = 0,
+) -> list[dict]:
+    """Filter documents by neighborhood while allowing caller-specific matching knobs."""
+    if not neighborhood:
+        return docs
+
+    needle = neighborhood.lower()
+    geo_exact_field_values = geo_exact_field_values or {}
     results = []
     for doc in docs:
         geo = doc.get("geo", {})
-        doc_nb = (geo.get("neighborhood") or "").lower()
-        doc_ca = (geo.get("community_area_name") or "").lower()
-        content = (doc.get("content") or "").lower()
-        raw = doc.get("metadata", {}).get("raw_record", {})
-        address = (raw.get("address") or "").lower()
-        title = (doc.get("title") or "").lower()
-        community = (raw.get("community_area_name") or "").lower()
-        if nb in doc_nb or nb in doc_ca or nb in content or nb in address or nb in title or nb in community:
+        matched = any(needle in str(geo.get(field) or "").lower() for field in geo_substring_fields)
+
+        if not matched:
+            for field, expected in geo_exact_field_values.items():
+                actual = geo.get(field)
+                if isinstance(expected, str):
+                    if str(actual or "").lower() == expected.lower():
+                        matched = True
+                        break
+                elif actual == expected:
+                    matched = True
+                    break
+
+        if not matched and include_title:
+            matched = needle in str(doc.get("title") or "").lower()
+
+        if not matched and include_content and len(needle) >= min_content_match_length:
+            content = str(doc.get("content") or "").lower()
+            if content_limit is not None:
+                content = content[:content_limit]
+            matched = needle in content
+
+        if not matched and raw_record_fields:
+            raw = doc.get("metadata", {}).get("raw_record", {})
+            matched = any(needle in str(raw.get(field) or "").lower() for field in raw_record_fields)
+
+        if matched:
             results.append(doc)
     return results
+
+
+def filter_docs_by_neighborhood(docs: list[dict], neighborhood: str) -> list[dict]:
+    """Filter documents that match a neighborhood using existing backend heuristics."""
+    return filter_docs_by_neighborhood_match(
+        docs,
+        neighborhood,
+        geo_substring_fields=("neighborhood", "community_area_name"),
+        raw_record_fields=("address", "community_area_name"),
+        include_title=True,
+        include_content=True,
+    )
 
 
 def filter_public_data_by_dataset(docs: list[dict], dataset: str) -> list[dict]:
