@@ -36,13 +36,13 @@ def _make_client(monkeypatch, data_root: Path) -> TestClient:
 def test_shared_data_resolution_prefers_env_over_detected_layout(tmp_path, monkeypatch) -> None:
     repo_root = tmp_path / "repo"
     backend_root = repo_root / "backend"
-    detected_raw = repo_root / "data" / "raw"
-    detected_processed = repo_root / "data" / "processed"
+    canonical_raw = repo_root / "data" / "raw"
+    canonical_processed = repo_root / "data" / "processed"
     explicit_raw = tmp_path / "external" / "raw"
     explicit_processed = tmp_path / "external" / "processed"
 
-    detected_raw.mkdir(parents=True)
-    detected_processed.mkdir(parents=True)
+    canonical_raw.mkdir(parents=True)
+    canonical_processed.mkdir(parents=True)
     explicit_raw.mkdir(parents=True)
     explicit_processed.mkdir(parents=True)
 
@@ -55,6 +55,30 @@ def test_shared_data_resolution_prefers_env_over_detected_layout(tmp_path, monke
 
     assert shared_data.get_raw_data_dir() == explicit_raw.resolve()
     assert shared_data.get_processed_data_dir() == explicit_processed.resolve()
+
+
+def test_shared_data_default_resolution_uses_repo_data_root(tmp_path, monkeypatch) -> None:
+    repo_root = tmp_path / "repo"
+    backend_root = repo_root / "backend"
+    canonical_raw = repo_root / "data" / "raw"
+    canonical_processed = repo_root / "data" / "processed"
+    legacy_backend_raw = backend_root / "data" / "raw"
+    legacy_backend_processed = backend_root / "data" / "processed"
+
+    canonical_raw.mkdir(parents=True)
+    canonical_processed.mkdir(parents=True)
+    legacy_backend_raw.mkdir(parents=True)
+    legacy_backend_processed.mkdir(parents=True)
+
+    monkeypatch.setattr(shared_data, "REPO_ROOT", repo_root)
+    monkeypatch.setattr(shared_data, "BACKEND_ROOT", backend_root)
+    monkeypatch.delenv("ALEITHIA_DATA_ROOT", raising=False)
+    monkeypatch.delenv("ALEITHIA_RAW_DATA_DIR", raising=False)
+    monkeypatch.delenv("ALEITHIA_PROCESSED_DATA_DIR", raising=False)
+    shared_data._LAST_LOGGED_LAYOUT = None
+
+    assert shared_data.get_raw_data_dir() == canonical_raw.resolve()
+    assert shared_data.get_processed_data_dir() == canonical_processed.resolve()
 
 
 def test_load_raw_docs_recurses_and_skips_invalid_payloads(tmp_path, monkeypatch) -> None:
@@ -205,3 +229,37 @@ def test_backend_routes_read_shared_raw_and_processed_data(tmp_path, monkeypatch
     assert payload["news"][0]["id"] == "news-1"
     assert payload["politics"][0]["id"] == "pol-1"
     assert payload["cctv"]["peak_hour"] == 17
+
+
+def test_backend_routes_do_not_read_fixture_tree(tmp_path, monkeypatch) -> None:
+    repo_root = tmp_path / "repo"
+    backend_root = repo_root / "backend"
+    fixture_root = repo_root / "fixtures" / "demo_data"
+
+    _write_json(
+        fixture_root / "processed" / "geo" / "neighborhood_metrics.json",
+        '{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"neighborhood":"Fixture Loop"}}]}',
+    )
+    _write_json(
+        fixture_root / "processed" / "summaries" / "news_summary.json",
+        '{"headline_count": 99}',
+    )
+
+    monkeypatch.setattr(shared_data, "REPO_ROOT", repo_root)
+    monkeypatch.setattr(shared_data, "BACKEND_ROOT", backend_root)
+    monkeypatch.delenv("ALEITHIA_DATA_ROOT", raising=False)
+    monkeypatch.delenv("ALEITHIA_RAW_DATA_DIR", raising=False)
+    monkeypatch.delenv("ALEITHIA_PROCESSED_DATA_DIR", raising=False)
+    shared_data._LAST_LOGGED_LAYOUT = None
+
+    app = FastAPI()
+    app.include_router(data_router, prefix="/api/data")
+    client = TestClient(app)
+
+    geo = client.get("/api/data/geo")
+    assert geo.status_code == 200
+    assert geo.json() == {"type": "FeatureCollection", "features": []}
+
+    summary = client.get("/api/data/summary")
+    assert summary.status_code == 200
+    assert summary.json() == {}

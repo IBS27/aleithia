@@ -35,15 +35,7 @@ def _resolve_dir(explicit_env: str, suffix: str) -> Path:
     if data_root:
         return _resolve_path(data_root) / suffix
 
-    candidates = [
-        REPO_ROOT / suffix,
-        REPO_ROOT / "data" / suffix,
-        BACKEND_ROOT / "data" / suffix,
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[0]
+    return (REPO_ROOT / "data" / suffix).resolve()
 
 
 def get_shared_data_paths() -> SharedDataPaths:

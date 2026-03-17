@@ -25,8 +25,23 @@ from pathlib import Path
 # Paths
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = PROJECT_ROOT / "backend" / "data"
-PROCESSED_DIR = DATA_DIR / "processed"
+DEFAULT_DATA_ROOT = (PROJECT_ROOT / "data").resolve()
+
+
+def _resolve_dir(explicit_env: str, suffix: str) -> Path:
+    explicit_value = os.environ.get(explicit_env, "").strip()
+    if explicit_value:
+        return Path(explicit_value).expanduser().resolve()
+
+    data_root = os.environ.get("ALEITHIA_DATA_ROOT", "").strip()
+    if data_root:
+        return Path(data_root).expanduser().resolve() / suffix
+
+    return DEFAULT_DATA_ROOT / suffix
+
+
+DATA_DIR = _resolve_dir("ALEITHIA_RAW_DATA_DIR", "raw")
+PROCESSED_DIR = _resolve_dir("ALEITHIA_PROCESSED_DATA_DIR", "processed")
 SUMMARIES_DIR = PROCESSED_DIR / "summaries"
 GEO_DIR = PROCESSED_DIR / "geo"
 TRENDS_DIR = PROCESSED_DIR / "trends" / "baselines"

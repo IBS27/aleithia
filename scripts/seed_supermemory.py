@@ -21,8 +21,22 @@ if not api_key:
 
 client = Supermemory(api_key=api_key)
 
-# Point this at your local copy of the volume data, or run on Modal
-RAW_PATH = Path(os.environ.get("RAW_PATH", "./data/raw"))
+# Point this at your local copy of the volume data, or run on Modal.
+project_root = Path(__file__).resolve().parent.parent
+default_raw_path = (project_root / "data" / "raw").resolve()
+raw_override = os.environ.get("RAW_PATH", "").strip()
+shared_raw_override = os.environ.get("ALEITHIA_RAW_DATA_DIR", "").strip()
+data_root = os.environ.get("ALEITHIA_DATA_ROOT", "").strip()
+
+if raw_override:
+    RAW_PATH = Path(raw_override).expanduser().resolve()
+elif shared_raw_override:
+    RAW_PATH = Path(shared_raw_override).expanduser().resolve()
+elif data_root:
+    RAW_PATH = Path(data_root).expanduser().resolve() / "raw"
+else:
+    RAW_PATH = default_raw_path
+
 if not RAW_PATH.exists():
     print(f"Error: {RAW_PATH} does not exist. Set RAW_PATH env var or mount the volume.")
     raise SystemExit(1)

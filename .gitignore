@@ -70,8 +70,12 @@ htmlcov/
 # Modal
 .modal/
 
-# Downloaded data (from Modal Volume)
+# Runtime data
 backend/data/
+data/raw/
+data/processed/
+data/cache/
+data/dedup/
 
 # SQLite (local dev)
 backend/test.db
