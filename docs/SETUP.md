@@ -169,6 +169,27 @@ npm run dev
 # Point API calls to: https://ibsrinivas27--alethia-serve.modal.run
 ```
 
+## 9. Local Runtime Data
+
+Local runtime data uses the same layout as the Modal volume:
+
+```bash
+data/raw/
+data/processed/
+data/cache/
+data/dedup/
+```
+
+The backend and local maintenance scripts default to `./data`. To override that, set `ALEITHIA_DATA_ROOT` in your local `.env`.
+
+Checked-in demo data lives under `fixtures/demo_data/` and is not read automatically at runtime. If you want to seed the local runtime tree with demo fixtures, run:
+
+```bash
+python scripts/bootstrap_demo_data.py
+```
+
+Add `--force` if you intentionally want fixture files to overwrite existing runtime files.
+
 ## Architecture Overview
 
 ```

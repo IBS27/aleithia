@@ -12,10 +12,9 @@ Usage:
 import hashlib
 import json
 import math
-import os
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+
+from shared_data import get_processed_data_dir
 
 # ---------------------------------------------------------------------------
 # Neighborhood centroids (copied from modal_app/common.py to keep standalone)
@@ -350,7 +349,7 @@ def generate() -> dict:
 def main():
     data = generate()
 
-    out_dir = Path(__file__).parent.parent / "data" / "processed" / "cctv"
+    out_dir = get_processed_data_dir() / "cctv"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "synthetic_analytics.json"
 
