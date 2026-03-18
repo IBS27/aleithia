@@ -1,0 +1,25 @@
+# Root development environment for local pytest and shared repo tooling.
+# This is intentionally separate from the runtime-specific manifests used by
+# Docker and Modal packaging.
+
+-r backend/requirements.txt
+
+# Additional dependencies needed when tests import modal_app modules locally.
+feedparser==6.0.11
+asyncpraw==7.7.1
+pymupdf==1.24.0
+pdfplumber==0.11.0
+pandas==2.2.0
+openai>=1.69.0,<2
+ultralytics==8.2.0
+opencv-python-headless==4.9.0.80
+pillow==10.4.0
+arize-otel
+openinference-instrumentation
+openinference-instrumentation-openai
+opentelemetry-api
+opentelemetry-sdk
+
+# Test tooling used from the repo root.
+pytest
+pytest-asyncio
