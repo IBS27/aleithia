@@ -8,17 +8,20 @@ Instructions for coding agents working in this repository. Keep this file practi
 - Read the nearby implementation before editing. Do not assume endpoint ownership, data shapes, or file locations from names alone.
 - Prefer narrow changes over broad refactors. Large components and pipeline modules already carry a lot of local context.
 - Validate the smallest relevant surface for your change, then report exactly what you ran and what remains unverified.
+- Treat `docs/OPERATIONS.md` as the canonical human setup/runbook doc. Keep `README.md` short and practical, and use `AGENTS.md` for agent-specific repo guidance.
 
 ## Repository map
 
 - `frontend/`: React 19 + TypeScript + Vite UI.
 - `frontend/src/api.ts`: primary client API contract. Check this before changing routes or response shapes.
-- `frontend/.env.example`: only documents `VITE_MODAL_URL`; Clerk frontend env vars were removed.
+- `frontend/.env.example`: documents `VITE_MODAL_URL` and optional `VITE_BACKEND_URL`; Clerk frontend env vars were removed.
 - `backend/`: local FastAPI service for health checks, user profile/history, and some JSON-backed local data endpoints.
 - `modal_app/`: the main Modal application and the production-facing API in `modal_app/web.py`.
 - `data/`: local runtime data root for shared raw/processed outputs. Treat it as ephemeral.
 - `fixtures/demo_data/`: checked-in demo/sample data. Only copy from here into `data/` explicitly.
-- `scripts/`: maintenance utilities and a local pipeline harness.
+- `scripts/bootstrap/`: explicit local bootstrap utilities.
+- `scripts/maintenance/`: supported maintenance utilities and local pipeline harnesses.
+- `scripts/experiments/`: optional compute-heavy or one-off workflows.
 - `tests/`: pytest coverage for ranking, retrieval, tracing, Modal web contracts, and risk scoring.
 - `requirements-dev.txt`: root local Python dependency entrypoint for `/.venv` and repo-wide pytest.
 
@@ -38,8 +41,12 @@ Instructions for coding agents working in this repository. Keep this file practi
   - The canonical local runtime layout is `data/raw/` and `data/processed/`.
   - Do not reintroduce `backend/data/...`, repo-root `raw/` or `processed/`, or filesystem auto-detection fallbacks as supported runtime sources.
   - Use `ALEITHIA_DATA_ROOT`, `ALEITHIA_RAW_DATA_DIR`, and `ALEITHIA_PROCESSED_DATA_DIR` only as explicit overrides.
-- Runtime code must not silently read from `fixtures/demo_data/`; if demo data is needed locally, use `scripts/bootstrap/bootstrap_demo_data.py`.
+  - Runtime code must not silently read from `fixtures/demo_data/`; if demo data is needed locally, use `scripts/bootstrap/bootstrap_demo_data.py`.
   - Do not commit generated runtime files under `data/`.
+- Local Python setup:
+  - Use a repo-root `/.venv`, not `backend/.venv`.
+  - Use Python 3.12 for the local venv because the current dependency set is validated there.
+  - Install local test/dev dependencies from `requirements-dev.txt`.
 - Shared read-helper rule:
   - Normal shared read/filter/metric helpers now live in `backend/shared_data.py`, `backend/read_helpers.py`, and `backend/metric_helpers.py`. Reuse those from `modal_app/` instead of recreating duplicate helper logic there.
 
@@ -59,6 +66,7 @@ Instructions for coding agents working in this repository. Keep this file practi
 - Frontend lint: `cd frontend && npm run lint`
 - Frontend build: `cd frontend && npm run build`
 - Python env bootstrap: `make setup-python`
+- Manual Python env bootstrap: `python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt`
 - Local backend dev: `cd backend && uvicorn main:app --reload`
 - Full local stack: `docker-compose up --build`
 - Modal deploy: `modal deploy modal_app/__init__.py`
@@ -74,6 +82,7 @@ Instructions for coding agents working in this repository. Keep this file practi
 - Expect baseline validation debt:
   - frontend lint/build may fail on pre-existing issues unrelated to your task;
   - Runtime packaging still uses both `backend/requirements.txt` and `modal_app/requirements-modal.txt`, while local repo-wide pytest should use `requirements-dev.txt`.
+  - The local `/.venv` is for repo development and pytest; Docker and Modal packaging still use their own runtime-specific manifests.
 - If a check fails for unrelated baseline reasons, say so clearly and separate it from your change-specific verification.
 
 ## External services and cost controls
