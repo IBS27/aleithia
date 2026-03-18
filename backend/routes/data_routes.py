@@ -1,6 +1,7 @@
 """Routes that serve Aleithia data from shared raw/processed JSON files."""
 
 import os
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,10 +17,10 @@ from read_helpers import (
     transform_doc_for_graph,
 )
 from shared_data import (
+    get_raw_data_dir,
     get_raw_source_stats,
+    load_json_docs_from_directory,
     load_processed_json,
-    load_processed_json_directory,
-    load_raw_docs,
 )
 
 router = APIRouter()
@@ -56,9 +57,165 @@ class UserQueryResponse(BaseModel):
     created_at: str
 
 
+STEP4_SOURCE_NAMES = [
+    "news",
+    "politics",
+    "federal_register",
+    "public_data",
+    "demographics",
+    "reddit",
+    "reviews",
+    "realestate",
+    "tiktok",
+]
+
+_TIKTOK_CREATOR_RE = re.compile(r"tiktok\.com/@([^/?#]+)/video/", re.IGNORECASE)
+
+
+def _load_source_docs(source: str, limit: int | None = None) -> list[dict]:
+    """Load raw JSON documents using the same directory traversal shape as Modal."""
+    return load_json_docs_from_directory(
+        get_raw_data_dir() / source,
+        limit=limit,
+        on_error=lambda json_file, exc: print(
+            f"_load_source_docs [{source}]: corrupted JSON {json_file.name}: {exc}"
+        ),
+    )
+
+
 def _load_all(source: str) -> list[dict]:
-    """Load all valid JSON documents from a raw source directory."""
-    return load_raw_docs(source)
+    return _load_source_docs(source)
+
+
+def _load_city_demographics_summary() -> dict:
+    summary = load_processed_json("demographics_summary.json", default=None)
+    if not isinstance(summary, dict):
+        summary = load_processed_json("summaries", "demographics_summary.json", default={})
+    return summary.get("city_wide", {}) if isinstance(summary, dict) else {}
+
+
+def _is_count_only_text(value: str) -> bool:
+    text = (value or "").strip()
+    return bool(text) and bool(re.fullmatch(r"\d[\d,.\s]*[KMBkmb]?", text))
+
+
+def _extract_tiktok_creator_from_url(video_url: str) -> str:
+    match = _TIKTOK_CREATOR_RE.search(video_url or "")
+    if not match:
+        return ""
+    return match.group(1).strip().lstrip("@")
+
+
+def _extract_transcript_headline(content: str, max_len: int = 120) -> str:
+    text = (content or "").strip()
+    if not text:
+        return ""
+    if "[Transcript]" in text:
+        text = text.split("[Transcript]", 1)[1].strip()
+    text = re.sub(r"^\d[\d,.\s]*[KMBkmb]?\s*[:\-]?\s*", "", text)
+    text = re.sub(r"\s+", " ", text)
+    for sep in (". ", "! ", "? "):
+        if sep in text:
+            text = text.split(sep, 1)[0].strip()
+            break
+    if len(text) > max_len:
+        text = text[:max_len].rsplit(" ", 1)[0]
+    return text.strip(" -:;,.")
+
+
+def _normalize_tiktok_content(content: str) -> str:
+    text = (content or "").strip()
+    if not text:
+        return ""
+    if "\n[Transcript]" in text:
+        first_line, remainder = text.split("\n", 1)
+        if _is_count_only_text(first_line):
+            text = remainder.strip()
+    if _is_count_only_text(text):
+        return ""
+    return text
+
+
+def _parse_view_count(value: str) -> int:
+    text = (value or "").strip().replace(",", "").upper()
+    if not text:
+        return 0
+    match = re.match(r"^(\d+(?:\.\d+)?)\s*([KMB])?$", text)
+    if not match:
+        return 0
+    num = float(match.group(1))
+    suffix = match.group(2) or ""
+    if suffix == "K":
+        num *= 1_000
+    elif suffix == "M":
+        num *= 1_000_000
+    elif suffix == "B":
+        num *= 1_000_000_000
+    return int(round(num))
+
+
+def _normalize_tiktok_doc(doc: dict) -> dict:
+    normalized = dict(doc)
+    metadata = dict(normalized.get("metadata") or {})
+    normalized["metadata"] = metadata
+
+    content = _normalize_tiktok_content(normalized.get("content", ""))
+    normalized["content"] = content
+
+    creator = str(metadata.get("creator", "") or "").strip().lstrip("@")
+    if not creator:
+        creator = _extract_tiktok_creator_from_url(normalized.get("url", ""))
+    if creator:
+        metadata["creator"] = creator
+
+    search_query = str(metadata.get("search_query", "") or "").strip()
+    if not search_query:
+        query_match = re.search(r"TikTok video related to:\s*(.+)$", content, re.IGNORECASE)
+        if query_match:
+            search_query = query_match.group(1).strip()
+    if search_query:
+        metadata["search_query"] = search_query
+
+    views_normalized = _parse_view_count(str(metadata.get("views_normalized", "") or ""))
+    if views_normalized <= 0:
+        views_normalized = _parse_view_count(str(metadata.get("views", "") or ""))
+    metadata["views_normalized"] = views_normalized
+
+    query_scope = str(metadata.get("query_scope", "") or "").strip().lower()
+    if query_scope in ("city", "local"):
+        metadata["query_scope"] = query_scope
+
+    title = str(normalized.get("title", "") or "").strip()
+    if not title or _is_count_only_text(title) or title.lower() == "tiktok video":
+        transcript_title = _extract_transcript_headline(content)
+        if transcript_title:
+            title = transcript_title
+        elif creator:
+            title = f"@{creator}"
+        elif search_query:
+            title = f"TikTok: {search_query}"
+        else:
+            title = "TikTok video"
+    normalized["title"] = title
+
+    return normalized
+
+
+def _is_low_quality_tiktok_doc(doc: dict) -> bool:
+    title = (doc.get("title", "") or "").strip()
+    content = (doc.get("content", "") or "").strip()
+    meta = doc.get("metadata", {}) or {}
+    creator = str(meta.get("creator", "") or "").strip()
+    hashtags = meta.get("hashtags", []) or []
+    transcript_present = "[Transcript]" in content
+    meaningful_content = bool(content) and not _is_count_only_text(content)
+    return bool(
+        _is_count_only_text(title)
+        and not meaningful_content
+        and not creator
+        and not hashtags
+        and not transcript_present
+    )
 
 
 @router.get("/user/profile", response_model=UserProfileResponse)
@@ -191,9 +348,7 @@ async def put_user_settings(
 @router.get("/sources")
 async def get_sources():
     """Return available data sources with counts."""
-    source_stats = get_raw_source_stats(
-        ["public_data", "demographics", "politics", "news", "realestate", "reddit", "reviews"]
-    )
+    source_stats = get_raw_source_stats(STEP4_SOURCE_NAMES)
     return {
         source: {"count": data["doc_count"], "active": data["active"]}
         for source, data in source_stats.items()
@@ -288,18 +443,24 @@ async def get_graph(page: int = Query(1, ge=1), limit: int = Query(500, ge=1, le
 
 @router.get("/summary")
 async def get_summary():
-    """Return compressed data summaries."""
-    return load_processed_json_directory("summaries", stem_suffix_to_strip="_summary")
+    """Return aggregate source counts and citywide demographics."""
+    source_stats = get_raw_source_stats(STEP4_SOURCE_NAMES)
+    source_counts = {source: data["doc_count"] for source, data in source_stats.items()}
+    return {
+        "total_documents": sum(source_counts.values()),
+        "source_counts": source_counts,
+        "demographics": _load_city_demographics_summary(),
+    }
 
 
 @router.get("/inspections")
 async def get_inspections(
-    neighborhood: Optional[str] = Query(None),
-    result: Optional[str] = Query(None),
-    limit: int = Query(50, le=200),
+    neighborhood: str = "",
+    result: str = "",
+    limit: int = Query(100, ge=1, le=200),
 ):
     """Return food inspection records."""
-    docs = filter_public_data_by_dataset(_load_all("public_data"), "food_inspections")
+    docs = filter_public_data_by_dataset(_load_source_docs("public_data", limit=500), "food_inspections")
     if neighborhood:
         docs = filter_docs_by_neighborhood(docs, neighborhood)
     if result:
@@ -312,11 +473,11 @@ async def get_inspections(
 
 @router.get("/permits")
 async def get_permits(
-    neighborhood: Optional[str] = Query(None),
-    limit: int = Query(50, le=200),
+    neighborhood: str = "",
+    limit: int = Query(100, ge=1, le=200),
 ):
     """Return building permit records."""
-    docs = filter_public_data_by_dataset(_load_all("public_data"), "building_permits")
+    docs = filter_public_data_by_dataset(_load_source_docs("public_data", limit=500), "building_permits")
     if neighborhood:
         docs = filter_docs_by_neighborhood(docs, neighborhood)
     return docs[:limit]
@@ -324,11 +485,11 @@ async def get_permits(
 
 @router.get("/licenses")
 async def get_licenses(
-    neighborhood: Optional[str] = Query(None),
-    limit: int = Query(50, le=200),
+    neighborhood: str = "",
+    limit: int = Query(100, ge=1, le=200),
 ):
     """Return business license records."""
-    docs = filter_public_data_by_dataset(_load_all("public_data"), "business_licenses")
+    docs = filter_public_data_by_dataset(_load_source_docs("public_data", limit=500), "business_licenses")
     if neighborhood:
         docs = filter_docs_by_neighborhood(docs, neighborhood)
     return docs[:limit]
@@ -341,19 +502,51 @@ async def get_demographics(limit: int = Query(50, le=200)):
 
 
 @router.get("/news")
-async def get_news(limit: int = Query(20, le=100)):
+async def get_news(limit: int = Query(50, ge=1, le=100)):
     """Return news articles."""
-    docs = _load_all("news")
-    # Sort by timestamp descending
-    docs.sort(key=lambda d: d.get("timestamp", ""), reverse=True)
-    return docs[:limit]
+    return _load_source_docs("news", limit=limit)
 
 
 @router.get("/politics")
-async def get_politics(limit: int = Query(50, le=200)):
+async def get_politics(limit: int = Query(50, ge=1, le=100)):
     """Return political/legislative records."""
-    docs = _load_all("politics")
-    docs.sort(key=lambda d: d.get("timestamp", ""), reverse=True)
+    return _load_source_docs("politics", limit=limit)
+
+
+@router.get("/reddit")
+async def get_reddit(neighborhood: str = "", limit: int = Query(100, ge=1, le=200)):
+    """Return Reddit documents."""
+    docs = _load_source_docs("reddit", limit=100)
+    if neighborhood:
+        docs = filter_docs_by_neighborhood(docs, neighborhood)
+    return docs[:limit]
+
+
+@router.get("/reviews")
+async def get_reviews(neighborhood: str = "", limit: int = Query(100, ge=1, le=200)):
+    """Return review documents."""
+    docs = _load_source_docs("reviews", limit=100)
+    if neighborhood:
+        docs = filter_docs_by_neighborhood(docs, neighborhood)
+    return docs[:limit]
+
+
+@router.get("/realestate")
+async def get_realestate(neighborhood: str = "", limit: int = Query(50, ge=1, le=100)):
+    """Return real estate documents."""
+    docs = _load_source_docs("realestate", limit=50)
+    if neighborhood:
+        docs = filter_docs_by_neighborhood(docs, neighborhood)
+    return docs[:limit]
+
+
+@router.get("/tiktok")
+async def get_tiktok(neighborhood: str = "", limit: int = Query(50, ge=1, le=100)):
+    """Return normalized TikTok documents."""
+    docs = [_normalize_tiktok_doc(doc) for doc in _load_source_docs("tiktok", limit=50)]
+    docs = [doc for doc in docs if not _is_low_quality_tiktok_doc(doc)]
+    if neighborhood:
+        docs = filter_docs_by_neighborhood(docs, neighborhood)
     return docs[:limit]
 
 

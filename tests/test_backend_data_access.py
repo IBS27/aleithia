@@ -282,6 +282,43 @@ def test_backend_routes_read_shared_raw_and_processed_data(tmp_path, monkeypatch
         """.strip(),
     )
     _write_json(
+        data_root / "raw" / "reviews" / "2026-03-17" / "review.json",
+        """
+        {
+          "id": "review-1",
+          "title": "Loop cafe reviews",
+          "content": "Customers like the all-day coffee program.",
+          "geo": {"neighborhood": "Loop"}
+        }
+        """.strip(),
+    )
+    _write_json(
+        data_root / "raw" / "realestate" / "2026-03-17" / "listing.json",
+        """
+        {
+          "id": "realestate-1",
+          "title": "Loop retail lease",
+          "content": "Retail space available in the Loop.",
+          "geo": {"neighborhood": "Loop"}
+        }
+        """.strip(),
+    )
+    _write_json(
+        data_root / "raw" / "tiktok" / "2026-03-17" / "video.json",
+        """
+        {
+          "id": "tiktok-1",
+          "title": "TikTok video",
+          "content": "12K\\n[Transcript] Loop coffee shops are packed after 6pm.",
+          "url": "https://www.tiktok.com/@loopcoffee/video/123",
+          "metadata": {
+            "views": "12K"
+          },
+          "geo": {"neighborhood": "Loop"}
+        }
+        """.strip(),
+    )
+    _write_json(
         data_root / "processed" / "geo" / "neighborhood_metrics.json",
         """
         {
@@ -299,8 +336,14 @@ def test_backend_routes_read_shared_raw_and_processed_data(tmp_path, monkeypatch
         """.strip(),
     )
     _write_json(
-        data_root / "processed" / "summaries" / "news_summary.json",
-        '{"headline_count": 1}',
+        data_root / "processed" / "demographics_summary.json",
+        """
+        {
+          "city_wide": {
+            "total_population": 12345
+          }
+        }
+        """.strip(),
     )
     _write_json(
         data_root / "processed" / "cctv" / "synthetic_analytics.json",
@@ -322,6 +365,8 @@ def test_backend_routes_read_shared_raw_and_processed_data(tmp_path, monkeypatch
     assert sources.status_code == 200
     assert sources.json()["news"] == {"count": 1, "active": True}
     assert sources.json()["reddit"] == {"count": 1, "active": True}
+    assert sources.json()["tiktok"] == {"count": 1, "active": True}
+    assert sources.json()["federal_register"] == {"count": 0, "active": False}
 
     news = client.get("/api/data/news")
     assert news.status_code == 200
@@ -329,11 +374,49 @@ def test_backend_routes_read_shared_raw_and_processed_data(tmp_path, monkeypatch
 
     summary = client.get("/api/data/summary")
     assert summary.status_code == 200
-    assert summary.json() == {"news": {"headline_count": 1}}
+    assert summary.json() == {
+        "total_documents": 7,
+        "source_counts": {
+            "news": 1,
+            "politics": 1,
+            "federal_register": 0,
+            "public_data": 1,
+            "demographics": 0,
+            "reddit": 1,
+            "reviews": 1,
+            "realestate": 1,
+            "tiktok": 1,
+        },
+        "demographics": {"total_population": 12345},
+    }
 
     geo = client.get("/api/data/geo")
     assert geo.status_code == 200
     assert geo.json()["features"][0]["properties"]["neighborhood"] == "Loop"
+
+    inspections = client.get("/api/data/inspections")
+    assert inspections.status_code == 200
+    assert [doc["id"] for doc in inspections.json()] == ["insp-1"]
+
+    reddit = client.get("/api/data/reddit?neighborhood=Loop")
+    assert reddit.status_code == 200
+    assert [doc["id"] for doc in reddit.json()] == ["reddit-1"]
+
+    reviews = client.get("/api/data/reviews?neighborhood=Loop")
+    assert reviews.status_code == 200
+    assert [doc["id"] for doc in reviews.json()] == ["review-1"]
+
+    realestate = client.get("/api/data/realestate?neighborhood=Loop")
+    assert realestate.status_code == 200
+    assert [doc["id"] for doc in realestate.json()] == ["realestate-1"]
+
+    tiktok = client.get("/api/data/tiktok?neighborhood=Loop")
+    assert tiktok.status_code == 200
+    tiktok_payload = tiktok.json()
+    assert [doc["id"] for doc in tiktok_payload] == ["tiktok-1"]
+    assert tiktok_payload[0]["title"] == "Loop coffee shops are packed after 6pm"
+    assert tiktok_payload[0]["metadata"]["creator"] == "loopcoffee"
+    assert tiktok_payload[0]["metadata"]["views_normalized"] == 12000
 
     cctv = client.get("/api/data/cctv/timeseries/Loop")
     assert cctv.status_code == 200
@@ -380,7 +463,21 @@ def test_backend_routes_do_not_read_fixture_tree(tmp_path, monkeypatch) -> None:
 
     summary = client.get("/api/data/summary")
     assert summary.status_code == 200
-    assert summary.json() == {}
+    assert summary.json() == {
+        "total_documents": 0,
+        "source_counts": {
+            "news": 0,
+            "politics": 0,
+            "federal_register": 0,
+            "public_data": 0,
+            "demographics": 0,
+            "reddit": 0,
+            "reviews": 0,
+            "realestate": 0,
+            "tiktok": 0,
+        },
+        "demographics": {},
+    }
 
 
 def test_backend_user_profile_and_settings_alias_share_storage(tmp_path) -> None:
