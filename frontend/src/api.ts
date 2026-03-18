@@ -2,7 +2,7 @@ import type { DataSources, GeoJSON, NeighborhoodData, Document, CCTVTimeseries, 
 
 // Modal deployed endpoint — set via VITE_MODAL_URL, fallback to local proxy
 export const API_BASE = import.meta.env.VITE_MODAL_URL || '/api/data'
-export const USER_API_BASE = import.meta.env.VITE_BACKEND_URL || '/api/data'
+export const BACKEND_API_BASE = import.meta.env.VITE_BACKEND_URL || '/api/data'
 const LOCAL_USER_ID_KEY = 'aleithia.localUserId'
 
 function getLocalUserId(): string {
@@ -39,8 +39,8 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   return fetchBaseJSON<T>(API_BASE, path, init)
 }
 
-async function fetchUserJSON<T>(path: string, init?: RequestInit): Promise<T> {
-  return fetchBaseJSON<T>(USER_API_BASE, path, init)
+async function fetchBackendJSON<T>(path: string, init?: RequestInit): Promise<T> {
+  return fetchBaseJSON<T>(BACKEND_API_BASE, path, init)
 }
 
 export interface SavedSettings {
@@ -137,9 +137,9 @@ export async function fetchTrends(neighborhood: string): Promise<TrendData> {
 }
 
 export const api = {
-  sources: () => fetchJSON<DataSources>('/sources'),
-  geo: () => fetchJSON<GeoJSON>('/geo'),
-  summary: () => fetchJSON<Record<string, unknown>>('/summary'),
+  sources: () => fetchBackendJSON<DataSources>('/sources'),
+  geo: () => fetchBackendJSON<GeoJSON>('/geo'),
+  summary: () => fetchBackendJSON<Record<string, unknown>>('/summary'),
   neighborhood: (name: string, businessType?: string) => {
     const qs = businessType ? `?business_type=${encodeURIComponent(businessType)}` : ''
     return fetchJSON<NeighborhoodData>(`/neighborhood/${encodeURIComponent(name)}${qs}`)
@@ -149,18 +149,18 @@ export const api = {
     if (opts?.neighborhood) params.set('neighborhood', opts.neighborhood)
     if (opts?.result) params.set('result', opts.result)
     const qs = params.toString()
-    return fetchJSON<Document[]>(`/inspections${qs ? `?${qs}` : ''}`)
+    return fetchBackendJSON<Document[]>(`/inspections${qs ? `?${qs}` : ''}`)
   },
   permits: (neighborhood?: string) => {
     const qs = neighborhood ? `?neighborhood=${encodeURIComponent(neighborhood)}` : ''
-    return fetchJSON<Document[]>(`/permits${qs}`)
+    return fetchBackendJSON<Document[]>(`/permits${qs}`)
   },
   licenses: (neighborhood?: string) => {
     const qs = neighborhood ? `?neighborhood=${encodeURIComponent(neighborhood)}` : ''
-    return fetchJSON<Document[]>(`/licenses${qs}`)
+    return fetchBackendJSON<Document[]>(`/licenses${qs}`)
   },
-  news: () => fetchJSON<Document[]>('/news'),
-  politics: () => fetchJSON<Document[]>('/politics'),
+  news: () => fetchBackendJSON<Document[]>('/news'),
+  politics: () => fetchBackendJSON<Document[]>('/politics'),
   graphFull: async () => {
     const url = `${API_BASE}/graph/full`
     console.log('[api.graphFull] GET', url)
@@ -192,10 +192,10 @@ export const api = {
     }
   },
   
-  getUserProfile: () => fetchUserJSON<SavedSettings>('/user/profile', withLocalUserId()),
+  getUserProfile: () => fetchBackendJSON<SavedSettings>('/user/profile', withLocalUserId()),
   
   updateUserProfile: (businessType: string, neighborhood: string, riskTolerance?: string) =>
-    fetchUserJSON<SavedSettings>('/user/profile', withLocalUserId({
+    fetchBackendJSON<SavedSettings>('/user/profile', withLocalUserId({
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -208,10 +208,10 @@ export const api = {
   })),
 
   getUserQueries: (limit = 10) =>
-    fetchUserJSON<UserQuery[]>(`/user/queries?limit=${limit}`, withLocalUserId()),
+    fetchBackendJSON<UserQuery[]>(`/user/queries?limit=${limit}`, withLocalUserId()),
 
   createUserQuery: (payload: { query_text: string; business_type: string; neighborhood: string }) =>
-    fetchUserJSON<UserQuery>('/user/queries', withLocalUserId({
+    fetchBackendJSON<UserQuery>('/user/queries', withLocalUserId({
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

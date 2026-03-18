@@ -68,7 +68,6 @@ def test_core_aggregate_endpoints_keep_contract(monkeypatch):
     }
 
     monkeypatch.setattr(core_routes, "get_source_stats", lambda: fake_stats)
-    monkeypatch.setattr(core_routes, "aggregate_city_demographics", lambda: {"population": 10})
     monkeypatch.setattr(core_routes, "ENABLE_ALETHIA_LLM", False)
 
     client = TestClient(web_app)
@@ -92,18 +91,30 @@ def test_core_aggregate_endpoints_keep_contract(monkeypatch):
         "neighborhoods_total",
     }
 
-    sources_resp = client.get("/sources")
-    assert sources_resp.status_code == 200
-    assert sources_resp.json()["news"] == {"count": 3, "active": True}
-
-    summary_resp = client.get("/summary")
-    assert summary_resp.status_code == 200
-    summary_data = summary_resp.json()
-    assert set(summary_data) == {"total_documents", "source_counts", "demographics"}
-
 
 def test_modal_legacy_routes_no_longer_own_user_settings():
     from modal_app.web import web_app
 
     paths = {getattr(route, "path", None) for route in web_app.routes}
     assert "/user/settings" not in paths
+
+
+def test_modal_core_no_longer_owns_step4_simple_read_routes():
+    from modal_app.web import web_app
+
+    paths = {getattr(route, "path", None) for route in web_app.routes}
+    for path in {
+        "/sources",
+        "/summary",
+        "/geo",
+        "/news",
+        "/politics",
+        "/inspections",
+        "/permits",
+        "/licenses",
+        "/reddit",
+        "/reviews",
+        "/realestate",
+        "/tiktok",
+    }:
+        assert path not in paths
