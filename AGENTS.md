@@ -94,7 +94,7 @@ Instructions for coding agents working in this repository. Keep this file practi
 
 - Preserve JSON key names unless the task explicitly changes the contract.
 - Keep local user resolution compatible with the current unauthenticated flow in `backend/auth.py`: optional `x-user-id` override plus `ALEITHIA_DEFAULT_USER_ID` fallback.
-- If you touch legacy Modal user settings routes, note that `modal_app/api/routes/legacy.py` still requires an explicit `x-user-id` header instead of using the backend fallback helper.
+- User profile/settings/query ownership now lives in `backend/`; do not reintroduce Modal-owned `/user/settings` routes or separate Modal settings storage.
 - If you touch `modal_app/api/routes/core.py`, verify the real emitted contract before adding status fields. `/status` should reflect active pipeline/GPU/cost reporting, not removed VectorDB health metadata.
 - If you touch `modal_app/agents.py::regulatory_agent`, preserve the non-VectorDB path: concurrent live API fetches, dedup against cached volume docs, cached-freshness reporting, and live-result write-back.
 - When adding or renaming source/document fields, update downstream readers, ranking logic, and tests in the same change.
