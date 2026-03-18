@@ -2,41 +2,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
-from pathlib import Path
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-
-from modal_app.volume import PROCESSED_DATA_PATH, volume
 
 router = APIRouter()
-
-SETTINGS_PATH = Path(PROCESSED_DATA_PATH) / "user_settings.json"
-DEFAULT_USER_ID = os.environ.get("ALEITHIA_DEFAULT_USER_ID", "local-user").strip() or "local-user"
-
-
-class UserSettingsPayload(BaseModel):
-    location_type: str = Field(..., min_length=1)
-    neighborhood: str = Field(..., min_length=1)
-
-
-def read_settings_store() -> dict:
-    if SETTINGS_PATH.exists():
-        try:
-            return json.loads(SETTINGS_PATH.read_text())
-        except Exception:
-            pass
-    return {}
-
-
-def write_settings_store(store: dict) -> None:
-    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SETTINGS_PATH.write_text(json.dumps(store, indent=2))
-    volume.commit()
-
 
 @router.post("/chat")
 async def chat():
@@ -85,26 +56,3 @@ async def user_memories(user_id: str = ""):
         }
     except Exception as exc:
         return {"profile": {}, "memories": [], "memory_count": 0, "error": str(exc)}
-
-
-@router.get("/user/settings")
-async def get_user_settings(x_user_id: str = Header(default="")):
-    user_id = x_user_id.strip()
-    if not user_id:
-        return JSONResponse({"error": "Missing x-user-id header"}, status_code=401)
-    store = read_settings_store()
-    entry = store.get(user_id)
-    if not entry:
-        return JSONResponse({"error": "No settings found"}, status_code=404)
-    return {"user_id": user_id, "location_type": entry.get("location_type", ""), "neighborhood": entry.get("neighborhood", "")}
-
-
-@router.put("/user/settings")
-async def put_user_settings(payload: UserSettingsPayload, x_user_id: str = Header(default="")):
-    user_id = x_user_id.strip()
-    if not user_id:
-        return JSONResponse({"error": "Missing x-user-id header"}, status_code=401)
-    store = read_settings_store()
-    store[user_id] = {"location_type": payload.location_type, "neighborhood": payload.neighborhood}
-    write_settings_store(store)
-    return {"user_id": user_id, "location_type": payload.location_type, "neighborhood": payload.neighborhood}

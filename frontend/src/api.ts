@@ -2,6 +2,7 @@ import type { DataSources, GeoJSON, NeighborhoodData, Document, CCTVTimeseries, 
 
 // Modal deployed endpoint — set via VITE_MODAL_URL, fallback to local proxy
 export const API_BASE = import.meta.env.VITE_MODAL_URL || '/api/data'
+export const USER_API_BASE = import.meta.env.VITE_BACKEND_URL || '/api/data'
 const LOCAL_USER_ID_KEY = 'aleithia.localUserId'
 
 function getLocalUserId(): string {
@@ -25,13 +26,21 @@ function withLocalUserId(init: RequestInit = {}): RequestInit {
   return { ...init, headers }
 }
 
-async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, init)
+async function fetchBaseJSON<T>(base: string, path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${base}${path}`, init)
   if (!res.ok) {
     const error = await res.text()
     throw new Error(`API error ${res.status}: ${error}`)
   }
   return res.json()
+}
+
+async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
+  return fetchBaseJSON<T>(API_BASE, path, init)
+}
+
+async function fetchUserJSON<T>(path: string, init?: RequestInit): Promise<T> {
+  return fetchBaseJSON<T>(USER_API_BASE, path, init)
 }
 
 export interface SavedSettings {
@@ -183,10 +192,10 @@ export const api = {
     }
   },
   
-  getUserProfile: () => fetchJSON<SavedSettings>('/user/profile', withLocalUserId()),
+  getUserProfile: () => fetchUserJSON<SavedSettings>('/user/profile', withLocalUserId()),
   
   updateUserProfile: (businessType: string, neighborhood: string, riskTolerance?: string) =>
-    fetchJSON<SavedSettings>('/user/profile', withLocalUserId({
+    fetchUserJSON<SavedSettings>('/user/profile', withLocalUserId({
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -196,13 +205,13 @@ export const api = {
         neighborhood,
         risk_tolerance: riskTolerance,
       }),
-    })),
+  })),
 
   getUserQueries: (limit = 10) =>
-    fetchJSON<UserQuery[]>(`/user/queries?limit=${limit}`, withLocalUserId()),
+    fetchUserJSON<UserQuery[]>(`/user/queries?limit=${limit}`, withLocalUserId()),
 
   createUserQuery: (payload: { query_text: string; business_type: string; neighborhood: string }) =>
-    fetchJSON<UserQuery>('/user/queries', withLocalUserId({
+    fetchUserJSON<UserQuery>('/user/queries', withLocalUserId({
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

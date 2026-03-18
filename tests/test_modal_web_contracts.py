@@ -100,3 +100,10 @@ def test_core_aggregate_endpoints_keep_contract(monkeypatch):
     assert summary_resp.status_code == 200
     summary_data = summary_resp.json()
     assert set(summary_data) == {"total_documents", "source_counts", "demographics"}
+
+
+def test_modal_legacy_routes_no_longer_own_user_settings():
+    from modal_app.web import web_app
+
+    paths = {getattr(route, "path", None) for route in web_app.routes}
+    assert "/user/settings" not in paths

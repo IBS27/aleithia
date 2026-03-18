@@ -1,6 +1,6 @@
 """Database models for user profiles and query history."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from sqlalchemy import Column, String, DateTime, Integer
 from database import Base
 
@@ -14,8 +14,12 @@ class UserProfile(Base):
     business_type = Column(String(255), nullable=True)
     neighborhood = Column(String(255), nullable=True)
     risk_tolerance = Column(String(50), default="medium", nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None))
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(UTC).replace(tzinfo=None),
+    )
 
 
 class QueryResult(Base):
@@ -29,5 +33,9 @@ class QueryResult(Base):
     neighborhood = Column(String(255), nullable=False)
     query_text = Column(String(1000), nullable=False)
     result_summary = Column(String(5000), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None), index=True)
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(UTC).replace(tzinfo=None),
+    )
