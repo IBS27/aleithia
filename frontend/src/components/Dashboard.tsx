@@ -25,7 +25,6 @@ import StreetscapeCard from './StreetscapeCard.tsx'
 import RecursiveAgentPanel from './RecursiveAgentPanel.tsx'
 import Drawer from './Drawer.tsx'
 import ProfilePage from './ProfilePage.tsx'
-import ShinyText from './ShinyText.tsx'
 import LoadingFlow from './LoadingFlow.tsx'
 import { InspectionOutcomesChart, TopViolationsPareto, AlertHoursStackedArea } from './VaultCharts.tsx'
 
@@ -881,7 +880,7 @@ function VaultTab({
       {/* 2. Neural Graph Visualization */}
       <div className="border border-white/[0.06] bg-white/[0.02] p-5">
         <h3 className="text-sm font-semibold mb-3">
-          <ShinyText text='The "Neural" Graph Visualization' speed={2} color="#b5b5b5" shineColor="#ffffff" spread={120} direction="left" />
+The &ldquo;Neural&rdquo; Graph Visualization
         </h3>
         <p className="text-xs text-white/60 leading-relaxed mb-3">
           The standout feature is the Knowledge Graph, which visually proves that content is connected.
@@ -907,7 +906,7 @@ function VaultTab({
       {/* Visualizing the &quot;Attention Crisis&quot; */}
       <div className="border border-white/[0.06] bg-white/[0.02] p-5">
         <h3 className="text-sm font-semibold mb-3">
-          <ShinyText text='Visualizing the "Attention Crisis"' speed={2} color="#b5b5b5" shineColor="#ffffff" spread={120} direction="left" />
+Visualizing the &ldquo;Attention Crisis&rdquo;
         </h3>
         <div className="space-y-4">
           <div className="flex items-center gap-4 p-4 border border-white/[0.06]">
