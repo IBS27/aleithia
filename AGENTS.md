@@ -17,7 +17,7 @@ Instructions for coding agents working in this repository. Keep this file practi
 - `frontend/.env.example`: documents `VITE_MODAL_URL` and optional `VITE_BACKEND_URL`; Clerk frontend env vars were removed.
 - `backend/`: local FastAPI service for health checks, user profile/history, and some JSON-backed local data endpoints.
 - `modal_app/`: the main Modal application and the production-facing API in `modal_app/web.py`.
-- `data/`: local runtime data root for shared raw/processed outputs. Treat it as ephemeral.
+- `data/`: local bootstrap/test workspace only. Do not assume backend shared reads come from here.
 - `fixtures/demo_data/`: checked-in demo/sample data. Only copy from here into `data/` explicitly.
 - `scripts/bootstrap/`: explicit local bootstrap utilities.
 - `scripts/maintenance/`: supported maintenance utilities and local pipeline harnesses.
@@ -40,9 +40,9 @@ Instructions for coding agents working in this repository. Keep this file practi
 - Do not add or modify a route in `backend/` if the frontend call is supposed to hit the deployed Modal API. Verify the real owner first.
 - New Modal functions and endpoints must remain discoverable from `modal_app/__init__.py`. If a new module is not imported there, `modal deploy modal_app/__init__.py` may not pick it up.
 - Data-root invariants:
-  - The canonical local runtime layout is `data/raw/` and `data/processed/`.
+  - The canonical shared runtime dataset for backend reads lives in the Modal Volume `alethia-data`.
+  - Backend shared dataset reads must go through `backend/shared_data.py`, not direct filesystem traversal under repo `data/`.
   - Do not reintroduce `backend/data/...`, repo-root `raw/` or `processed/`, or filesystem auto-detection fallbacks as supported runtime sources.
-  - Use `ALEITHIA_DATA_ROOT`, `ALEITHIA_RAW_DATA_DIR`, and `ALEITHIA_PROCESSED_DATA_DIR` only as explicit overrides.
   - Runtime code must not silently read from `fixtures/demo_data/`; if demo data is needed locally, use `scripts/bootstrap/bootstrap_demo_data.py`.
   - Do not commit generated runtime files under `data/`.
 - Local Python setup:
@@ -58,7 +58,7 @@ Instructions for coding agents working in this repository. Keep this file practi
 - `backend/routes/modal_routes.py` still mentions `modal/app.py` in an error message. The current deploy entrypoint is `modal_app/__init__.py`.
 - Auth was removed from the app, but several database columns, Pydantic models, and frontend types still use the name `clerk_user_id`. Preserve those field names unless the task explicitly includes a contract/schema migration.
 - Product-facing frontend pages and old planning docs may still mention VectorAI DB or VectorDB health/status. Treat live code paths as source of truth and update copy narrowly when it would otherwise become false.
-- Some older docs, scripts, or comments may still mention `backend/data` or checked-in `data/processed` content. Treat `backend/shared_data.py`, `fixtures/demo_data/`, and `tests/test_backend_data_access.py` as the current source of truth.
+- Some older docs, scripts, or comments may still mention repo-local runtime data roots. Treat `backend/shared_data.py`, `modal_app/volume.py`, and `tests/test_backend_data_access.py` as the current source of truth.
 - `backend/database.py` defaults to `sqlite:///./test.db`. Run backend commands from `backend/` or set `DATABASE_URL` explicitly, otherwise SQLite may be created in an unexpected directory.
 - `backend/test.db` is checked in. Do not delete or rewrite local DB/data artifacts unless the task explicitly requires it.
 
