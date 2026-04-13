@@ -15,6 +15,7 @@ from modal_app.api.services.cctv import (
     load_cctv_latest_index,
     load_parking_for_neighborhood,
 )
+from modal_app.runtime import ENABLE_CCTV_ANALYSIS
 from modal_app.volume import PROCESSED_DATA_PATH, RAW_DATA_PATH, volume
 
 router = APIRouter()
@@ -37,17 +38,20 @@ async def cctv_latest():
 @router.get("/cctv/frame/{camera_id}")
 async def cctv_frame(camera_id: str):
     volume.reload()
-    ann_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "annotated"
-    if not ann_dir.exists():
-        print("cctv_frame_miss", {"camera_id": camera_id, "reason": "annotated_dir_missing"})
-        return JSONResponse({"error": "no annotated frames"}, status_code=404)
+    frame_dirs: list[tuple[Path, str]] = []
+    if ENABLE_CCTV_ANALYSIS:
+        frame_dirs.append((Path(PROCESSED_DATA_PATH) / "cctv" / "annotated", "annotated"))
+    frame_dirs.append((Path(RAW_DATA_PATH) / "cctv" / "frames", "raw"))
 
-    frames = sorted(ann_dir.glob(f"{camera_id}_*.jpg"), reverse=True)
-    if not frames:
-        print("cctv_frame_miss", {"camera_id": camera_id, "reason": "camera_frame_missing"})
-        return JSONResponse({"error": f"no frames for camera {camera_id}"}, status_code=404)
+    for frame_dir, frame_type in frame_dirs:
+        if not frame_dir.exists():
+            continue
+        frames = sorted(frame_dir.glob(f"{camera_id}_*.jpg"), reverse=True)
+        if frames:
+            return Response(content=frames[0].read_bytes(), media_type="image/jpeg")
+        print("cctv_frame_lookup_miss", {"camera_id": camera_id, "frame_type": frame_type})
 
-    return Response(content=frames[0].read_bytes(), media_type="image/jpeg")
+    return JSONResponse({"error": f"no frames for camera {camera_id}"}, status_code=404)
 
 
 @router.get("/cctv/timeseries/{neighborhood}")

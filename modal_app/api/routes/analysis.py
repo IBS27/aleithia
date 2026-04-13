@@ -14,7 +14,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from modal_app.runtime import get_modal_cls, get_modal_function
+from modal_app.runtime import ENABLE_CCTV_ANALYSIS, get_modal_cls, get_modal_function
 from modal_app.volume import PROCESSED_DATA_PATH, RAW_DATA_PATH, app, sandbox_image, volume
 
 router = APIRouter()
@@ -146,10 +146,10 @@ async def gpu_metrics(probe_h100: bool = False):
         "h100_llm": {"status": "disabled"},
         "t4_classifier": {"status": "cold"},
         "t4_sentiment": {"status": "cold"},
-        "t4_cctv": {"status": "cold"},
+        "t4_cctv": {"status": "cold"} if ENABLE_CCTV_ANALYSIS else {"status": "disabled"},
     }
 
-    gpu_classes = [("TrafficAnalyzer", "t4_cctv")]
+    gpu_classes = [("TrafficAnalyzer", "t4_cctv")] if ENABLE_CCTV_ANALYSIS else []
 
     async def _fetch(cls_name: str, key: str):
         try:

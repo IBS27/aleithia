@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 import modal
 from fastapi import APIRouter
 
+from modal_app.runtime import ENABLE_CCTV_ANALYSIS
+
 router = APIRouter()
 
 
@@ -25,7 +27,7 @@ async def status():
             "h100_llm": "disabled",
             "t4_classifier": "available",
             "t4_sentiment": "available",
-            "t4_cctv": "available",
+            "t4_cctv": "available" if ENABLE_CCTV_ANALYSIS else "disabled",
         },
         "costs": costs,
     }

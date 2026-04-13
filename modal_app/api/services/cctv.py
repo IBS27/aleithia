@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import importlib
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,10 +14,12 @@ import modal
 from backend.shared_data import load_json_file
 from modal_app.api.cache import cache
 from modal_app.common import NEIGHBORHOOD_CENTROIDS, parse_timestamp
-from modal_app.runtime import get_modal_function
-from modal_app.volume import PROCESSED_DATA_PATH, volume
+from modal_app.runtime import ENABLE_CCTV_ANALYSIS, get_modal_function
+from modal_app.volume import PROCESSED_DATA_PATH, RAW_DATA_PATH, volume
 
 CCTV_LATEST_INDEX_PATH = Path(PROCESSED_DATA_PATH) / "cctv" / "index" / "latest_by_camera.json"
+SYNTHETIC_CCTV_PATH = Path(PROCESSED_DATA_PATH) / "cctv" / "synthetic_analytics.json"
+LEGACY_FAKE_CCTV_PATH = Path(PROCESSED_DATA_PATH) / "cctv" / "fake_analytics.json"
 CCTV_NEIGHBORHOOD_CAMERA_LIMIT = 24
 CCTV_STALE_AFTER_SECONDS = 6 * 60 * 60
 CCTV_REFRESH_DEBOUNCE_SECONDS = 10 * 60
@@ -25,15 +29,35 @@ cctv_refresh_recent_dict = modal.Dict.from_name("alethia-cctv-refresh-recent", c
 _cctv_refresh_lock = asyncio.Lock()
 
 
-def load_fake_cctv() -> dict:
-    """Load pre-generated fake CCTV analytics from JSON file."""
-    fake_path = Path(PROCESSED_DATA_PATH) / "cctv" / "fake_analytics.json"
-    cache_key = f"cctv:fake:{int(fake_path.stat().st_mtime)}" if fake_path.exists() else "cctv:fake:missing"
+def _generate_synthetic_cctv() -> dict:
+    try:
+        import backend.shared_data as shared_data
 
-    def _loader() -> dict:
-        return load_json_file(fake_path, default={})
+        sys.modules.setdefault("shared_data", shared_data)
+        generator = importlib.import_module("backend.generate_synthetic_analytics")
+        return generator.generate()
+    except Exception as exc:
+        print(f"cctv_synthetic_generate_failed: {exc}")
+        return {}
 
-    return copy.deepcopy(cache.get_or_set(cache_key, 15.0, _loader))
+
+def load_synthetic_cctv() -> dict:
+    """Load synthetic CCTV analytics, preferring the shared volume copy."""
+    source_path: Path | None = None
+    if SYNTHETIC_CCTV_PATH.exists():
+        source_path = SYNTHETIC_CCTV_PATH
+    elif LEGACY_FAKE_CCTV_PATH.exists():
+        source_path = LEGACY_FAKE_CCTV_PATH
+
+    if source_path is not None:
+        cache_key = f"cctv:synthetic:{source_path.name}:{int(source_path.stat().st_mtime)}"
+
+        def _loader() -> dict:
+            return load_json_file(source_path, default={})
+
+        return copy.deepcopy(cache.get_or_set(cache_key, 15.0, _loader))
+
+    return copy.deepcopy(cache.get_or_set("cctv:synthetic:generated:v1", 60.0, _generate_synthetic_cctv))
 
 
 def empty_cctv_payload() -> dict:
@@ -45,6 +69,20 @@ def analysis_timestamp_epoch(data: dict, fallback_mtime: float) -> float:
     if parsed is not None:
         return parsed.timestamp()
     return fallback_mtime
+
+
+def camera_frame_available(camera_id: str) -> bool:
+    """Return whether any recent annotated/raw JPEG exists for the camera."""
+    frame_dirs = [
+        Path(PROCESSED_DATA_PATH) / "cctv" / "annotated",
+        Path(RAW_DATA_PATH) / "cctv" / "frames",
+    ]
+    for frame_dir in frame_dirs:
+        if not frame_dir.exists():
+            continue
+        if next(frame_dir.glob(f"{camera_id}_*.jpg"), None) is not None:
+            return True
+    return False
 
 
 async def _dict_get_float(key: str, default: float = 0.0) -> float:
@@ -98,9 +136,9 @@ async def maybe_spawn_cctv_refresh(index_age_seconds: float) -> None:
             print(f"cctv_refresh_spawn_failed: {exc}")
 
 
-def fake_cctv_entry(name: str) -> dict | None:
-    fake = load_fake_cctv()
-    entry = fake.get(name)
+def synthetic_cctv_entry(name: str) -> dict | None:
+    synthetic = load_synthetic_cctv()
+    entry = synthetic.get(name)
     if not isinstance(entry, dict):
         return None
 
@@ -153,12 +191,63 @@ def fake_cctv_entry(name: str) -> dict | None:
         "avg_pedestrians": round(avg_p, 1),
         "avg_vehicles": round(avg_v, 1),
         "density": str(cam_blob.get("density", "unknown") or "unknown"),
-        "has_timeseries": bool(entry.get("timeseries")),
+        "timeseries": entry.get("timeseries"),
     }
+
+
+def _build_synthetic_neighborhood_payload(entry: dict) -> dict:
+    normalized_cameras: list[dict] = []
+
+    for camera in entry.get("cameras", []):
+        camera_id = camera["camera_id"]
+        normalized_cameras.append(
+            {
+                "camera_id": camera_id,
+                "lat": camera["lat"],
+                "lng": camera["lng"],
+                "distance_km": camera["distance_km"],
+                "pedestrians": camera["pedestrians"],
+                "vehicles": camera["vehicles"],
+                "bicycles": camera["bicycles"],
+                "density_level": camera["density_level"],
+                "timestamp": camera["timestamp"],
+                "frame_available": camera_frame_available(camera_id),
+                "source": "synthetic",
+            }
+        )
+
+    return {
+        "cameras": normalized_cameras[:CCTV_NEIGHBORHOOD_CAMERA_LIMIT],
+        "avg_pedestrians": entry["avg_pedestrians"],
+        "avg_vehicles": entry["avg_vehicles"],
+        "density": entry["density"],
+    }
+
+
+def _flatten_synthetic_cctv() -> dict[str, dict]:
+    flattened: dict[str, dict] = {}
+    for neighborhood in load_synthetic_cctv():
+        entry = synthetic_cctv_entry(neighborhood)
+        if entry is None:
+            continue
+        mapped = _build_synthetic_neighborhood_payload(entry)
+        for idx, camera in enumerate(mapped["cameras"]):
+            key = str(camera["camera_id"])
+            if key in flattened:
+                key = f"{key}:{neighborhood.lower().replace(' ', '_')}:{idx}"
+            flattened[key] = camera
+    return flattened
 
 
 async def load_cctv_latest_index() -> dict[str, dict]:
     start = time.perf_counter()
+    if not ENABLE_CCTV_ANALYSIS:
+        try:
+            await volume.reload.aio()
+        except Exception as exc:
+            print(f"cctv_disabled_reload_warning: {exc}")
+        return _flatten_synthetic_cctv()
+
     try:
         await volume.reload.aio()
     except Exception as exc:
@@ -207,14 +296,24 @@ async def load_cctv_latest_index() -> dict[str, dict]:
 
 
 async def load_cctv_for_neighborhood(name: str) -> dict:
+    if not ENABLE_CCTV_ANALYSIS:
+        try:
+            await volume.reload.aio()
+        except Exception as exc:
+            print(f"cctv_disabled_reload_warning: {exc}")
+        synthetic_entry = synthetic_cctv_entry(name)
+        if synthetic_entry is None:
+            return empty_cctv_payload()
+        return _build_synthetic_neighborhood_payload(synthetic_entry)
+
     import math
 
     start = time.perf_counter()
-    fake_entry = fake_cctv_entry(name)
+    fake_entry = synthetic_cctv_entry(name)
     latest_by_cam = await load_cctv_latest_index()
     if not latest_by_cam:
         if fake_entry is not None:
-            print("cctv_neighborhood_fallback", {"name": name, "source": "fake_only_no_index", "camera_count": len(fake_entry["cameras"])})
+            print("cctv_neighborhood_fallback", {"name": name, "source": "synthetic_only_no_index", "camera_count": len(fake_entry["cameras"])})
             return {
                 "cameras": fake_entry["cameras"],
                 "avg_pedestrians": fake_entry["avg_pedestrians"],
@@ -264,7 +363,7 @@ async def load_cctv_for_neighborhood(name: str) -> dict:
 
     if not cameras:
         if fake_entry is not None:
-            print("cctv_neighborhood_fallback", {"name": name, "source": "fake_only_no_nearby_real", "camera_count": len(fake_entry["cameras"])})
+            print("cctv_neighborhood_fallback", {"name": name, "source": "synthetic_only_no_nearby_real", "camera_count": len(fake_entry["cameras"])})
             return {
                 "cameras": fake_entry["cameras"],
                 "avg_pedestrians": fake_entry["avg_pedestrians"],
@@ -317,7 +416,13 @@ async def load_cctv_for_neighborhood(name: str) -> dict:
 async def aggregate_timeseries_for_neighborhood(name: str, camera_ids: list[str] | None = None) -> dict:
     from zoneinfo import ZoneInfo
 
-    fake = load_fake_cctv()
+    if not ENABLE_CCTV_ANALYSIS:
+        synthetic_entry = synthetic_cctv_entry(name)
+        if synthetic_entry and isinstance(synthetic_entry.get("timeseries"), dict):
+            return synthetic_entry["timeseries"]
+        return {"hours": [], "peak_hour": 0, "peak_pedestrians": 0, "camera_count": 0}
+
+    fake = load_synthetic_cctv()
     if name in fake and fake[name].get("timeseries"):
         print("cctv_timeseries_source", {"name": name, "source": "fake"})
         return fake[name]["timeseries"]

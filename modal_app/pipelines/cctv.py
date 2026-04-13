@@ -28,7 +28,7 @@ from modal_app.common import (
 )
 from modal_app.costs import track_cost
 from modal_app.fallback import FallbackChain
-from modal_app.runtime import get_raw_doc_queue
+from modal_app.runtime import ENABLE_CCTV_ANALYSIS, get_raw_doc_queue
 from modal_app.volume import app, volume, base_image, yolo_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
 
 # IDOT Gateway Traffic Cameras — ArcGIS Online (public, no key needed)
@@ -354,6 +354,7 @@ def _trim_old_frames(frame_dir: Path, max_age_hours: int = 24) -> int:
 @app.function(
     image=base_image,
     volumes={"/data": volume},
+    secrets=[modal.Secret.from_name("alethia-secrets")],
     timeout=300,
 )
 @track_cost("cctv_ingester", "CPU")
@@ -387,6 +388,10 @@ async def cctv_ingester():
 
     await safe_volume_commit(volume, "cctv")
 
+    if not ENABLE_CCTV_ANALYSIS:
+        print(f"CCTV ingester: {len(cameras)} cameras processed, analysis disabled")
+        return len(cameras)
+
     # Spawn GPU batch analysis
     await analyze_cctv_batch.spawn.aio()
 
@@ -401,6 +406,7 @@ async def cctv_ingester():
     gpu="T4",
     image=yolo_image,
     volumes={"/data": volume},
+    secrets=[modal.Secret.from_name("alethia-secrets")],
     scaledown_window=120,
     timeout=120,
     enable_memory_snapshot=True,
@@ -546,6 +552,7 @@ class TrafficAnalyzer:
 @app.function(
     image=base_image,
     volumes={"/data": volume},
+    secrets=[modal.Secret.from_name("alethia-secrets")],
     timeout=300,
 )
 @track_cost("analyze_cctv_batch", "CPU")
@@ -694,6 +701,7 @@ async def analyze_cctv_batch():
 @app.function(
     image=base_image,
     volumes={"/data": volume},
+    secrets=[modal.Secret.from_name("alethia-secrets")],
     timeout=900,
 )
 @track_cost("rebuild_cctv_latest_index", "CPU")
