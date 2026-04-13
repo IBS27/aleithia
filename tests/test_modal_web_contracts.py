@@ -49,10 +49,7 @@ def test_graph_full_endpoint_contract(monkeypatch):
 
 
 def test_modal_status_is_runtime_only(monkeypatch):
-    from modal_app.api.routes import core as core_routes
     from modal_app.web import web_app
-
-    monkeypatch.setattr(core_routes, "ENABLE_ALETHIA_LLM", False)
 
     client = TestClient(web_app)
 
@@ -61,6 +58,7 @@ def test_modal_status_is_runtime_only(monkeypatch):
     status_data = status_resp.json()
     assert "gpu_status" in status_data
     assert "costs" in status_data
+    assert status_data["gpu_status"]["h100_llm"] == "disabled"
     assert "pipelines" not in status_data
     assert "enriched_docs" not in status_data
     assert "total_docs" not in status_data

@@ -25,7 +25,7 @@ FRESHNESS_THRESHOLDS = {
     "realestate": 10800, # Weekly
     "tiktok": 1500,      # Daily, alert after 25 hours
     "traffic": 180,      # Every 1 hour, alert after 3 hours
-    "cctv": 15,          # Every 5 min, alert after 15
+    "cctv": 360,         # Refresh a few times per day, alert after 6 hours
     "federal_register": 1500, # Daily
 }
 restart_dict = modal.Dict.from_name("alethia-restarts", create_if_missing=True)

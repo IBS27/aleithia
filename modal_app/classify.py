@@ -121,7 +121,7 @@ class SentimentAnalyzer:
     image=classify_image,
     volumes={"/data": volume},
     secrets=[modal.Secret.from_name("arize-secrets")],
-    schedule=modal.Period(minutes=2),
+    schedule=modal.Period(minutes=10),
     timeout=300,
 )
 @track_cost("process_queue_batch", "CPU")
@@ -136,16 +136,19 @@ async def process_queue_batch():
     tracer = get_tracer("alethia.classify")
 
     docs = []
+    try:
+        first_doc = await doc_queue.get.aio(timeout=1)
+        docs.append(first_doc)
+    except Exception:
+        print("Queue empty, nothing to classify")
+        return 0
+
     while len(docs) < 100:
         try:
-            doc = await doc_queue.get.aio(timeout=5)
+            doc = await doc_queue.get.aio(timeout=1)
             docs.append(doc)
         except Exception:
             break
-
-    if not docs:
-        print("Queue empty, nothing to classify")
-        return 0
 
     span_ctx = tracer.start_as_current_span("process-queue-batch") if tracer else None
     span = span_ctx.__enter__() if span_ctx else None

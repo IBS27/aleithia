@@ -1,18 +1,28 @@
 """CCTV, parking, and related sensor-read helpers for the Modal API."""
 from __future__ import annotations
 
+import asyncio
 import copy
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+
+import modal
 
 from backend.shared_data import load_json_file
 from modal_app.api.cache import cache
 from modal_app.common import NEIGHBORHOOD_CENTROIDS, parse_timestamp
+from modal_app.runtime import get_modal_function
 from modal_app.volume import PROCESSED_DATA_PATH, volume
 
 CCTV_LATEST_INDEX_PATH = Path(PROCESSED_DATA_PATH) / "cctv" / "index" / "latest_by_camera.json"
 CCTV_NEIGHBORHOOD_CAMERA_LIMIT = 24
+CCTV_STALE_AFTER_SECONDS = 6 * 60 * 60
+CCTV_REFRESH_DEBOUNCE_SECONDS = 10 * 60
+CCTV_REFRESH_DICT_KEY = "latest-index"
+
+cctv_refresh_recent_dict = modal.Dict.from_name("alethia-cctv-refresh-recent", create_if_missing=True)
+_cctv_refresh_lock = asyncio.Lock()
 
 
 def load_fake_cctv() -> dict:
@@ -35,6 +45,57 @@ def analysis_timestamp_epoch(data: dict, fallback_mtime: float) -> float:
     if parsed is not None:
         return parsed.timestamp()
     return fallback_mtime
+
+
+async def _dict_get_float(key: str, default: float = 0.0) -> float:
+    try:
+        value = await cctv_refresh_recent_dict.get.aio(key)
+    except Exception:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+async def _dict_put_value(key: str, value: float) -> None:
+    try:
+        await cctv_refresh_recent_dict.put.aio(key, value)
+    except Exception:
+        try:
+            cctv_refresh_recent_dict[key] = value
+        except Exception:
+            pass
+
+
+async def maybe_spawn_cctv_refresh(index_age_seconds: float) -> None:
+    if index_age_seconds <= CCTV_STALE_AFTER_SECONDS:
+        return
+
+    async with _cctv_refresh_lock:
+        now_epoch = time.time()
+        last_trigger_epoch = await _dict_get_float(CCTV_REFRESH_DICT_KEY, default=0.0)
+        if now_epoch - last_trigger_epoch < CCTV_REFRESH_DEBOUNCE_SECONDS:
+            return
+
+        await _dict_put_value(CCTV_REFRESH_DICT_KEY, now_epoch)
+        try:
+            cctv_fn = get_modal_function("cctv_ingester")
+            spawn_aio = getattr(cctv_fn.spawn, "aio", None)
+            if callable(spawn_aio):
+                await spawn_aio()
+            else:
+                cctv_fn.spawn()
+            print(
+                "cctv_refresh_spawned",
+                {
+                    "index_age_seconds": round(index_age_seconds, 1),
+                    "triggered_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except Exception as exc:
+            await _dict_put_value(CCTV_REFRESH_DICT_KEY, 0.0)
+            print(f"cctv_refresh_spawn_failed: {exc}")
 
 
 def fake_cctv_entry(name: str) -> dict | None:
@@ -107,6 +168,9 @@ async def load_cctv_latest_index() -> dict[str, dict]:
     if not CCTV_LATEST_INDEX_PATH.exists():
         print(f"cctv_index_missing: {CCTV_LATEST_INDEX_PATH}")
         return {}
+
+    index_age_seconds = max(0.0, time.time() - CCTV_LATEST_INDEX_PATH.stat().st_mtime)
+    await maybe_spawn_cctv_refresh(index_age_seconds)
 
     cache_key = f"cctv:latest_index:{int(CCTV_LATEST_INDEX_PATH.stat().st_mtime)}"
 

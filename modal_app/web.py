@@ -43,7 +43,6 @@ for router in (
     image=web_image,
     volumes={"/data": volume},
     secrets=[modal.Secret.from_name("alethia-secrets"), modal.Secret.from_name("arize-secrets")],
-    min_containers=1,
 )
 @modal.asgi_app()
 def serve():

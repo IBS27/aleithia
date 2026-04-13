@@ -403,7 +403,6 @@ async def cctv_ingester():
     volumes={"/data": volume},
     scaledown_window=120,
     timeout=120,
-    min_containers=1,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
 )

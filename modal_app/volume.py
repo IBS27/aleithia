@@ -4,10 +4,8 @@ import modal
 app = modal.App("alethia")
 
 volume = modal.Volume.from_name("alethia-data", create_if_missing=True)
-weights_volume = modal.Volume.from_name("alethia-weights", create_if_missing=True)
 
 VOLUME_MOUNT = "/data"
-WEIGHTS_MOUNT = "/weights"
 RAW_DATA_PATH = f"{VOLUME_MOUNT}/raw"
 PROCESSED_DATA_PATH = f"{VOLUME_MOUNT}/processed"
 CACHE_PATH = f"{VOLUME_MOUNT}/cache"
@@ -51,19 +49,6 @@ politics_image = _base.pip_install(
 data_image = _base.pip_install("pandas==2.2.0").add_local_python_source("backend", "modal_app", copy=True)
 
 graph_image = _base.pip_install("networkx==3.3", "pandas==2.2.0").add_local_python_source("backend", "modal_app", copy=True)
-
-# vLLM image for self-hosted LLM (Qwen3-8B on H100)
-# vLLM includes its own optimized attention kernels; flash-attn is optional
-vllm_image = (
-    modal.Image.debian_slim(python_version="3.11")
-    .pip_install(
-        "vllm>=0.8.0",
-        "transformers>=4.45.0",
-        "torch>=2.4.0",
-        *_arize_core_packages,
-    )
-    .add_local_python_source("backend", "modal_app", copy=True)
-)
 
 # Classification image for DocClassifier + SentimentAnalyzer (T4)
 classify_image = (

@@ -37,7 +37,7 @@ from modal_app.api.services.tiktok import (
     spawn_reddit_fallback_persist,
 )
 from modal_app.common import CHICAGO_NEIGHBORHOODS, COMMUNITY_AREA_MAP
-from modal_app.runtime import ENABLE_ALETHIA_LLM, get_modal_cls, get_modal_function
+from modal_app.runtime import get_modal_function
 from modal_app.volume import PROCESSED_DATA_PATH, RAW_DATA_PATH, volume
 from modal_app.pipelines.reddit import (
     FALLBACK_BUDGET_MS,
@@ -657,47 +657,38 @@ async def social_trends(neighborhood: str, business_type: str = ""):
         msgs = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
         retry_used = False
         fallback_used = False
-        if openai_available():
-            try:
-                client = get_openai_client()
-                social_model = get_social_trends_model()
-                create_kwargs = build_chat_kwargs(
-                    social_model,
-                    msgs,
-                    max_completion_tokens=512,
-                    gpt5_max_completion_tokens=2048,
-                    temperature=0.4,
-                    response_format={"type": "json_object"},
-                )
-                oai_resp = await client.chat.completions.create(**create_kwargs)
-                raw = oai_resp.choices[0].message.content or ""
-                choice = oai_resp.choices[0]
-                finish = getattr(choice, "finish_reason", None)
-                usage = getattr(oai_resp, "usage", None)
-                print(f"[social-trends] model={social_model} finish_reason={finish} usage={usage} raw_preview={raw[:200]!r}")
-            except Exception as exc:
-                print(f"[social-trends] OpenAI call failed: {exc!r}")
-                if not ENABLE_ALETHIA_LLM:
-                    return JSONResponse(
-                        {"error": f"Social trends synthesis unavailable: OpenAI failed and AlethiaLLM is disabled ({exc})"},
-                        status_code=503,
-                    )
-                print("[social-trends] falling back to Qwen3")
-                llm_cls = get_modal_cls("AlethiaLLM")
-                llm = llm_cls()
-                raw = await llm.generate.remote.aio(msgs, max_tokens=512, temperature=0.4)
-        else:
-            if not ENABLE_ALETHIA_LLM:
-                return JSONResponse(
-                    {"error": "Social trends synthesis unavailable: OpenAI not configured and AlethiaLLM is disabled"},
-                    status_code=503,
-                )
-            llm_cls = get_modal_cls("AlethiaLLM")
-            llm = llm_cls()
-            raw = await llm.generate.remote.aio(msgs, max_tokens=512, temperature=0.4)
+        if not openai_available():
+            return JSONResponse(
+                {"error": "Social trends synthesis unavailable: OpenAI not configured"},
+                status_code=503,
+            )
+
+        try:
+            client = get_openai_client()
+            social_model = get_social_trends_model()
+            create_kwargs = build_chat_kwargs(
+                social_model,
+                msgs,
+                max_completion_tokens=512,
+                gpt5_max_completion_tokens=2048,
+                temperature=0.4,
+                response_format={"type": "json_object"},
+            )
+            oai_resp = await client.chat.completions.create(**create_kwargs)
+            raw = oai_resp.choices[0].message.content or ""
+            choice = oai_resp.choices[0]
+            finish = getattr(choice, "finish_reason", None)
+            usage = getattr(oai_resp, "usage", None)
+            print(f"[social-trends] model={social_model} finish_reason={finish} usage={usage} raw_preview={raw[:200]!r}")
+        except Exception as exc:
+            print(f"[social-trends] OpenAI call failed: {exc!r}")
+            return JSONResponse(
+                {"error": f"Social trends synthesis unavailable: OpenAI failed ({exc})"},
+                status_code=503,
+            )
 
         validated = _parse_social_trends_response(raw)
-        if not validated and openai_available():
+        if not validated:
             try:
                 retry_used = True
                 client = get_openai_client()

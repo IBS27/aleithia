@@ -14,7 +14,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from modal_app.runtime import ENABLE_ALETHIA_LLM, get_modal_cls, get_modal_function
+from modal_app.runtime import get_modal_cls, get_modal_function
 from modal_app.volume import PROCESSED_DATA_PATH, RAW_DATA_PATH, app, sandbox_image, volume
 
 router = APIRouter()
@@ -141,16 +141,15 @@ class ImpactAnalyzeRequest(BaseModel):
 
 @router.get("/gpu-metrics")
 async def gpu_metrics(probe_h100: bool = False):
+    del probe_h100
     results = {
-        "h100_llm": {"status": "disabled"} if not ENABLE_ALETHIA_LLM else {"status": "cold", "inferred": True, "reason": "probe_skipped"},
+        "h100_llm": {"status": "disabled"},
         "t4_classifier": {"status": "cold"},
         "t4_sentiment": {"status": "cold"},
         "t4_cctv": {"status": "cold"},
     }
 
     gpu_classes = [("TrafficAnalyzer", "t4_cctv")]
-    if ENABLE_ALETHIA_LLM and probe_h100:
-        gpu_classes.insert(0, ("AlethiaLLM", "h100_llm"))
 
     async def _fetch(cls_name: str, key: str):
         try:
@@ -230,44 +229,30 @@ async def analyze(payload: AnalyzePayload):
             available,
         )
 
-        async def _codegen_via_qwen(p: str) -> str:
-            if not ENABLE_ALETHIA_LLM:
-                raise RuntimeError("AlethiaLLM disabled")
-            llm_cls = get_modal_cls("AlethiaLLM")
-            llm = llm_cls()
-            msgs = [{"role": "system", "content": CODEGEN_SYSTEM_PROMPT}, {"role": "user", "content": p}]
-            return await llm.generate.remote.aio(msgs, max_tokens=2048, temperature=0.3)
+        if not openai_available():
+            return JSONResponse(
+                {"error": "Deep Dive unavailable: OpenAI not configured"},
+                status_code=503,
+            )
 
-        model_used = "qwen3-8b"
-        if openai_available():
-            try:
-                client = get_openai_client()
-                oai_resp = await client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": CODEGEN_SYSTEM_PROMPT_GPT4O},
-                        {"role": "user", "content": prompt},
-                    ],
-                    max_tokens=2048,
-                    temperature=0.3,
-                )
-                response = oai_resp.choices[0].message.content or ""
-                model_used = "gpt-4o"
-            except Exception as exc:
-                if not ENABLE_ALETHIA_LLM:
-                    return JSONResponse(
-                        {"error": f"Deep Dive unavailable: GPT-4o failed and AlethiaLLM is disabled ({exc})"},
-                        status_code=503,
-                    )
-                print(f"GPT-4o codegen failed, falling back to Qwen3: {exc}")
-                response = await _codegen_via_qwen(prompt)
-        else:
-            if not ENABLE_ALETHIA_LLM:
-                return JSONResponse(
-                    {"error": "Deep Dive unavailable: OpenAI not configured and AlethiaLLM is disabled"},
-                    status_code=503,
-                )
-            response = await _codegen_via_qwen(prompt)
+        model_used = "gpt-4o"
+        try:
+            client = get_openai_client()
+            oai_resp = await client.chat.completions.create(
+                model=model_used,
+                messages=[
+                    {"role": "system", "content": CODEGEN_SYSTEM_PROMPT_GPT4O},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=2048,
+                temperature=0.3,
+            )
+            response = oai_resp.choices[0].message.content or ""
+        except Exception as exc:
+            return JSONResponse(
+                {"error": f"Deep Dive unavailable: GPT-4o failed ({exc})"},
+                status_code=503,
+            )
 
         code = extract_python_code(response)
         if not code:

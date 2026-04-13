@@ -1,6 +1,6 @@
 """Recursive Agent Architecture — Lead Analyst + E2B Sandbox Workers.
 
-Monitors enriched documents for high-impact events, scores them via Qwen3-8B,
+Monitors enriched documents for high-impact events, scores them via OpenAI,
 dispatches specialized workers into E2B cloud sandboxes for deep cross-domain
 analysis, and synthesizes actionable impact briefs.
 
@@ -27,16 +27,7 @@ impact_queue = get_impact_queue()
 IMPACT_BRIEFS_PATH = f"{PROCESSED_DATA_PATH}/impact_briefs"
 DEDUP_PATH = f"{VOLUME_MOUNT}/dedup"
 MAX_ANALYZED_IDS = 5000
-
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    raw = (os.environ.get(name) or "").strip().lower()
-    if not raw:
-        return default
-    return raw in {"1", "true", "yes", "on"}
-
-
-ENABLE_ALETHIA_LLM = _env_flag("ENABLE_ALETHIA_LLM", default=False)
+DEFAULT_LEAD_ANALYST_MODEL = "gpt-5-mini"
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +199,7 @@ def _fast_filter(doc: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 async def _evaluate_significance(candidates: list[dict], tracer=None) -> list[dict]:
-    """Use Qwen3-8B to score candidate documents for business impact (1-10)."""
+    """Use OpenAI to score candidate documents for business impact (1-10)."""
     if not candidates:
         return []
 
@@ -242,26 +233,45 @@ async def _evaluate_significance(candidates: list[dict], tracer=None) -> list[di
         )
 
         try:
-            if not ENABLE_ALETHIA_LLM:
-                raise RuntimeError("AlethiaLLM disabled")
+            from modal_app.openai_utils import build_chat_kwargs, get_openai_client, openai_available
 
-            from modal_app.llm import AlethiaLLM
-            llm = AlethiaLLM()
-            response = await llm.generate.remote.aio(
-                [
-                    {
-                        "role": "system",
-                        "content": "You score event significance for Chicago small businesses. Return only JSON.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=1500,
+            if not openai_available():
+                raise RuntimeError("OpenAI unavailable")
+
+            client = get_openai_client()
+            model = os.environ.get("OPENAI_MODEL_LEAD_ANALYST", DEFAULT_LEAD_ANALYST_MODEL)
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You score event significance for Chicago small businesses. "
+                        'Return only valid JSON with shape {"items":[...]}'
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        prompt
+                        + '\n\nReturn JSON object: {"items":[{"index":0,"score":8,'
+                        '"reasoning":"...","category":"regulatory","neighborhoods":["West Loop"]}]}'
+                    ),
+                },
+            ]
+            response = await client.chat.completions.create(
+                **build_chat_kwargs(
+                    model,
+                    messages,
+                    max_completion_tokens=1500,
+                    gpt5_max_completion_tokens=2000,
+                    temperature=0.2,
+                    response_format={"type": "json_object"},
+                    reasoning_effort="low",
+                )
             )
 
-            # Parse JSON from response
-            json_match = _extract_json_array(response)
-            if json_match:
-                scored = json.loads(json_match)
+            payload = json.loads(response.choices[0].message.content or "{}")
+            scored = payload.get("items", [])
+            if isinstance(scored, list):
                 for item in scored:
                     idx = item.get("index", -1)
                     if 0 <= idx < len(candidates):
@@ -272,9 +282,10 @@ async def _evaluate_significance(candidates: list[dict], tracer=None) -> list[di
 
                 if span:
                     span.set_attribute("evaluate.scored_count", len(scored))
-                return candidates
+                if any("_impact_score" in doc for doc in candidates):
+                    return candidates
         except Exception as e:
-            print(f"Lead Analyst: LLM evaluation failed: {e}")
+            print(f"Lead Analyst: OpenAI evaluation failed: {e}")
             if span:
                 span.set_attribute("error", str(e))
 
@@ -391,7 +402,7 @@ with open("/data/output.json", "w") as f:
 
 
 async def _generate_worker_code(worker_type: str, trigger_doc: dict, context_docs: list[dict]) -> str:
-    """Generate analysis code via GPT-4o (Qwen3-8B fallback)."""
+    """Generate analysis code via GPT-4o with a local template fallback."""
     template = WORKER_TEMPLATES.get(worker_type, {})
     trigger_summary = f"Title: {trigger_doc.get('title', 'N/A')}\nContent: {trigger_doc.get('content', '')[:400]}"
     context_summary = json.dumps(context_docs[:5], indent=2, default=str)[:2000]
@@ -653,7 +664,7 @@ async def _synthesize_brief(
     worker_results: list[WorkerResult],
     tracer=None,
 ) -> ImpactBrief:
-    """Synthesize worker results into a coherent ImpactBrief via Qwen3-8B."""
+    """Synthesize worker results into a coherent ImpactBrief via OpenAI."""
     span_ctx = tracer.start_as_current_span("impact-synthesize") if tracer else None
     span = span_ctx.__enter__() if span_ctx else None
 
@@ -696,35 +707,37 @@ async def _synthesize_brief(
         recommendations = []
 
         try:
-            if not ENABLE_ALETHIA_LLM:
-                raise RuntimeError("AlethiaLLM disabled")
+            from modal_app.openai_utils import build_chat_kwargs, get_openai_client, openai_available
 
-            from modal_app.llm import AlethiaLLM
-            llm = AlethiaLLM()
-            response = await llm.generate.remote.aio(
-                [
-                    {
-                        "role": "system",
-                        "content": "You synthesize structured business impact briefs. Return valid JSON.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=2000,
+            if not openai_available():
+                raise RuntimeError("OpenAI unavailable")
+
+            client = get_openai_client()
+            model = os.environ.get("OPENAI_MODEL_LEAD_ANALYST", DEFAULT_LEAD_ANALYST_MODEL)
+            response = await client.chat.completions.create(
+                **build_chat_kwargs(
+                    model,
+                    [
+                        {
+                            "role": "system",
+                            "content": "You synthesize structured business impact briefs. Return valid JSON.",
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_completion_tokens=1200,
+                    gpt5_max_completion_tokens=2200,
+                    temperature=0.2,
+                    response_format={"type": "json_object"},
+                    reasoning_effort="low",
+                )
             )
 
-            # Parse JSON from response
-            json_match = _extract_json_array(response)
-            if not json_match:
-                # Try extracting JSON object
-                import re
-                obj_match = re.search(r"\{.*\}", response, re.DOTALL)
-                if obj_match:
-                    parsed = json.loads(obj_match.group(0))
-                    executive_summary = parsed.get("executive_summary", "")
-                    synthesis = parsed.get("synthesis", "")
-                    recommendations = parsed.get("recommendations", [])
+            parsed = json.loads(response.choices[0].message.content or "{}")
+            executive_summary = parsed.get("executive_summary", "")
+            synthesis = parsed.get("synthesis", "")
+            recommendations = parsed.get("recommendations", [])
         except Exception as e:
-            print(f"Lead Analyst: synthesis LLM failed: {e}")
+            print(f"Lead Analyst: synthesis OpenAI call failed: {e}")
             executive_summary = f"Impact analysis for: {trigger_doc.get('title', 'Unknown event')}"
             synthesis = "Automated analysis completed. See worker results for details."
             recommendations = ["Review the detailed worker findings", "Monitor for follow-up developments"]

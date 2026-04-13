@@ -15,7 +15,6 @@ if not _os.environ.get("MODAL_IS_REMOTE"):
     from modal_app import compress  # noqa: F401
     from modal_app import scaling_demo  # noqa: F401
     from modal_app import classify  # noqa: F401
-    from modal_app import llm  # noqa: F401
     from modal_app import web  # noqa: F401
     from modal_app import reconciler  # noqa: F401
     from modal_app import supermemory  # noqa: F401

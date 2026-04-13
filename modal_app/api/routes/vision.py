@@ -15,7 +15,6 @@ from modal_app.api.services.cctv import (
     load_cctv_latest_index,
     load_parking_for_neighborhood,
 )
-from modal_app.runtime import ENABLE_ALETHIA_LLM
 from modal_app.volume import PROCESSED_DATA_PATH, RAW_DATA_PATH, volume
 
 router = APIRouter()

@@ -6,8 +6,6 @@ from datetime import datetime, timezone
 import modal
 from fastapi import APIRouter
 
-from modal_app.runtime import ENABLE_ALETHIA_LLM
-
 router = APIRouter()
 
 
@@ -24,7 +22,7 @@ async def status():
 
     return {
         "gpu_status": {
-            "h100_llm": "disabled" if not ENABLE_ALETHIA_LLM else "available",
+            "h100_llm": "disabled",
             "t4_classifier": "available",
             "t4_sentiment": "available",
             "t4_cctv": "available",
