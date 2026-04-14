@@ -14,7 +14,7 @@ import CommunityFeed from './CommunityFeed.tsx'
 import MarketPanel from './MarketPanel.tsx'
 import DemographicsCard from './DemographicsCard.tsx'
 import PipelineMonitor from './PipelineMonitor.tsx'
-import MLMonitor from './MLMonitor.tsx'
+// import MLMonitor from './MLMonitor.tsx' // temporarily hidden — re-enable with Models tab
 import CCTVCameraCard from './CCTVCameraCard.tsx'
 import CCTVCameraDrawer from './CCTVCameraDrawer.tsx'
 import InsightsCard from './InsightsCard.tsx'
@@ -22,13 +22,13 @@ import CityGraph from './CityGraph.tsx'
 import LocationReportPanel from './LocationReportPanel.tsx'
 import FootTrafficChart from './FootTrafficChart.tsx'
 import StreetscapeCard from './StreetscapeCard.tsx'
-import RecursiveAgentPanel from './RecursiveAgentPanel.tsx'
+// import RecursiveAgentPanel from './RecursiveAgentPanel.tsx' // temporarily hidden — re-enable with Models tab
 import Drawer from './Drawer.tsx'
 import ProfilePage from './ProfilePage.tsx'
 import LoadingFlow from './LoadingFlow.tsx'
 import { InspectionOutcomesChart, TopViolationsPareto, AlertHoursStackedArea } from './VaultCharts.tsx'
 
-type Tab = 'overview' | 'regulatory' | 'intel' | 'community' | 'market' | 'vision' | 'models' | 'vault'
+type Tab = 'overview' | 'regulatory' | 'intel' | 'community' | 'market' | 'vision'
 
 interface ReportAgentInfo {
   agents_deployed: number
@@ -445,8 +445,6 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
     { key: 'community', label: 'Community', count: (neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0), isEmpty: () => !((neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0)) },
     { key: 'market', label: 'Market', count: (neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0), isEmpty: () => !((neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0)) },
     { key: 'vision', label: 'Vision', count: neighborhoodData?.cctv?.cameras.length || 0, isEmpty: () => false },
-    { key: 'models', label: 'Models' },
-    { key: 'vault', label: 'Vault' },
   ]
   const tabs = useMemo(
     () => allTabs.filter(t => !t.isEmpty || !(t.isEmpty?.() ?? false)),
@@ -621,6 +619,9 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
                 <VisionTab cctv={neighborhoodData?.cctv ?? null} parking={neighborhoodData?.parking ?? null} neighborhood={profile.neighborhood} />
               )}
 
+              {/* Models and Vault tabs temporarily hidden from dashboard navigation.
+                 Components preserved — re-add 'models'|'vault' to Tab type and allTabs to restore.
+
               {activeTab === 'models' && (
                 <div className="space-y-4">
                   <RecursiveAgentPanel />
@@ -636,6 +637,7 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
                   neighborhood={profile.neighborhood}
                 />
               )}
+              */}
             </>
           )}
         </div>
@@ -886,7 +888,8 @@ function VisionTab({ cctv, parking, neighborhood }: { cctv: CCTVData | null; par
   )
 }
 
-function VaultTab({
+// Exported to avoid noUnusedLocals — temporarily hidden from dashboard tabs
+export function VaultTab({
   onOpenGraph,
   dataPoints = 0,
   neighborhood,
