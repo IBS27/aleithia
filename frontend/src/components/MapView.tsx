@@ -82,6 +82,7 @@ export default function MapView({ activeNeighborhood, geojsonUrl }: Props) {
   const [activeLayer, setActiveLayer] = useState<HeatmapLayer>('regulatory')
   const [mapReady, setMapReady] = useState(false)
   const [mapError, setMapError] = useState<string | null>(null)
+  const layerKeys = Object.keys(LAYER_CONFIG) as HeatmapLayer[]
 
   // Initialize the map
   useEffect(() => {
@@ -295,18 +296,22 @@ function addSourceAndLayers(map: mapboxgl.Map, geojson: GeoJSON.FeatureCollectio
       </div>
 
       {/* Layer control row */}
-      <div className="flex gap-0 divide-x divide-white/[0.04] border-b border-white/[0.06] bg-white/[0.008]">
-        {(Object.keys(LAYER_CONFIG) as HeatmapLayer[]).map((layer) => {
+      <div className="flex gap-0 border-b border-white/[0.06] bg-white/[0.008]">
+        {layerKeys.map((layer, index) => {
           const isActive = activeLayer === layer
           const config = LAYER_CONFIG[layer]
+          const previousLayer = layerKeys[index - 1]
+          const hidesLeftDivider = index === 0 || isActive || activeLayer === previousLayer
           return (
             <button
               key={layer}
               onClick={() => setActiveLayer(layer)}
-              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-[10px] font-mono uppercase tracking-wider transition-all cursor-pointer border-b-2 -mb-px ${
+              className={`relative flex-1 flex items-center justify-center gap-2 px-3 py-2 text-[10px] font-mono uppercase tracking-wider transition-all cursor-pointer border-b-2 -mb-px border-l ${
                 isActive
-                  ? 'border-white/70 text-white bg-white/[0.03]'
+                  ? 'z-10 border-white/70 text-white bg-white/[0.03]'
                   : 'border-transparent text-white/30 hover:text-white/55 hover:bg-white/[0.015]'
+              } ${
+                hidesLeftDivider ? 'border-l-transparent' : 'border-l-white/[0.04]'
               }`}
               style={isActive ? { borderBottomColor: config.color } : undefined}
             >
