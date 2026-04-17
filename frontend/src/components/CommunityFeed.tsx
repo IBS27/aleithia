@@ -13,6 +13,12 @@ function parseViewCount(raw: string): number {
   return Math.round(num)
 }
 
+function formatViews(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+  return n.toString()
+}
+
 function isCountOnlyText(raw: string): boolean {
   if (!raw) return false
   return /^\s*\d[\d,.\s]*[KMB]?\s*$/i.test(raw)
@@ -49,132 +55,184 @@ interface Props {
   tiktok: Document[]
 }
 
+function FeedHeader({ label, count, accent, dot, suffix }: {
+  label: string
+  count: number
+  accent: string
+  dot: string
+  suffix: string
+}) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 border-b border-white/[0.04] bg-white/[0.015]">
+      <span className={`w-1 h-1 rounded-full ${dot}`} />
+      <span className={`text-[10px] font-mono uppercase tracking-[0.2em] ${accent}`}>{label}</span>
+      <span className="text-[10px] font-mono text-white/25">{count} {suffix}</span>
+    </div>
+  )
+}
+
+function RedditPost({ post }: { post: Document }) {
+  const subreddit = (post.metadata?.subreddit as string) || ''
+  const score = (post.metadata?.score as number) || 0
+  const numComments = (post.metadata?.num_comments as number) || 0
+
+  return (
+    <div className="border-b border-white/[0.04] last:border-0 px-3 py-2.5 hover:bg-white/[0.02] transition-colors">
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            {subreddit && (
+              <span className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 border border-orange-500/25 text-orange-300/80 bg-orange-500/[0.04]">
+                r/{subreddit}
+              </span>
+            )}
+            <div className="flex items-center gap-2 text-[9px] font-mono text-white/35 ml-auto shrink-0">
+              {score > 0 && (
+                <span className="flex items-center gap-0.5">
+                  <span className="text-orange-300/60">▲</span>
+                  {score}
+                </span>
+              )}
+              {numComments > 0 && <span>{numComments} comments</span>}
+              <span>{new Date(post.timestamp).toLocaleDateString()}</span>
+            </div>
+          </div>
+          <h4 className="text-[13px] font-semibold text-white/90 leading-snug line-clamp-2">{post.title}</h4>
+          {post.content && (
+            <p className="text-[11px] text-white/45 mt-1 leading-relaxed line-clamp-2">
+              {post.content.substring(0, 180)}
+              {post.content.length > 180 && '...'}
+            </p>
+          )}
+        </div>
+        {post.url && (
+          <a
+            href={post.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[10px] font-mono uppercase tracking-wider text-white/30 hover:text-white/70 shrink-0 transition-colors self-center"
+          >
+            View ›
+          </a>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function TikTokPost({ video }: { video: Document }) {
+  const creator = (video.metadata?.creator as string) || ''
+  const query = (video.metadata?.search_query as string) || ''
+  const views = parseViewCount((video.metadata?.views as string) || '')
+  const hashtags = (video.metadata?.hashtags as string[]) || []
+  const rawTitle = (video.title || '').trim()
+  const transcriptTitle = transcriptHeadline(video.content)
+  const hasMeaningfulTitle = rawTitle && !isCountOnlyText(rawTitle) && rawTitle.toLowerCase() !== 'tiktok video'
+  const titleText = hasMeaningfulTitle
+    ? rawTitle
+    : transcriptTitle || (creator ? `@${creator}` : '') || (query ? `TikTok: ${query}` : 'TikTok video')
+  const contentText = cleanTikTokContent(video.content)
+
+  return (
+    <div className="border-b border-white/[0.04] last:border-0 px-3 py-2.5 hover:bg-white/[0.02] transition-colors">
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            {creator && (
+              <span className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 border border-pink-500/25 text-pink-300/80 bg-pink-500/[0.04]">
+                @{creator}
+              </span>
+            )}
+            <div className="flex items-center gap-2 text-[9px] font-mono text-white/35 ml-auto shrink-0">
+              {views > 0 && (
+                <span className="flex items-center gap-0.5">
+                  <span className="text-pink-300/60">●</span>
+                  {formatViews(views)} views
+                </span>
+              )}
+              <span>{new Date(video.timestamp).toLocaleDateString()}</span>
+            </div>
+          </div>
+          <h4 className="text-[13px] font-semibold text-white/90 leading-snug line-clamp-2">{titleText}</h4>
+          {contentText && (
+            <p className="text-[11px] text-white/45 mt-1 leading-relaxed line-clamp-2">
+              {contentText.substring(0, 150)}
+              {contentText.length > 150 && '...'}
+            </p>
+          )}
+          {hashtags.length > 0 && (
+            <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+              {hashtags.slice(0, 4).map((tag) => (
+                <span key={tag} className="text-[9px] font-mono text-pink-300/50">
+                  #{tag}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        {video.url && (
+          <a
+            href={video.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[10px] font-mono uppercase tracking-wider text-white/30 hover:text-white/70 shrink-0 transition-colors self-center"
+          >
+            Watch ›
+          </a>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function CommunityFeed({ reddit, tiktok }: Props) {
-  const displayedTikTok = tiktok.slice(0, 5)
+  const displayedTikTok = tiktok.slice(0, 6)
   const hasContent = reddit.length > 0 || displayedTikTok.length > 0
 
   if (!hasContent) {
     return (
-      <div className="border border-white/[0.06] p-8 text-center text-xs font-mono text-white/20 uppercase tracking-wider">
-        No community data available
+      <div className="border border-white/[0.06] bg-white/[0.01] p-8 text-center">
+        <div className="text-xs font-mono text-white/30 uppercase tracking-wider">No community data</div>
+        <div className="text-[10px] font-mono text-white/20 mt-1">Reddit discussions and TikTok chatter will surface once social pipelines run.</div>
       </div>
     )
   }
 
   return (
-    <div className="space-y-4">
-      {reddit.length > 0 && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between px-1">
-            <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">Reddit Discussions</h3>
-            <span className="text-[10px] font-mono text-white/15">{reddit.length} posts</span>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="border border-white/[0.06] bg-white/[0.01]">
+        <FeedHeader
+          label="Reddit Discussions"
+          count={reddit.length}
+          accent="text-orange-300/70"
+          dot="bg-orange-400/70"
+          suffix="posts"
+        />
+        {reddit.length > 0 ? (
+          <div>{reddit.map((post) => <RedditPost key={post.id} post={post} />)}</div>
+        ) : (
+          <div className="p-6 text-center text-[10px] font-mono text-white/20">
+            No Reddit posts indexed for this area yet.
           </div>
-          {reddit.map((post) => {
-            const subreddit = (post.metadata?.subreddit as string) || ''
-            const score = (post.metadata?.score as number) || 0
-            const numComments = (post.metadata?.num_comments as number) || 0
+        )}
+      </div>
 
-            return (
-              <div key={post.id} className="border border-white/[0.06] bg-white/[0.01] p-4">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <h4 className="text-sm font-semibold text-white mb-1">{post.title}</h4>
-                    {post.content && (
-                      <p className="text-xs text-white/30 leading-relaxed mb-2">
-                        {post.content.substring(0, 200)}
-                        {post.content.length > 200 && '...'}
-                      </p>
-                    )}
-                    <div className="flex items-center gap-3 text-[10px] font-mono text-white/15">
-                      <span>{new Date(post.timestamp).toLocaleDateString()}</span>
-                      {subreddit && (
-                        <span className="px-2 py-0.5 border border-green-500/20 text-green-400/60">
-                          r/{subreddit}
-                        </span>
-                      )}
-                      {score > 0 && <span>{score} pts</span>}
-                      {numComments > 0 && <span>{numComments} comments</span>}
-                    </div>
-                  </div>
-                  {post.url && (
-                    <a
-                      href={post.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[10px] font-mono uppercase tracking-wider text-white/25 hover:text-white/50 ml-4 shrink-0 transition-colors"
-                    >
-                      View
-                    </a>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {tiktok.length > 0 && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between px-1">
-            <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">TikTok</h3>
-            <span className="text-[10px] font-mono text-white/15">{displayedTikTok.length} videos</span>
+      <div className="border border-white/[0.06] bg-white/[0.01]">
+        <FeedHeader
+          label="TikTok Signal"
+          count={displayedTikTok.length}
+          accent="text-pink-300/70"
+          dot="bg-pink-400/70"
+          suffix="videos"
+        />
+        {displayedTikTok.length > 0 ? (
+          <div>{displayedTikTok.map((video) => <TikTokPost key={video.id} video={video} />)}</div>
+        ) : (
+          <div className="p-6 text-center text-[10px] font-mono text-white/20">
+            No TikTok videos for this profile yet.
           </div>
-          {displayedTikTok.length === 0 && (
-            <div className="border border-white/[0.06] bg-white/[0.01] p-4 text-[10px] font-mono uppercase tracking-wider text-white/25">
-              No TikTok videos for this profile yet
-            </div>
-          )}
-          {displayedTikTok.map((video) => {
-            const creator = (video.metadata?.creator as string) || ''
-            const query = (video.metadata?.search_query as string) || ''
-            const views = parseViewCount((video.metadata?.views as string) || '')
-            const hashtags = (video.metadata?.hashtags as string[]) || []
-            const rawTitle = (video.title || '').trim()
-            const transcriptTitle = transcriptHeadline(video.content)
-            const hasMeaningfulTitle = rawTitle && !isCountOnlyText(rawTitle) && rawTitle.toLowerCase() !== 'tiktok video'
-            const titleText = hasMeaningfulTitle
-              ? rawTitle
-              : transcriptTitle || (creator ? `@${creator}` : '') || (query ? `TikTok: ${query}` : 'TikTok video')
-            const contentText = cleanTikTokContent(video.content)
-
-            return (
-              <div key={video.id} className="border border-white/[0.06] bg-white/[0.01] p-4">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <h4 className="text-sm font-semibold text-white mb-1">{titleText}</h4>
-                    {contentText && (
-                      <p className="text-xs text-white/30 leading-relaxed mb-2">
-                        {contentText.substring(0, 150)}
-                        {contentText.length > 150 && '...'}
-                      </p>
-                    )}
-                    <div className="flex items-center gap-3 text-[10px] font-mono text-white/15 flex-wrap">
-                      <span>{new Date(video.timestamp).toLocaleDateString()}</span>
-                      {creator && <span>@{creator}</span>}
-                      {views > 0 && <span>{views.toLocaleString()} views</span>}
-                      {hashtags.slice(0, 3).map((tag) => (
-                        <span key={tag} className="px-1.5 py-0.5 border border-pink-500/20 text-pink-400/60">
-                          #{tag}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  {video.url && (
-                    <a
-                      href={video.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[10px] font-mono uppercase tracking-wider text-white/25 hover:text-white/50 ml-4 shrink-0 transition-colors"
-                    >
-                      Watch
-                    </a>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }

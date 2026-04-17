@@ -4,6 +4,7 @@ import { api } from '../api.ts'
 
 interface Props {
   neighborhood: string
+  embedded?: boolean
 }
 
 function formatHour(h: number): string {
@@ -13,7 +14,7 @@ function formatHour(h: number): string {
   return `${h - 12}p`
 }
 
-export default function FootTrafficChart({ neighborhood }: Props) {
+export default function FootTrafficChart({ neighborhood, embedded }: Props) {
   const [data, setData] = useState<CCTVTimeseries | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -45,14 +46,15 @@ export default function FootTrafficChart({ neighborhood }: Props) {
   const hasSamples = data.hours.some((h) => h.sample_count > 0)
   if (!hasSamples) return null
 
+  const wrapClass = embedded ? 'p-4' : 'border border-white/[0.06] bg-white/[0.02] p-5'
   return (
-    <div className="border border-white/[0.06] bg-white/[0.02] p-5">
+    <div className={wrapClass}>
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">
           Highway Traffic — 24h Pattern
         </h3>
         <span className="text-[9px] font-mono text-white/20">
-          IDOT expressway cameras · {data.camera_count} camera{data.camera_count !== 1 ? 's' : ''} · Chicago time
+          {data.camera_count} camera{data.camera_count !== 1 ? 's' : ''} · Chicago time
         </span>
       </div>
 

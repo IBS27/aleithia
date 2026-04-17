@@ -53,35 +53,35 @@ export default function StreetscapeCard({ neighborhood }: Props) {
   ]
 
   return (
-    <div className="border border-white/[0.06] bg-white/[0.02] p-5">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">
-          Streetscape Intelligence
-        </h3>
-        <span className="text-[9px] font-mono text-white/20">
+    <div className="border border-white/[0.06] bg-white/[0.02]">
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.06]">
+        <span className="w-1 h-1 rounded-full bg-purple-400/70" />
+        <span className="text-[10px] font-mono uppercase tracking-[0.22em] text-purple-300/80">Streetscape Intelligence</span>
+        <span className="text-[9px] font-mono ml-auto text-white/25">
           {data.analysis_count} frame{data.analysis_count !== 1 ? 's' : ''} analyzed
         </span>
       </div>
 
+      <div className="p-4">
       {/* Indicator badges */}
-      <div className="flex gap-2 mb-4">
-        <span className={`text-[10px] font-mono px-2 py-1 border ${INDICATOR_COLORS[indicators.vacancy_signal]}`}>
-          Vacancy Rate: {indicators.vacancy_signal}
+      <div className="flex gap-2 mb-4 flex-wrap">
+        <span className={`text-[10px] font-mono px-2 py-1 border ${INDICATOR_COLORS[indicators.vacancy_signal]} uppercase tracking-wider`}>
+          Vacancy: {indicators.vacancy_signal}
         </span>
-        <span className={`text-[10px] font-mono px-2 py-1 border ${INDICATOR_COLORS[indicators.dining_saturation]}`}>
-          Dining Scene: {indicators.dining_saturation}
+        <span className={`text-[10px] font-mono px-2 py-1 border ${INDICATOR_COLORS[indicators.dining_saturation]} uppercase tracking-wider`}>
+          Dining: {indicators.dining_saturation}
         </span>
-        <span className={`text-[10px] font-mono px-2 py-1 border ${INDICATOR_COLORS[indicators.growth_signal]}`}>
-          Growth Trend: {indicators.growth_signal}
+        <span className={`text-[10px] font-mono px-2 py-1 border ${INDICATOR_COLORS[indicators.growth_signal]} uppercase tracking-wider`}>
+          Growth: {indicators.growth_signal}
         </span>
       </div>
 
       {/* Count grid */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
         {countGrid.map(item => (
-          <div key={item.label}>
+          <div key={item.label} className="border border-white/[0.04] bg-white/[0.015] p-2.5">
             <div className={`text-lg font-bold font-mono ${item.color}`}>{item.value}</div>
-            <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mt-0.5">{item.label}</div>
+            <div className="text-[9px] font-mono uppercase tracking-wider text-white/25 mt-0.5">{item.label}</div>
           </div>
         ))}
       </div>
@@ -137,6 +137,7 @@ export default function StreetscapeCard({ neighborhood }: Props) {
           </div>
         </div>
       )}
+      </div>
     </div>
   )
 }

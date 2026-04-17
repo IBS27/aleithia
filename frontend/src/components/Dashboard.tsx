@@ -2,10 +2,8 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import type { UserProfile, NeighborhoodData, DataSources, RiskScore, CCTVData, ParkingData } from '../types/index.ts'
 import { api, API_BASE, BACKEND_API_BASE, fetchTrends, type TrendData } from '../api.ts'
-import RiskCard from './RiskCard.tsx'
 import MapView from './MapView.tsx'
 import Timer from './Timer.tsx'
-import DataSourceBadge from './DataSourceBadge.tsx'
 import InspectionTable from './InspectionTable.tsx'
 import PermitTable from './PermitTable.tsx'
 import LicenseTable from './LicenseTable.tsx'
@@ -17,7 +15,7 @@ import PipelineMonitor from './PipelineMonitor.tsx'
 // import MLMonitor from './MLMonitor.tsx' // temporarily hidden — re-enable with Models tab
 import CCTVCameraCard from './CCTVCameraCard.tsx'
 import CCTVCameraDrawer from './CCTVCameraDrawer.tsx'
-import InsightsCard from './InsightsCard.tsx'
+import CommandPanel from './CommandPanel.tsx'
 import CityGraph from './CityGraph.tsx'
 import LocationReportPanel from './LocationReportPanel.tsx'
 import FootTrafficChart from './FootTrafficChart.tsx'
@@ -28,7 +26,7 @@ import ProfilePage from './ProfilePage.tsx'
 import LoadingFlow from './LoadingFlow.tsx'
 import { InspectionOutcomesChart, TopViolationsPareto, AlertHoursStackedArea } from './VaultCharts.tsx'
 
-type Tab = 'overview' | 'regulatory' | 'intel' | 'community' | 'market' | 'vision'
+type Tab = 'overview' | 'regulatory' | 'intel' | 'community' | 'market' | 'vision' | 'evidence'
 
 interface ReportAgentInfo {
   agents_deployed: number
@@ -438,6 +436,7 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
   }, [sources, neighborhoodData, profile.neighborhood])
 
   const regulatoryCount = (neighborhoodData?.inspection_stats.total || 0) + (neighborhoodData?.permit_count || 0) + (neighborhoodData?.license_count || 0)
+  const evidenceCount = (neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0) + (neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0) + (neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0) + (neighborhoodData?.federal_register?.length || 0)
   const allTabs: { key: Tab; label: string; count?: number; isEmpty?: () => boolean }[] = [
     { key: 'overview', label: 'Overview' },
     { key: 'regulatory', label: 'Regulatory', count: regulatoryCount, isEmpty: () => !regulatoryCount },
@@ -445,6 +444,7 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
     { key: 'community', label: 'Community', count: (neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0), isEmpty: () => !((neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0)) },
     { key: 'market', label: 'Market', count: (neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0), isEmpty: () => !((neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0)) },
     { key: 'vision', label: 'Vision', count: neighborhoodData?.cctv?.cameras.length || 0, isEmpty: () => false },
+    { key: 'evidence', label: 'Evidence', count: evidenceCount, isEmpty: () => !evidenceCount },
   ]
   const tabs = useMemo(
     () => allTabs.filter(t => !t.isEmpty || !(t.isEmpty?.() ?? false)),
@@ -472,32 +472,59 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
   return (
     <div className="h-screen flex flex-col bg-[#06080d]">
       {/* Top bar */}
-      <header className="flex items-center justify-between px-6 py-3 bg-white/[0.02] backdrop-blur-md border-b border-white/[0.06]">
-        <div className="flex items-center gap-5">
+      <header className="flex items-stretch justify-between bg-white/[0.02] backdrop-blur-md border-b border-white/[0.06]">
+        {/* Identity + Context */}
+        <div className="flex items-stretch">
           <button
             type="button"
             onClick={onReset}
-            className="text-sm font-semibold uppercase tracking-wide text-white/70 hover:text-white transition-colors duration-300 cursor-pointer"
+            className="flex items-center gap-2 px-5 border-r border-white/[0.06] hover:bg-white/[0.03] transition-colors cursor-pointer group"
           >
-            Aleithia
+            <span className="w-1.5 h-1.5 rounded-full bg-[#2B95D6] group-hover:shadow-[0_0_8px_rgba(43,149,214,0.8)] transition-shadow" />
+            <span className="text-sm font-semibold uppercase tracking-[0.18em] text-white/80 group-hover:text-white transition-colors">
+              Aleithia
+            </span>
           </button>
-          <div className="h-3.5 w-px bg-white/10" />
-          <span className="text-xs font-mono text-white/30">
-            {profile.business_type} <span className="text-white/10 mx-1">/</span> <span className="text-white/50">{profile.neighborhood}</span>
-          </span>
+          <div className="flex items-center gap-3 px-5 border-r border-white/[0.06]">
+            <span className="text-[9px] font-mono uppercase tracking-wider text-white/25">Target</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono text-white/70">{profile.business_type}</span>
+              <span className="text-white/15">›</span>
+              <span className="text-xs font-mono text-white/45">{profile.neighborhood}</span>
+            </div>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <Timer running={loading} />
-          <button onClick={refreshData} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
-            Refresh
-          </button>
-          <button onClick={() => setProfileDrawerOpen(true)} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
-            Profile
-          </button>
 
-          <button onClick={() => navigate('/start')} className="text-[10px] font-mono uppercase tracking-wider text-white/20 hover:text-white/50 transition-colors cursor-pointer">
-            New Search
-          </button>
+        {/* Session status + Actions */}
+        <div className="flex items-stretch">
+          <div className="flex items-center gap-3 px-5 border-l border-white/[0.06]">
+            <span className="text-[9px] font-mono uppercase tracking-wider text-white/25">Session</span>
+            <Timer running={loading} />
+            <span className={`flex items-center gap-1.5 text-[10px] font-mono ${loading ? 'text-blue-400/70' : 'text-emerald-400/70'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-blue-400 animate-pulse' : 'bg-emerald-400'}`} />
+              {loading ? 'ANALYZING' : 'READY'}
+            </span>
+          </div>
+          <div className="flex items-stretch">
+            <button
+              onClick={refreshData}
+              className="px-4 border-l border-white/[0.06] text-[10px] font-mono uppercase tracking-wider text-white/35 hover:text-white hover:bg-white/[0.03] transition-colors cursor-pointer"
+            >
+              Refresh
+            </button>
+            <button
+              onClick={() => setProfileDrawerOpen(true)}
+              className="px-4 border-l border-white/[0.06] text-[10px] font-mono uppercase tracking-wider text-white/35 hover:text-white hover:bg-white/[0.03] transition-colors cursor-pointer"
+            >
+              Profile
+            </button>
+            <button
+              onClick={() => navigate('/start')}
+              className="px-4 border-l border-white/[0.06] text-[10px] font-mono uppercase tracking-wider text-white/35 hover:text-white hover:bg-white/[0.03] transition-colors cursor-pointer"
+            >
+              New Search
+            </button>
+          </div>
         </div>
       </header>
 
@@ -520,37 +547,42 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
       <div className="flex-1 flex min-h-0">
         {/* Left: Data */}
         <div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto">
-          {/* Pipeline Monitor */}
-          <PipelineMonitor />
+          {/* Pipeline Monitor - compact status strip */}
+          <PipelineMonitor
+            sourcesReady={sourcesMetadataReady}
+            sourcesWarning={sourcesWarning}
+            activeSources={sourceList.filter(s => s.active).length}
+            totalSources={sourceList.length}
+          />
 
-          {/* Data sources */}
-          {sourcesWarning && (
-            <div className="text-[10px] font-mono text-amber-300/70">
-              {sourcesWarning}
-            </div>
-          )}
-          {sourcesMetadataReady && <DataSourceBadge sources={sourceList} />}
-
-          {/* Tabs */}
-          <div className="flex gap-0 border-b border-white/[0.06]">
-            {tabs.map(tab => (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                className={`flex items-center gap-2 px-5 py-2.5 text-xs font-medium transition-colors border-b-2 -mb-px cursor-pointer ${
-                  activeTab === tab.key
-                    ? 'border-white text-white'
-                    : 'border-transparent text-white/30 hover:text-white/60'
-                }`}
-              >
-                {tab.label}
-                {tab.count !== undefined && tab.count > 0 && (
-                  <span className="font-mono text-[10px] text-white/20">
-                    {tab.count}
-                  </span>
-                )}
-              </button>
-            ))}
+          {/* Tabs — segmented workspace navigation */}
+          <div className="flex gap-0 border-b border-white/[0.06] items-stretch">
+            {tabs.map(tab => {
+              const isActive = activeTab === tab.key
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`flex items-center gap-2 px-5 py-2.5 text-xs font-medium transition-all border-b-2 -mb-px cursor-pointer relative ${
+                    isActive
+                      ? 'border-[#2B95D6] text-white bg-[#2B95D6]/[0.05]'
+                      : 'border-transparent text-white/35 hover:text-white/70 hover:bg-white/[0.02]'
+                  }`}
+                >
+                  {isActive && (
+                    <span className="absolute left-0 top-0 bottom-0 w-px bg-[#2B95D6]/30" />
+                  )}
+                  <span className="uppercase tracking-wider text-[11px]">{tab.label}</span>
+                  {tab.count !== undefined && tab.count > 0 && (
+                    <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
+                      isActive ? 'bg-[#2B95D6]/20 text-[#2B95D6]' : 'text-white/25 bg-white/[0.04]'
+                    }`}>
+                      {tab.count}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
           </div>
 
           {loading ? (
@@ -569,22 +601,24 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
 
               {activeTab === 'overview' && (
                 <div className="space-y-4">
-                  {/* Map hero (left) + Unified Risk/Insights panel (right) */}
+                  {/* Map hero (left) + Unified Command Panel (right) */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <div className="h-[600px] min-h-0">
+                    <div className="h-[620px] min-h-0">
                       <MapView activeNeighborhood={profile.neighborhood} />
                     </div>
 
-                    <div className="min-h-0 flex flex-col border border-white/[0.06] bg-white/[0.01] overflow-x-hidden lg:max-h-[600px] lg:overflow-y-auto hide-scrollbar">
-                      {riskScore ? (
-                        <RiskCard score={riskScore} borderless />
+                    <div className="h-[620px] min-h-0">
+                      {riskScore && neighborhoodData ? (
+                        <CommandPanel
+                          data={neighborhoodData}
+                          profile={profile}
+                          riskScore={riskScore}
+                          onTabChange={(tab) => setActiveTab(tab as Tab)}
+                        />
                       ) : (
-                        <div className="p-6 flex items-center justify-center">
-                          <span className="text-[10px] font-mono text-white/20">Loading risk assessment</span>
+                        <div className="h-full flex items-center justify-center border border-white/[0.06] bg-white/[0.01]">
+                          <span className="text-[10px] font-mono text-white/20">Loading command panel</span>
                         </div>
-                      )}
-                      {neighborhoodData && (
-                        <InsightsCard data={neighborhoodData} profile={profile} onTabChange={(tab) => setActiveTab(tab as Tab)} borderless />
                       )}
                     </div>
                   </div>
@@ -592,6 +626,14 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
                   {/* Full-width demographics strip */}
                   {neighborhoodData?.metrics && (
                     <DemographicsCard metrics={neighborhoodData.metrics} demographics={neighborhoodData.demographics} horizontal />
+                  )}
+
+                  {/* Evidence preview row (Phase 2e) */}
+                  {neighborhoodData && (
+                    <OverviewPreviewRow
+                      data={neighborhoodData}
+                      onTabChange={(tab) => setActiveTab(tab as Tab)}
+                    />
                   )}
                 </div>
               )}
@@ -617,6 +659,10 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
 
               {activeTab === 'vision' && (
                 <VisionTab cctv={neighborhoodData?.cctv ?? null} parking={neighborhoodData?.parking ?? null} neighborhood={profile.neighborhood} />
+              )}
+
+              {activeTab === 'evidence' && neighborhoodData && (
+                <EvidenceExplorer data={neighborhoodData} />
               )}
 
               {/* Models and Vault tabs temporarily hidden from dashboard navigation.
@@ -702,162 +748,193 @@ function VisionTab({ cctv, parking, neighborhood }: { cctv: CCTVData | null; par
 
   return (
     <div className="space-y-4">
-      {/* Streetscape Intelligence */}
+      {/* Vision header strip */}
+      <div className="border border-white/[0.06] bg-gradient-to-r from-white/[0.02] to-emerald-500/[0.02] px-4 py-2 flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="text-[10px] font-mono uppercase tracking-[0.22em] text-emerald-300/80">Vision Command</span>
+        </div>
+        <div className="h-3 w-px bg-white/10" />
+        <span className="text-[10px] font-mono text-white/40 uppercase tracking-wider">{neighborhood || 'Selected area'}</span>
+        <div className="flex-1" />
+        <div className="flex items-center gap-3 text-[10px] font-mono text-white/30">
+          <span><span className="text-white/60">{cameras.length}</span> cameras</span>
+          <span className="text-white/10">·</span>
+          <span><span className="text-white/60">{parking?.parking_lots.length || 0}</span> lots</span>
+          <span className="text-white/10">·</span>
+          <span className={`uppercase ${avgDensity === 'high' ? 'text-red-400/80' : avgDensity === 'medium' ? 'text-amber-400/80' : 'text-emerald-400/80'}`}>
+            {avgDensity} density
+          </span>
+        </div>
+      </div>
+
+      {/* Streetscape Intelligence (elevated) */}
       <StreetscapeCard neighborhood={neighborhood} />
 
-      {/* Satellite Parking Detection */}
-      {parking && parking.parking_lots.length > 0 && (
-        <>
-          <div className="border border-white/[0.06] bg-white/[0.02] p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">
-                Satellite Parking Detection
-              </h3>
-              <span className="text-[9px] font-mono px-2 py-0.5 border border-white/10 text-white/25">
+      {/* Satellite Parking + Highway Detection - two-column module */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Parking occupancy */}
+        {parking && parking.parking_lots.length > 0 ? (
+          <div className="border border-white/[0.06] bg-white/[0.02]">
+            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.06]">
+              <span className="w-1 h-1 rounded-full bg-cyan-400/70" />
+              <span className="text-[10px] font-mono uppercase tracking-[0.22em] text-cyan-300/80">Parking Occupancy</span>
+              <span className="text-[9px] font-mono ml-auto text-white/25 px-1.5 py-0.5 border border-white/10">
                 SegFormer + YOLOv8m
               </span>
             </div>
 
-            {/* Stat grid */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-              <div className="border border-white/[0.06] bg-white/[0.02] p-3">
-                <div className="text-xl font-bold font-mono text-white">{parking.parking_lots.length}</div>
-                <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-1">Lots Detected</div>
-              </div>
-              <div className="border border-white/[0.06] bg-white/[0.02] p-3">
-                <div className="text-xl font-bold font-mono text-blue-400">{parking.total_capacity}</div>
-                <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-1">Total Capacity</div>
-              </div>
-              <div className="border border-white/[0.06] bg-white/[0.02] p-3">
-                <div className="text-xl font-bold font-mono text-green-400">{parking.total_vehicles}</div>
-                <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-1">Vehicles</div>
-              </div>
-              <div className="border border-white/[0.06] bg-white/[0.02] p-3">
-                <div className={`text-xl font-bold font-mono ${parking.overall_occupancy > 0.85 ? 'text-red-400' : parking.overall_occupancy > 0.6 ? 'text-amber-400' : 'text-green-400'}`}>
-                  {Math.round(parking.overall_occupancy * 100)}%
-                </div>
-                <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-1">Occupancy</div>
-              </div>
-            </div>
-
             {/* Annotated satellite image */}
-            <div className="relative aspect-video bg-black/40 overflow-hidden mb-4">
+            <div className="relative aspect-video bg-black/40 overflow-hidden border-b border-white/[0.04]">
               <img
                 src={api.parkingAnnotatedUrl(neighborhood)}
                 alt={`Parking analysis — ${neighborhood}`}
                 className="w-full h-full object-contain"
                 onError={e => { e.currentTarget.style.display = 'none' }}
               />
+              {/* HUD overlay */}
+              <div className="absolute top-2 left-2 text-[9px] font-mono text-emerald-400/80 bg-black/60 px-1.5 py-0.5 border border-emerald-500/20">
+                LIVE ● SAT
+              </div>
+              <div className="absolute top-2 right-2 text-[9px] font-mono text-white/50 bg-black/60 px-1.5 py-0.5 border border-white/10">
+                {parking.timestamp && new Date(parking.timestamp).toLocaleDateString()}
+              </div>
             </div>
 
-            {/* Per-lot breakdown table */}
-            <div className="overflow-x-auto">
+            {/* Stat grid */}
+            <div className="grid grid-cols-4 divide-x divide-white/[0.04]">
+              <div className="px-3 py-2.5">
+                <div className="text-lg font-bold font-mono text-white">{parking.parking_lots.length}</div>
+                <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-0.5">Lots</div>
+              </div>
+              <div className="px-3 py-2.5">
+                <div className="text-lg font-bold font-mono text-blue-400/80">{parking.total_capacity}</div>
+                <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-0.5">Capacity</div>
+              </div>
+              <div className="px-3 py-2.5">
+                <div className="text-lg font-bold font-mono text-emerald-400/80">{parking.total_vehicles}</div>
+                <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-0.5">Vehicles</div>
+              </div>
+              <div className="px-3 py-2.5">
+                <div className={`text-lg font-bold font-mono ${parking.overall_occupancy > 0.85 ? 'text-red-400' : parking.overall_occupancy > 0.6 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                  {Math.round(parking.overall_occupancy * 100)}%
+                </div>
+                <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-0.5">Occupancy</div>
+              </div>
+            </div>
+
+            {/* Per-lot breakdown */}
+            <div className="max-h-48 overflow-y-auto border-t border-white/[0.04]">
               <table className="w-full text-left">
-                <thead>
+                <thead className="sticky top-0 bg-white/[0.03] backdrop-blur">
                   <tr className="border-b border-white/[0.04]">
-                    <th className="px-3 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">#</th>
-                    <th className="px-3 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Area</th>
-                    <th className="px-3 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Capacity</th>
-                    <th className="px-3 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Vehicles</th>
-                    <th className="px-3 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Occupancy</th>
-                    <th className="px-3 py-2 text-[9px] font-mono uppercase tracking-wider text-white/20 font-medium">Location</th>
+                    <th className="px-2.5 py-1.5 text-[9px] font-mono uppercase tracking-wider text-white/25 font-medium">Lot</th>
+                    <th className="px-2.5 py-1.5 text-[9px] font-mono uppercase tracking-wider text-white/25 font-medium">Size</th>
+                    <th className="px-2.5 py-1.5 text-[9px] font-mono uppercase tracking-wider text-white/25 font-medium">Vehicles</th>
+                    <th className="px-2.5 py-1.5 text-[9px] font-mono uppercase tracking-wider text-white/25 font-medium">Occupancy</th>
                   </tr>
                 </thead>
                 <tbody>
                   {parking.parking_lots.map((lot, i) => (
                     <tr key={i} className="border-b border-white/[0.03] hover:bg-white/[0.02]">
-                      <td className="px-3 py-2 text-xs font-mono text-white/30">{i + 1}</td>
-                      <td className="px-3 py-2 text-xs font-mono text-white/50">
+                      <td className="px-2.5 py-1.5 text-[10px] font-mono text-white/45">#{i + 1}</td>
+                      <td className="px-2.5 py-1.5 text-[10px] font-mono text-white/55">
                         {lot.area_sqm > 1000 ? `${(lot.area_sqm / 1000).toFixed(1)}k` : Math.round(lot.area_sqm)} m²
                       </td>
-                      <td className="px-3 py-2 text-xs font-mono text-white/50">{lot.estimated_capacity}</td>
-                      <td className="px-3 py-2 text-xs font-mono text-white/50">{lot.vehicles_detected}</td>
-                      <td className={`px-3 py-2 text-xs font-mono font-medium ${
+                      <td className="px-2.5 py-1.5 text-[10px] font-mono text-white/55">{lot.vehicles_detected} / {lot.estimated_capacity}</td>
+                      <td className={`px-2.5 py-1.5 text-[10px] font-mono font-semibold ${
                         lot.occupancy_rate > 0.85 ? 'text-red-400' :
                         lot.occupancy_rate > 0.6 ? 'text-amber-400' :
-                        'text-green-400'
+                        'text-emerald-400'
                       }`}>
-                        {Math.round(lot.occupancy_rate * 100)}%
-                      </td>
-                      <td className="px-3 py-2 text-[10px] font-mono text-white/30">
-                        {lot.center_lat.toFixed(4)}, {lot.center_lng.toFixed(4)}
+                        <div className="flex items-center gap-1.5">
+                          <span>{Math.round(lot.occupancy_rate * 100)}%</span>
+                          <div className="w-10 h-0.5 bg-white/[0.05]">
+                            <div className={`h-0.5 ${lot.occupancy_rate > 0.85 ? 'bg-red-400/70' : lot.occupancy_rate > 0.6 ? 'bg-amber-400/70' : 'bg-emerald-400/70'}`} style={{ width: `${lot.occupancy_rate * 100}%` }} />
+                          </div>
+                        </div>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+          </div>
+        ) : (
+          <div className="border border-white/[0.06] bg-white/[0.01] p-6 flex flex-col justify-center text-center">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-white/25">Parking Occupancy</div>
+            <div className="text-[10px] font-mono text-white/15 mt-2">Satellite analysis not yet run for this area.</div>
+          </div>
+        )}
 
-            {parking.timestamp && (
-              <div className="mt-3 text-[9px] font-mono text-white/15 text-right">
-                Last analyzed: {new Date(parking.timestamp).toLocaleString()}
+        {/* Highway Camera Detection Summary */}
+        <div className="border border-white/[0.06] bg-white/[0.02]">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.06]">
+            <span className="w-1 h-1 rounded-full bg-blue-400/70" />
+            <span className="text-[10px] font-mono uppercase tracking-[0.22em] text-blue-300/80">Highway Detections</span>
+            <span className="text-[9px] font-mono ml-auto text-white/25">IDOT · YOLOv8</span>
+          </div>
+
+          {/* Stat grid */}
+          <div className="grid grid-cols-4 divide-x divide-white/[0.04]">
+            <div className="px-3 py-2.5">
+              <div className="text-lg font-bold font-mono text-white">{cameras.length}</div>
+              <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-0.5">Cameras</div>
+            </div>
+            <div className="px-3 py-2.5">
+              <div className="text-lg font-bold font-mono text-emerald-400/80">{totalPeds}</div>
+              <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-0.5">Peds</div>
+            </div>
+            <div className="px-3 py-2.5">
+              <div className="text-lg font-bold font-mono text-blue-400/80">{totalVehs}</div>
+              <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-0.5">Vehicles</div>
+            </div>
+            <div className="px-3 py-2.5">
+              <div className="text-lg font-bold font-mono text-amber-400/80">{totalBikes}</div>
+              <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-0.5">Bikes</div>
+            </div>
+          </div>
+
+          {/* Detection distribution */}
+          {totalDetections > 0 && (
+            <div className="px-4 py-3 border-t border-white/[0.04]">
+              <div className="text-[9px] font-mono uppercase tracking-wider text-white/25 mb-2">Detection Distribution</div>
+              <div className="flex h-2 overflow-hidden">
+                <div className="bg-emerald-500/70" style={{ width: `${pedPct}%` }} />
+                <div className="bg-blue-500/70" style={{ width: `${vehPct}%` }} />
+                <div className="bg-amber-500/70" style={{ width: `${bikePct}%` }} />
               </div>
-            )}
-          </div>
-        </>
-      )}
+              <div className="flex justify-between mt-2 text-[10px] font-mono">
+                <span className="text-emerald-400/60">Peds {pedPct}%</span>
+                <span className="text-blue-400/60">Vehicles {vehPct}%</span>
+                <span className="text-amber-400/60">Bikes {bikePct}%</span>
+              </div>
+            </div>
+          )}
 
-      {/* Detection Summary — stats + distribution merged */}
-      <div className="border border-white/[0.06] bg-white/[0.02] p-5">
-        <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30 mb-1">
-          Highway Camera Detections
-        </h3>
-        <p className="text-[9px] font-mono text-white/15 mb-4">IDOT expressway cameras near {neighborhood || "selected area"}</p>
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
-          <div className="bg-white/[0.02] border border-white/[0.04] p-3">
-            <div className="text-2xl font-bold font-mono text-white">{cameras.length}</div>
-            <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Cameras</div>
-          </div>
-          <div className="bg-white/[0.02] border border-white/[0.04] p-3">
-            <div className="text-2xl font-bold font-mono text-green-400">{totalPeds}</div>
-            <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Pedestrians</div>
-          </div>
-          <div className="bg-white/[0.02] border border-white/[0.04] p-3">
-            <div className="text-2xl font-bold font-mono text-blue-400">{totalVehs}</div>
-            <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Vehicles</div>
-          </div>
-          <div className="bg-white/[0.02] border border-white/[0.04] p-3">
-            <div className="text-2xl font-bold font-mono text-amber-400">{totalBikes}</div>
-            <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Bicycles</div>
-          </div>
-          <div className="bg-white/[0.02] border border-white/[0.04] p-3">
-            <div className="text-2xl font-bold font-mono text-white/70">{avgDensity}</div>
-            <div className="text-[10px] font-mono uppercase tracking-wider text-white/30 mt-1">Avg Traffic Density</div>
+          {/* Traffic chart */}
+          <div className="border-t border-white/[0.04]">
+            <FootTrafficChart neighborhood={neighborhood} embedded />
           </div>
         </div>
-        {totalDetections > 0 && (
-          <>
-            <div className="text-[9px] font-mono uppercase tracking-wider text-white/20 mb-2">Detection Distribution</div>
-            <div className="flex h-3 rounded-sm overflow-hidden">
-              <div className="bg-green-500/70" style={{ width: `${pedPct}%` }} />
-              <div className="bg-blue-500/70" style={{ width: `${vehPct}%` }} />
-              <div className="bg-amber-500/70" style={{ width: `${bikePct}%` }} />
-            </div>
-            <div className="flex justify-between mt-2">
-              <span className="text-[10px] font-mono text-green-400/60">Pedestrians {pedPct}%</span>
-              <span className="text-[10px] font-mono text-blue-400/60">Vehicles {vehPct}%</span>
-              <span className="text-[10px] font-mono text-amber-400/60">Bicycles {bikePct}%</span>
-            </div>
-          </>
-        )}
       </div>
 
-      {/* Highway Traffic 24h Chart */}
-      <FootTrafficChart neighborhood={neighborhood} />
-
-      {/* Section C: CCTV — Camera Grid (mini HUD cards, Drawer on click) */}
+      {/* CCTV Camera Wall */}
       {cameras.length > 0 ? (
         <div className="border border-white/[0.06] bg-white/[0.02]">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.06]">
             <div className="flex items-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-              <span className="text-[10px] font-mono uppercase tracking-wider text-white/40">
-                CCTV — Live Camera Feeds
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[10px] font-mono uppercase tracking-[0.22em] text-emerald-300/80">
+                CCTV Grid — Live Feeds
               </span>
             </div>
-            <span className="text-[10px] font-mono text-white/20">
-              {cameras.length} camera{cameras.length !== 1 ? 's' : ''} — click to open
-            </span>
+            <div className="flex items-center gap-3 text-[10px] font-mono text-white/30">
+              <span>{cameras.length} cameras</span>
+              {selectedCamera && (
+                <span className="text-emerald-400/80">● CAM {selectedCamera.camera_id.slice(-4)} selected</span>
+              )}
+            </div>
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-white/[0.04]">
             {cameras.map((cam) => (
@@ -878,9 +955,9 @@ function VisionTab({ cctv, parking, neighborhood }: { cctv: CCTVData | null; par
           />
         </div>
       ) : (
-        <div className="border border-white/[0.06] bg-white/[0.02] p-8 text-center">
-          <div className="text-xs font-mono text-white/20">No camera data available for this neighborhood</div>
-          <div className="text-[10px] font-mono text-white/10 mt-1">CCTV pipeline runs on-demand — camera feeds will appear after analysis</div>
+        <div className="border border-white/[0.06] bg-white/[0.01] p-8 text-center">
+          <div className="text-xs font-mono text-white/25 uppercase tracking-wider">No camera data</div>
+          <div className="text-[10px] font-mono text-white/15 mt-1">CCTV pipeline runs on-demand — camera feeds will appear after analysis</div>
         </div>
       )}
 
@@ -964,35 +1041,479 @@ Visualizing the &ldquo;Attention Crisis&rdquo;
 function RegulatorySubTabs({ neighborhoodData }: { neighborhoodData: NeighborhoodData }) {
   const [subTab, setSubTab] = useState<'inspections' | 'permits' | 'licenses'>('inspections')
 
+  const stats = neighborhoodData.inspection_stats
+  const passRate = stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0
+
   const subTabs = [
-    { key: 'inspections' as const, label: 'Inspections', count: neighborhoodData.inspection_stats.total },
-    { key: 'permits' as const, label: 'Permits', count: neighborhoodData.permit_count },
-    { key: 'licenses' as const, label: 'Licenses', count: neighborhoodData.license_count },
+    { key: 'inspections' as const, label: 'Inspections', count: stats.total, state: stats.total > 0 ? `${passRate}% pass` : '—' },
+    { key: 'permits' as const, label: 'Permits', count: neighborhoodData.permit_count, state: neighborhoodData.permit_count > 0 ? 'active' : '—' },
+    { key: 'licenses' as const, label: 'Licenses', count: neighborhoodData.license_count, state: neighborhoodData.license_count > 0 ? 'active' : '—' },
   ]
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-0 border-b border-white/[0.06]">
-        {subTabs.map(tab => (
-          <button
-            key={tab.key}
-            onClick={() => setSubTab(tab.key)}
-            className={`flex items-center gap-2 px-4 py-2 text-xs font-medium transition-colors border-b-2 -mb-px cursor-pointer ${
-              subTab === tab.key
-                ? 'border-white text-white'
-                : 'border-transparent text-white/30 hover:text-white/60'
-            }`}
-          >
-            {tab.label}
-            {tab.count > 0 && (
-              <span className="font-mono text-[10px] text-white/20">{tab.count}</span>
-            )}
-          </button>
-        ))}
+      {/* Regulatory evidence header */}
+      <div className="border border-white/[0.06] bg-white/[0.01]">
+        {/* Summary header */}
+        <div className="flex items-center gap-4 px-4 py-2.5 border-b border-white/[0.04]">
+          <div className="flex items-center gap-2">
+            <span className="w-1 h-1 rounded-full bg-violet-400/70" />
+            <span className="text-[9px] font-mono uppercase tracking-[0.2em] text-white/35">Regulatory Evidence Workspace</span>
+          </div>
+          <div className="flex-1" />
+          <div className="flex items-center gap-4 text-[10px] font-mono text-white/40">
+            <span><span className="text-emerald-400/80">{stats.passed}</span> passed</span>
+            <span><span className="text-red-400/80">{stats.failed}</span> failed</span>
+            <span><span className="text-white/60">{neighborhoodData.permit_count}</span> permits</span>
+            <span><span className="text-white/60">{neighborhoodData.license_count}</span> licenses</span>
+          </div>
+        </div>
+        {/* Segmented control */}
+        <div className="flex gap-0 divide-x divide-white/[0.04]">
+          {subTabs.map(tab => {
+            const isActive = subTab === tab.key
+            return (
+              <button
+                key={tab.key}
+                onClick={() => setSubTab(tab.key)}
+                className={`flex-1 flex items-center justify-between px-4 py-3 transition-all cursor-pointer border-b-2 ${
+                  isActive
+                    ? 'border-violet-400 bg-violet-500/[0.04]'
+                    : 'border-transparent hover:bg-white/[0.02]'
+                }`}
+              >
+                <div className="flex flex-col items-start gap-0.5">
+                  <span className={`text-[11px] font-semibold uppercase tracking-wider ${isActive ? 'text-white' : 'text-white/45'}`}>
+                    {tab.label}
+                  </span>
+                  <span className={`text-[9px] font-mono ${isActive ? 'text-violet-300/80' : 'text-white/25'}`}>
+                    {tab.state}
+                  </span>
+                </div>
+                <span className={`text-2xl font-mono font-bold ${isActive ? 'text-white' : 'text-white/30'}`}>
+                  {tab.count}
+                </span>
+              </button>
+            )
+          })}
+        </div>
       </div>
+
       {subTab === 'inspections' && <InspectionTable inspections={neighborhoodData.inspections} />}
       {subTab === 'permits' && <PermitTable permits={neighborhoodData.permits} />}
       {subTab === 'licenses' && <LicenseTable licenses={neighborhoodData.licenses} />}
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Overview preview row: compact peek into news / community / market
+// with drill-down to the full tab.
+// ────────────────────────────────────────────────────────────────────
+
+interface PreviewRowProps {
+  data: NeighborhoodData
+  onTabChange: (tab: string) => void
+}
+
+function OverviewPreviewRow({ data, onTabChange }: PreviewRowProps) {
+  const newsItems = (data.news || []).slice(0, 3)
+  const communityItems = [...(data.reddit || []), ...(data.tiktok || [])].slice(0, 3)
+  const marketItems = (data.reviews || []).slice(0, 3)
+  const hasAny = newsItems.length > 0 || communityItems.length > 0 || marketItems.length > 0
+  if (!hasAny) return null
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <PreviewPanel
+        title="Local Intelligence"
+        accent="text-blue-300/70"
+        dot="bg-blue-400/70"
+        count={data.news?.length || 0}
+        onClick={() => onTabChange('intel')}
+        items={newsItems.map(n => ({ title: n.title, meta: n.source || 'news' }))}
+        emptyMsg="No recent news signals"
+      />
+      <PreviewPanel
+        title="Community Pulse"
+        accent="text-green-300/70"
+        dot="bg-green-400/70"
+        count={(data.reddit?.length || 0) + (data.tiktok?.length || 0)}
+        onClick={() => onTabChange('community')}
+        items={communityItems.map(c => ({
+          title: c.title,
+          meta: (c.metadata?.subreddit as string) ? `r/${c.metadata?.subreddit}` : (c.metadata?.creator as string) ? `@${c.metadata?.creator}` : 'social',
+        }))}
+        emptyMsg="No community chatter"
+      />
+      <PreviewPanel
+        title="Market Snapshot"
+        accent="text-cyan-300/70"
+        dot="bg-cyan-400/70"
+        count={data.reviews?.length || 0}
+        onClick={() => onTabChange('market')}
+        items={marketItems.map(m => ({
+          title: m.title,
+          meta: m.metadata?.rating ? `${m.metadata.rating}/5 · ${m.metadata.review_count || 0} reviews` : 'listing',
+        }))}
+        emptyMsg="No market data"
+      />
+    </div>
+  )
+}
+
+interface PreviewPanelProps {
+  title: string
+  accent: string
+  dot: string
+  count: number
+  onClick: () => void
+  items: Array<{ title: string; meta: string }>
+  emptyMsg: string
+}
+
+function PreviewPanel({ title, accent, dot, count, onClick, items, emptyMsg }: PreviewPanelProps) {
+  return (
+    <button
+      onClick={onClick}
+      className="text-left border border-white/[0.06] bg-white/[0.01] hover:border-white/[0.12] hover:bg-white/[0.02] transition-all cursor-pointer group"
+    >
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.04]">
+        <div className="flex items-center gap-2">
+          <span className={`w-1 h-1 rounded-full ${dot}`} />
+          <span className={`text-[10px] font-mono uppercase tracking-wider ${accent}`}>{title}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-mono text-white/25">{count}</span>
+          <span className="text-[10px] text-white/25 group-hover:text-white/60 transition-colors">›</span>
+        </div>
+      </div>
+      <div className="p-3 space-y-2 min-h-[130px]">
+        {items.length > 0 ? items.map((item, i) => (
+          <div key={i} className="text-[11px] leading-snug">
+            <div className="text-white/75 line-clamp-2 group-hover:text-white/90 transition-colors">{item.title}</div>
+            <div className="text-[9px] font-mono uppercase tracking-wider text-white/25 mt-0.5">{item.meta}</div>
+          </div>
+        )) : (
+          <div className="text-[10px] font-mono text-white/20 flex items-center justify-center h-full">{emptyMsg}</div>
+        )}
+      </div>
+    </button>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Evidence Explorer — cross-source investigation workspace.
+// Operates on already-fetched NeighborhoodData; no new backend reads.
+// ────────────────────────────────────────────────────────────────────
+
+type EvidenceFamily = 'all' | 'regulatory' | 'news' | 'policy' | 'community' | 'market'
+type EvidenceSort = 'recent' | 'importance'
+
+interface EvidenceEntry {
+  id: string
+  title: string
+  snippet: string
+  family: Exclude<EvidenceFamily, 'all'>
+  source: string
+  sourceLabel: string
+  timestamp: string
+  url?: string
+  badge?: string
+  importance: number
+}
+
+function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
+  const entries: EvidenceEntry[] = []
+
+  for (const n of data.news || []) {
+    entries.push({
+      id: `news-${n.id}`,
+      title: n.title,
+      snippet: (n.content || '').slice(0, 180),
+      family: 'news',
+      source: n.source || 'news',
+      sourceLabel: 'News',
+      timestamp: n.timestamp,
+      url: n.url,
+      importance: 60,
+    })
+  }
+
+  for (const p of data.politics || []) {
+    entries.push({
+      id: `politics-${p.id}`,
+      title: p.title,
+      snippet: (p.content || '').slice(0, 180),
+      family: 'policy',
+      source: 'city_council',
+      sourceLabel: 'Policy',
+      timestamp: p.timestamp,
+      url: p.url,
+      badge: (p.metadata?.matter_type as string) || undefined,
+      importance: 70,
+    })
+  }
+
+  for (const r of data.federal_register || []) {
+    entries.push({
+      id: `fed-${r.id}`,
+      title: r.title,
+      snippet: (r.content || '').slice(0, 180),
+      family: 'policy',
+      source: 'federal_register',
+      sourceLabel: 'Federal',
+      timestamp: r.timestamp,
+      url: r.url,
+      badge: (r.metadata?.agency as string) || undefined,
+      importance: 75,
+    })
+  }
+
+  for (const r of data.reddit || []) {
+    entries.push({
+      id: `reddit-${r.id}`,
+      title: r.title,
+      snippet: (r.content || '').slice(0, 180),
+      family: 'community',
+      source: 'reddit',
+      sourceLabel: 'Reddit',
+      timestamp: r.timestamp,
+      url: r.url,
+      badge: (r.metadata?.subreddit as string) ? `r/${r.metadata?.subreddit}` : undefined,
+      importance: Math.min(60 + ((r.metadata?.score as number) || 0) / 50, 90),
+    })
+  }
+
+  for (const t of data.tiktok || []) {
+    entries.push({
+      id: `tiktok-${t.id}`,
+      title: t.title || 'TikTok video',
+      snippet: (t.content || '').slice(0, 180),
+      family: 'community',
+      source: 'tiktok',
+      sourceLabel: 'TikTok',
+      timestamp: t.timestamp,
+      url: t.url,
+      badge: (t.metadata?.creator as string) ? `@${t.metadata?.creator}` : undefined,
+      importance: 55,
+    })
+  }
+
+  for (const rv of data.reviews || []) {
+    entries.push({
+      id: `review-${rv.id}`,
+      title: rv.title,
+      snippet: ((rv.metadata?.categories as string[]) || []).join(', '),
+      family: 'market',
+      source: 'reviews',
+      sourceLabel: 'Reviews',
+      timestamp: rv.timestamp,
+      url: rv.url,
+      badge: rv.metadata?.rating ? `${rv.metadata.rating}★` : undefined,
+      importance: 55 + ((rv.metadata?.review_count as number) || 0) / 20,
+    })
+  }
+
+  for (const re of data.realestate || []) {
+    entries.push({
+      id: `re-${re.id}`,
+      title: re.title,
+      snippet: `${(re.metadata?.property_type as string) || ''} · ${(re.metadata?.size_sqft as number) || ''} sqft`,
+      family: 'market',
+      source: 'realestate',
+      sourceLabel: 'Listing',
+      timestamp: re.timestamp,
+      url: re.url,
+      badge: (re.metadata?.listing_type as string) || undefined,
+      importance: 50,
+    })
+  }
+
+  for (const i of data.inspections || []) {
+    const raw = i.metadata?.raw_record as Record<string, string> | undefined
+    entries.push({
+      id: `insp-${i.id}`,
+      title: raw?.dba_name || i.title,
+      snippet: `${raw?.inspection_type || 'Inspection'} — ${raw?.results || 'Unknown'}`,
+      family: 'regulatory',
+      source: 'inspections',
+      sourceLabel: 'Inspection',
+      timestamp: i.timestamp,
+      url: i.url,
+      badge: raw?.results,
+      importance: raw?.results?.toLowerCase().includes('fail') ? 80 : 55,
+    })
+  }
+
+  for (const p of data.permits || []) {
+    const raw = p.metadata?.raw_record as Record<string, string> | undefined
+    entries.push({
+      id: `permit-${p.id}`,
+      title: raw?.work_type || p.title,
+      snippet: (raw?.work_description || '').slice(0, 180),
+      family: 'regulatory',
+      source: 'permits',
+      sourceLabel: 'Permit',
+      timestamp: p.timestamp,
+      url: p.url,
+      badge: raw?.permit_status,
+      importance: 50,
+    })
+  }
+
+  return entries
+}
+
+function EvidenceExplorer({ data }: { data: NeighborhoodData }) {
+  const [family, setFamily] = useState<EvidenceFamily>('all')
+  const [query, setQuery] = useState('')
+  const [sort, setSort] = useState<EvidenceSort>('recent')
+
+  const allEntries = useMemo(() => buildEvidence(data), [data])
+
+  const familyCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: allEntries.length, regulatory: 0, news: 0, policy: 0, community: 0, market: 0 }
+    for (const e of allEntries) counts[e.family]++
+    return counts
+  }, [allEntries])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return allEntries
+      .filter(e => family === 'all' || e.family === family)
+      .filter(e => !q || e.title.toLowerCase().includes(q) || e.snippet.toLowerCase().includes(q) || e.sourceLabel.toLowerCase().includes(q))
+      .sort((a, b) => {
+        if (sort === 'importance') return b.importance - a.importance
+        return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      })
+  }, [allEntries, family, query, sort])
+
+  const families: { key: EvidenceFamily; label: string; accent: string }[] = [
+    { key: 'all', label: 'All', accent: 'text-white' },
+    { key: 'regulatory', label: 'Regulatory', accent: 'text-violet-300' },
+    { key: 'news', label: 'News', accent: 'text-blue-300' },
+    { key: 'policy', label: 'Policy', accent: 'text-purple-300' },
+    { key: 'community', label: 'Community', accent: 'text-emerald-300' },
+    { key: 'market', label: 'Market', accent: 'text-cyan-300' },
+  ]
+
+  return (
+    <div className="space-y-3">
+      {/* Controls */}
+      <div className="border border-white/[0.06] bg-white/[0.01]">
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-white/[0.04]">
+          <svg className="w-3.5 h-3.5 text-white/25" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 103.5 10.5a7.5 7.5 0 0013.15 6.15z" />
+          </svg>
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search evidence across all sources..."
+            className="flex-1 bg-transparent outline-none text-xs text-white/80 placeholder:text-white/20"
+          />
+          <div className="flex items-center gap-0 border-l border-white/[0.04] pl-2">
+            <span className="text-[9px] font-mono uppercase tracking-wider text-white/25 mr-2">Sort</span>
+            <button
+              onClick={() => setSort('recent')}
+              className={`px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider transition-colors cursor-pointer ${sort === 'recent' ? 'text-white bg-white/[0.06]' : 'text-white/30 hover:text-white/50'}`}
+            >
+              Recent
+            </button>
+            <button
+              onClick={() => setSort('importance')}
+              className={`px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider transition-colors cursor-pointer ${sort === 'importance' ? 'text-white bg-white/[0.06]' : 'text-white/30 hover:text-white/50'}`}
+            >
+              Importance
+            </button>
+          </div>
+        </div>
+
+        {/* Family filter chips */}
+        <div className="flex flex-wrap gap-0 divide-x divide-white/[0.04]">
+          {families.map(f => {
+            const isActive = family === f.key
+            return (
+              <button
+                key={f.key}
+                onClick={() => setFamily(f.key)}
+                className={`flex items-center gap-1.5 px-3 py-2 text-[10px] font-mono uppercase tracking-wider transition-colors cursor-pointer ${
+                  isActive ? `${f.accent} bg-white/[0.04]` : 'text-white/30 hover:text-white/60 hover:bg-white/[0.02]'
+                }`}
+              >
+                {f.label}
+                <span className={`font-mono ${isActive ? 'text-white/50' : 'text-white/20'}`}>
+                  {familyCounts[f.key] ?? 0}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Results */}
+      {filtered.length === 0 ? (
+        <div className="border border-white/[0.06] bg-white/[0.01] p-8 text-center">
+          <div className="text-xs font-mono text-white/25">
+            {query ? `No evidence matches "${query}"` : 'No evidence available for this filter'}
+          </div>
+          <div className="text-[10px] font-mono text-white/15 mt-1">Try a different source family or clear the search.</div>
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {filtered.map(entry => (
+            <EvidenceRow key={entry.id} entry={entry} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const FAMILY_STYLES: Record<Exclude<EvidenceFamily, 'all'>, { border: string; accent: string; dot: string }> = {
+  regulatory: { border: 'border-l-violet-500/40', accent: 'text-violet-300/80', dot: 'bg-violet-400/70' },
+  news: { border: 'border-l-blue-500/40', accent: 'text-blue-300/80', dot: 'bg-blue-400/70' },
+  policy: { border: 'border-l-purple-500/40', accent: 'text-purple-300/80', dot: 'bg-purple-400/70' },
+  community: { border: 'border-l-emerald-500/40', accent: 'text-emerald-300/80', dot: 'bg-emerald-400/70' },
+  market: { border: 'border-l-cyan-500/40', accent: 'text-cyan-300/80', dot: 'bg-cyan-400/70' },
+}
+
+function EvidenceRow({ entry }: { entry: EvidenceEntry }) {
+  const s = FAMILY_STYLES[entry.family]
+  return (
+    <div className={`border border-white/[0.06] border-l-2 ${s.border} bg-white/[0.01] hover:bg-white/[0.02] transition-colors`}>
+      <div className="px-4 py-3 flex items-start gap-3">
+        <div className={`w-1 h-1 rounded-full ${s.dot} mt-1.5 shrink-0`} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start gap-2 mb-1">
+            <span className={`text-[9px] font-mono uppercase tracking-wider ${s.accent} shrink-0`}>
+              {entry.sourceLabel}
+            </span>
+            {entry.badge && (
+              <span className="text-[9px] font-mono uppercase tracking-wider text-white/40 border border-white/[0.08] px-1.5 py-[1px] shrink-0">
+                {entry.badge}
+              </span>
+            )}
+            <span className="text-[9px] font-mono text-white/20 ml-auto shrink-0">
+              {new Date(entry.timestamp).toLocaleDateString()}
+            </span>
+          </div>
+          <div className="text-xs text-white/80 leading-snug line-clamp-2">{entry.title}</div>
+          {entry.snippet && (
+            <div className="text-[11px] text-white/35 mt-1 leading-relaxed line-clamp-2">{entry.snippet}</div>
+          )}
+        </div>
+        {entry.url && (
+          <a
+            href={entry.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[10px] font-mono uppercase tracking-wider text-white/30 hover:text-white/70 transition-colors shrink-0 self-center"
+          >
+            Open ›
+          </a>
+        )}
+      </div>
     </div>
   )
 }

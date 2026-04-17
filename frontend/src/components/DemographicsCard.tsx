@@ -43,47 +43,90 @@ export default function DemographicsCard({ metrics, demographics, horizontal }: 
 
   if (horizontal) {
     const hasDemo = demographics && demographics.total_population && demographics.total_population > 0
-    const censusItems = hasDemo ? [
-      { label: 'Population', value: demographics!.total_population!.toLocaleString() },
-      { label: 'Income', value: fmt$(demographics!.median_household_income || 0) },
-      { label: 'Rent', value: fmt$(demographics!.median_gross_rent || 0) },
+
+    // Primary decision-relevant values — ordered by the refactor brief:
+    // population → income → rent → permits → reviews → transit/sentiment
+    const primaryStats: { label: string; value: string; accent?: string }[] = []
+    if (hasDemo) {
+      primaryStats.push({ label: 'Pop', value: demographics!.total_population!.toLocaleString() })
+      if (demographics!.median_household_income) {
+        primaryStats.push({ label: 'Income', value: fmt$(demographics!.median_household_income) })
+      }
+      if (demographics!.median_gross_rent) {
+        primaryStats.push({ label: 'Rent', value: fmt$(demographics!.median_gross_rent) })
+      }
+    }
+    primaryStats.push({ label: 'Permits', value: (metrics.active_permits || 0).toString() })
+    if (metrics.review_count) {
+      primaryStats.push({ label: 'Reviews', value: metrics.review_count.toString() })
+    }
+    if (metrics.avg_review_rating) {
+      primaryStats.push({
+        label: 'Rating',
+        value: `${metrics.avg_review_rating.toFixed(1)}★`,
+        accent: metrics.avg_review_rating >= 4 ? 'text-emerald-400' : metrics.avg_review_rating >= 3 ? 'text-amber-400' : 'text-red-400',
+      })
+    }
+    if (metrics.crime_incidents_30d !== undefined) {
+      primaryStats.push({ label: 'Crime 30d', value: metrics.crime_incidents_30d.toString() })
+    }
+
+    // Secondary demographic values
+    const secondaryStats = hasDemo ? [
       { label: 'Age', value: `${demographics!.median_age || 0}` },
-      { label: 'Unemployment', value: `${demographics!.unemployment_rate || 0}%` },
+      { label: 'Unemp', value: `${demographics!.unemployment_rate || 0}%` },
       { label: 'Renters', value: `${demographics!.renter_pct || 0}%` },
     ] : []
 
     return (
-      <div className="border border-white/[0.06] bg-white/[0.01] p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-[10px] font-mono font-medium uppercase tracking-wider text-white/30">
-            {metrics.neighborhood} Key Stats
-          </h3>
-          <div className="flex items-center gap-4">
-            {scores.map(score => (
-              <div key={score.label} className="flex items-center gap-2">
-                <span className="text-[9px] font-mono uppercase tracking-wider text-white/20">{score.label}</span>
-                <div className="w-16 bg-white/[0.04] h-1">
-                  <div className="h-1 bg-white/40 transition-all" style={{ width: `${Math.min(score.value, 100)}%` }} />
+      <div className="border border-white/[0.06] bg-white/[0.01]">
+        {/* Ribbon header */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.04]">
+          <div className="flex items-center gap-2">
+            <span className="w-1 h-1 rounded-full bg-white/30" />
+            <span className="text-[9px] font-mono uppercase tracking-[0.2em] text-white/35">
+              {metrics.neighborhood} Tactical Stats
+            </span>
+          </div>
+          <div className="hidden md:flex items-center gap-4">
+            {scores.map(score => {
+              const colorClass = score.value >= 65 ? 'text-emerald-400' : score.value >= 40 ? 'text-amber-400' : 'text-red-400'
+              const barClass = score.value >= 65 ? 'bg-emerald-400' : score.value >= 40 ? 'bg-amber-400' : 'bg-red-400'
+              return (
+                <div key={score.label} className="flex items-center gap-2">
+                  <span className="text-[9px] font-mono uppercase tracking-wider text-white/25">{score.label.replace(' Score', '').replace('Overall ', '')}</span>
+                  <div className="w-14 bg-white/[0.05] h-1">
+                    <div className={`h-1 ${barClass} transition-all`} style={{ width: `${Math.min(score.value, 100)}%` }} />
+                  </div>
+                  <span className={`text-[10px] font-mono font-semibold ${colorClass} w-7 text-right`}>{score.value.toFixed(0)}</span>
                 </div>
-                <span className="text-[10px] font-mono text-white/20">{score.value.toFixed(1)}</span>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Primary stats — decision-relevant first */}
+        <div className="grid grid-cols-4 md:grid-cols-7 divide-x divide-white/[0.04]">
+          {primaryStats.map(stat => (
+            <div key={stat.label} className="px-3 py-2.5">
+              <div className={`text-sm font-bold font-mono leading-tight ${stat.accent || 'text-white'}`}>{stat.value}</div>
+              <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mt-0.5">{stat.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Secondary stats row - shown only if demographics present */}
+        {secondaryStats.length > 0 && (
+          <div className="border-t border-white/[0.04] px-4 py-1.5 flex items-center gap-5">
+            <span className="text-[9px] font-mono uppercase tracking-wider text-white/20">Census</span>
+            {secondaryStats.map(s => (
+              <div key={s.label} className="flex items-center gap-1.5">
+                <span className="text-[9px] font-mono uppercase tracking-wider text-white/25">{s.label}</span>
+                <span className="text-[10px] font-mono text-white/55">{s.value}</span>
               </div>
             ))}
           </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {censusItems.map(ci => (
-            <div key={ci.label} className="bg-white/[0.02] border border-white/[0.04] px-3 py-2">
-              <span className="text-sm font-bold font-mono text-white">{ci.value}</span>
-              <span className="text-[9px] font-mono uppercase tracking-wider text-white/20 ml-2">{ci.label}</span>
-            </div>
-          ))}
-          {items.map(item => (
-            <div key={item.label} className="bg-white/[0.02] border border-white/[0.04] px-3 py-2">
-              <span className="text-sm font-bold font-mono text-white">{item.fmt(item.value)}</span>
-              <span className="text-[9px] font-mono uppercase tracking-wider text-white/20 ml-2">{item.label}</span>
-            </div>
-          ))}
-        </div>
+        )}
       </div>
     )
   }

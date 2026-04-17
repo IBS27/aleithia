@@ -89,7 +89,7 @@ export default function MapView({ activeNeighborhood, geojsonUrl }: Props) {
 
     const token = import.meta.env.VITE_MAPBOX_TOKEN
     if (!token) {
-      setMapError('Set VITE_MAPBOX_TOKEN in your .env file')
+      setMapError('missing_token')
       return
     }
 
@@ -282,30 +282,82 @@ function addSourceAndLayers(map: mapboxgl.Map, geojson: GeoJSON.FeatureCollectio
 
   return (
     <div className="border border-white/[0.06] bg-white/[0.01] overflow-hidden h-full flex flex-col">
-      <div className="flex gap-0 p-0 border-b border-white/[0.06]">
-        {(Object.keys(LAYER_CONFIG) as HeatmapLayer[]).map((layer) => (
-          <button
-            key={layer}
-            onClick={() => setActiveLayer(layer)}
-            className={`px-4 py-2 text-[10px] font-mono uppercase tracking-wider transition-colors cursor-pointer border-b-2 -mb-px ${
-              activeLayer === layer
-                ? 'border-white text-white/70'
-                : 'border-transparent text-white/20 hover:text-white/40'
-            }`}
-          >
-            {LAYER_CONFIG[layer].label}
-          </button>
-        ))}
+      {/* Header: heatmap console title + active layer indicator */}
+      <div className="flex items-center gap-3 px-3 py-2 border-b border-white/[0.06] bg-white/[0.015]">
+        <div className="flex items-center gap-2">
+          <span className="w-1 h-1 rounded-full" style={{ background: LAYER_CONFIG[activeLayer].color }} />
+          <span className="text-[10px] font-mono uppercase tracking-[0.22em] text-white/50">Heatmap Console</span>
+        </div>
+        <div className="flex-1" />
+        <span className="text-[9px] font-mono text-white/30">
+          Active: <span className="text-white/60">{LAYER_CONFIG[activeLayer].label}</span>
+        </span>
+      </div>
+
+      {/* Layer control row */}
+      <div className="flex gap-0 divide-x divide-white/[0.04] border-b border-white/[0.06] bg-white/[0.008]">
+        {(Object.keys(LAYER_CONFIG) as HeatmapLayer[]).map((layer) => {
+          const isActive = activeLayer === layer
+          const config = LAYER_CONFIG[layer]
+          return (
+            <button
+              key={layer}
+              onClick={() => setActiveLayer(layer)}
+              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-[10px] font-mono uppercase tracking-wider transition-all cursor-pointer border-b-2 -mb-px ${
+                isActive
+                  ? 'border-white/70 text-white bg-white/[0.03]'
+                  : 'border-transparent text-white/30 hover:text-white/55 hover:bg-white/[0.015]'
+              }`}
+              style={isActive ? { borderBottomColor: config.color } : undefined}
+            >
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: isActive ? config.color : 'rgba(255,255,255,0.15)' }} />
+              {config.label}
+            </button>
+          )
+        })}
       </div>
 
       <div ref={mapContainerRef} className="flex-1 relative min-h-[300px]">
         {mapError && (
-          <div className="absolute inset-0 flex items-center justify-center z-10">
-            <div className="text-center space-y-2">
-              <div className="text-red-400/60 text-sm font-mono">{mapError}</div>
-              <code className="text-[10px] text-white/15 block font-mono">
-                echo "VITE_MAPBOX_TOKEN=pk.your_token" &gt; .env
-              </code>
+          <div className="absolute inset-0 flex items-center justify-center z-10 bg-[#06080d]/95 backdrop-blur-sm">
+            {mapError === 'missing_token' ? (
+              <div className="border border-white/[0.08] bg-white/[0.02] p-5 max-w-sm text-left">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="w-1 h-1 rounded-full bg-amber-400/70" />
+                  <span className="text-[10px] font-mono uppercase tracking-[0.22em] text-amber-300/80">Map Disabled</span>
+                </div>
+                <p className="text-xs text-white/65 leading-relaxed mb-3">
+                  Heatmap console is inactive — no Mapbox token configured.
+                </p>
+                <p className="text-[10px] font-mono text-white/35 mb-2">Add a token to <code className="text-white/60 bg-white/[0.05] px-1">frontend/.env</code>:</p>
+                <code className="block text-[10px] font-mono text-emerald-300/70 bg-black/40 border border-white/[0.05] px-2 py-1.5 mb-3 overflow-x-auto">
+                  VITE_MAPBOX_TOKEN=pk.your_token
+                </code>
+                <a
+                  href="https://account.mapbox.com/access-tokens/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] font-mono uppercase tracking-wider text-white/40 hover:text-white/70 transition-colors"
+                >
+                  Get free token ›
+                </a>
+              </div>
+            ) : (
+              <div className="border border-red-500/20 bg-red-500/[0.04] p-4 max-w-sm text-center">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-red-300/70 mb-1">Map Error</div>
+                <div className="text-xs text-white/65">{mapError}</div>
+              </div>
+            )}
+          </div>
+        )}
+        {/* Layer legend */}
+        {!mapError && mapReady && (
+          <div className="absolute bottom-3 left-3 bg-black/70 border border-white/10 px-2.5 py-1.5 backdrop-blur-sm z-10">
+            <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mb-1">Intensity</div>
+            <div className="flex items-center gap-1">
+              <span className="text-[9px] font-mono text-white/50">Low</span>
+              <div className="w-16 h-1.5" style={{ background: `linear-gradient(to right, ${LAYER_CONFIG[activeLayer].stops[1][1]}, ${LAYER_CONFIG[activeLayer].stops[10][1]})` }} />
+              <span className="text-[9px] font-mono text-white/50">High</span>
             </div>
           </div>
         )}

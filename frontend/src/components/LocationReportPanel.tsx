@@ -437,158 +437,199 @@ export default function LocationReportPanel({ profile, neighborhoodData, loading
 
   return (
     <section className="h-full flex flex-col border border-white/[0.06] bg-white/[0.02]">
-      <div className="px-4 py-3 border-b border-white/[0.06]">
-        <div className="min-w-0">
-          <p className="text-[10px] font-mono uppercase tracking-wider text-white/35">Intelligence Brief</p>
-          <div className="mt-2 flex items-baseline gap-2 min-w-0">
-            <h3 className="text-lg font-semibold text-white truncate">{profile.business_type}</h3>
-            <span className="text-white/25 shrink-0">·</span>
-            <p className="text-sm text-white/55 truncate">{profile.neighborhood}</p>
+      {/* Header: identity + context + brief status */}
+      <div className="px-4 py-3 border-b border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="w-1 h-1 rounded-full bg-[#2B95D6]" />
+            <p className="text-[9px] font-mono uppercase tracking-[0.22em] text-white/40">Intelligence Brief</p>
           </div>
+          {!loading && neighborhoodData && insights && (
+            <span className={`text-[9px] font-mono px-1.5 py-0.5 border ${
+              insights.overall >= 65 ? 'border-emerald-500/30 text-emerald-300/80' :
+              insights.overall >= 40 ? 'border-amber-500/30 text-amber-300/80' :
+              'border-red-500/30 text-red-300/80'
+            }`}>
+              SIGNAL: {insights.overall >= 65 ? 'FAVORABLE' : insights.overall >= 40 ? 'MIXED' : 'ADVERSE'}
+            </span>
+          )}
+        </div>
+        <div className="mt-2 flex items-baseline gap-2 min-w-0">
+          <h3 className="text-base font-semibold text-white truncate">{profile.business_type}</h3>
+          <span className="text-white/20 shrink-0">·</span>
+          <p className="text-[11px] text-white/50 truncate">{profile.neighborhood}</p>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-5">
+      <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <div className="text-xs text-white/40 font-mono">Generating intelligence brief from live pipeline signals…</div>
+          <div className="p-4 text-xs text-white/40 font-mono">Generating intelligence brief from live pipeline signals…</div>
         ) : !neighborhoodData || !insights ? (
-          <div className="text-xs text-white/40 font-mono">Select a neighborhood to generate intelligence brief.</div>
+          <div className="p-4 text-xs text-white/40 font-mono">Select a neighborhood to generate intelligence brief.</div>
         ) : (
           <>
-            {/* 1. Score + Verdict */}
-            <div className="grid gap-3 lg:grid-cols-[280px_minmax(0,1fr)] lg:items-stretch">
-              <div className={`border ${scoreBorderColor(insights.overall)} ${scoreBgColor(insights.overall)} p-4 text-center flex flex-col justify-center`}>
-                <p className={`text-4xl font-bold ${scoreColor(insights.overall)}`}>{insights.overall}</p>
-                <p className="text-[10px] font-mono uppercase tracking-wider text-white/50 mt-2">
-                  Business Intelligence Score
-                </p>
-                <p className="text-[10px] text-white/40 mt-1">
-                  {insights.profile} profile • {insights.coverageCount} of 6 categories scored
-                </p>
-              </div>
-
-              <div className="border border-white/[0.06] bg-white/[0.02] p-4 flex flex-col justify-between">
-                <p className="text-[10px] font-mono uppercase tracking-wider text-white/35 mb-4">Verdict</p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <div className="border border-white/[0.06] bg-black/10 px-3 py-2">
-                    <p className="text-[9px] font-mono uppercase tracking-wider text-white/30">Strongest Signal</p>
-                    <p className="text-[11px] font-semibold text-white/80 mt-1">
-                      {strongestCategory ? `${strongestCategory.name} ${strongestCategory.score}/100` : '—'}
-                    </p>
-                    <p className="text-[10px] text-white/35 mt-1">Best-performing category</p>
+            {/* 1. Score banner */}
+            <div className={`relative px-4 py-4 border-b border-white/[0.06] ${scoreBgColor(insights.overall)}`}>
+              <div className="flex items-center gap-4">
+                <div className={`text-4xl font-bold font-mono leading-none ${scoreColor(insights.overall)}`}>
+                  {insights.overall}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[9px] font-mono uppercase tracking-wider text-white/45">Business Intelligence Score</div>
+                  <div className="text-[10px] text-white/35 mt-0.5">
+                    {insights.profile} · {insights.coverageCount}/6 categories · {sourcesData.total} docs
                   </div>
-                  <div className="border border-white/[0.06] bg-black/10 px-3 py-2">
-                    <p className="text-[9px] font-mono uppercase tracking-wider text-white/30">Primary Risk</p>
-                    <p className="text-[11px] font-semibold text-white/80 mt-1">
-                      {weakestCategory ? `${weakestCategory.name} ${weakestCategory.score}/100` : '—'}
-                    </p>
-                    <p className="text-[10px] text-white/35 mt-1">Needs the most attention</p>
+                  <div className="mt-2 flex h-1 bg-black/30 rounded-full overflow-hidden">
+                    <div className={`h-full ${scoreBorderColor(insights.overall).replace('border-', 'bg-').replace('/30', '/60')}`} style={{ width: `${insights.overall}%` }} />
                   </div>
                 </div>
+              </div>
+            </div>
+
+            {/* 2. Verdict / Strongest + Weakest signal modules */}
+            <ModuleHeader label="Verdict" accent="text-white/45" />
+            <div className="px-4 pb-4 grid grid-cols-2 gap-2">
+              <div className="border border-emerald-500/15 bg-emerald-500/[0.03] px-2.5 py-2">
+                <p className="text-[9px] font-mono uppercase tracking-wider text-emerald-300/60">Strongest</p>
+                <p className="text-[11px] font-semibold text-white/85 mt-1 truncate">
+                  {strongestCategory ? strongestCategory.name : '—'}
+                </p>
+                <p className="text-[10px] font-mono text-emerald-300/60 mt-0.5">
+                  {strongestCategory ? `${strongestCategory.score}/100` : '—'}
+                </p>
+              </div>
+              <div className="border border-red-500/15 bg-red-500/[0.03] px-2.5 py-2">
+                <p className="text-[9px] font-mono uppercase tracking-wider text-red-300/60">Primary Risk</p>
+                <p className="text-[11px] font-semibold text-white/85 mt-1 truncate">
+                  {weakestCategory ? weakestCategory.name : '—'}
+                </p>
+                <p className="text-[10px] font-mono text-red-300/60 mt-0.5">
+                  {weakestCategory ? `${weakestCategory.score}/100` : '—'}
+                </p>
               </div>
             </div>
 
             {/* 3. Advantages */}
-            <div>
-              <p className="text-[10px] font-mono uppercase tracking-wider text-emerald-300/70 mb-2">
-                Advantages {advantages.length > 0 && <span className="text-white/30">({advantages.length})</span>}
-              </p>
-              <div className="space-y-2">
-                {advantages.length > 0 ? advantages.map((item) => (
-                  <div key={item.title} className="border border-emerald-500/20 bg-emerald-500/[0.05] p-3">
-                    <p className="text-xs font-semibold text-emerald-300">{item.title}</p>
-                    <p className="text-[11px] text-white/65 mt-1 leading-relaxed">{item.detail}</p>
-                  </div>
-                )) : (
-                  <p className="text-[11px] text-white/40">No clear advantages from available data.</p>
-                )}
-              </div>
+            <ModuleHeader
+              label="Advantages"
+              count={advantages.length}
+              accent="text-emerald-300/70"
+              dot="bg-emerald-400/60"
+            />
+            <div className="px-4 pb-4 space-y-1.5">
+              {advantages.length > 0 ? advantages.map((item) => (
+                <BriefRow
+                  key={item.title}
+                  title={item.title}
+                  detail={item.detail}
+                  tone="positive"
+                />
+              )) : (
+                <p className="text-[10px] font-mono text-white/25 italic">No clear advantages from available data.</p>
+              )}
             </div>
 
             {/* 4. Risks */}
-            <div>
-              <p className="text-[10px] font-mono uppercase tracking-wider text-amber-300/70 mb-2">
-                Risks {risks.length > 0 && <span className="text-white/30">({risks.length})</span>}
-              </p>
-              <div className="space-y-2">
-                {risks.length > 0 ? risks.map((item) => (
-                  <div key={item.title} className="border border-amber-500/20 bg-amber-500/[0.05] p-3">
-                    <p className="text-xs font-semibold text-amber-200">{item.title}</p>
-                    <p className="text-[11px] text-white/65 mt-1 leading-relaxed">{item.detail}</p>
-                  </div>
-                )) : (
-                  <p className="text-[11px] text-white/40">No major risks identified.</p>
-                )}
-              </div>
+            <ModuleHeader
+              label="Risks"
+              count={risks.length}
+              accent="text-amber-300/70"
+              dot="bg-amber-400/60"
+            />
+            <div className="px-4 pb-4 space-y-1.5">
+              {risks.length > 0 ? risks.map((item) => (
+                <BriefRow
+                  key={item.title}
+                  title={item.title}
+                  detail={item.detail}
+                  tone="warning"
+                />
+              )) : (
+                <p className="text-[10px] font-mono text-white/25 italic">No major risks identified.</p>
+              )}
             </div>
 
             {/* 5. Social Media Trends */}
-            <div>
-              <p className="text-[10px] font-mono uppercase tracking-wider text-cyan-300/70 mb-2">
-                Social Media Trends
-              </p>
-              <div className="space-y-2">
-                {socialLoading ? (
-                  <p className="text-[11px] text-cyan-300/50 animate-pulse">Analyzing social signals…</p>
-                ) : socialError ? (
-                  <p className="text-[11px] text-red-400/70">{socialError}</p>
-                ) : socialTrends.length > 0 ? socialTrends.map((trend) => (
-                  <div key={trend.title} className="border border-cyan-500/20 bg-cyan-500/[0.05] p-3">
-                    <p className="text-xs font-semibold text-cyan-300">{trend.title}</p>
-                    <p className="text-[11px] text-white/65 mt-1 leading-relaxed">{trend.detail}</p>
-                  </div>
-                )) : (
-                  <p className="text-[11px] text-white/40">No social media data available for this neighborhood.</p>
-                )}
-              </div>
+            <ModuleHeader
+              label="Social Trends"
+              accent="text-cyan-300/70"
+              dot="bg-cyan-400/60"
+            />
+            <div className="px-4 pb-4 space-y-1.5">
+              {socialLoading ? (
+                <p className="text-[10px] font-mono text-cyan-300/50 animate-pulse">Analyzing social signals…</p>
+              ) : socialError ? (
+                <p className="text-[10px] font-mono text-red-400/70">{socialError}</p>
+              ) : socialTrends.length > 0 ? socialTrends.map((trend) => (
+                <BriefRow
+                  key={trend.title}
+                  title={trend.title}
+                  detail={trend.detail}
+                  tone="info"
+                />
+              )) : (
+                <p className="text-[10px] font-mono text-white/25 italic">No social signals detected.</p>
+              )}
             </div>
 
             {/* 6. Competitive Landscape */}
-            <div>
-              <p className="text-[10px] font-mono uppercase tracking-wider text-blue-300/70 mb-2">
-                Competitive Landscape {competitors.length > 0 && <span className="text-white/30">({competitors.length})</span>}
-              </p>
+            <ModuleHeader
+              label="Competitive Landscape"
+              count={competitors.length}
+              accent="text-blue-300/70"
+              dot="bg-blue-400/60"
+            />
+            <div className="px-4 pb-4">
               {competitors.length > 0 ? (
-                <div className="space-y-1">
+                <div className="border border-white/[0.05] bg-white/[0.01] divide-y divide-white/[0.04]">
                   {competitors.map((c) => (
-                    <div key={c.name} className="flex items-start gap-2 text-[11px]">
-                      <span className={`mt-0.5 shrink-0 w-1.5 h-1.5 rounded-full ${c.isDirect ? 'bg-red-400' : 'bg-white/20'}`} />
-                      <div>
-                        <span className="text-white/80">{c.name}</span>
-                        <span className="text-white/35 ml-1.5">{c.type}</span>
-                        {c.isDirect && <span className="text-red-400/80 ml-1.5 text-[9px] font-mono uppercase">Direct</span>}
+                    <div key={c.name} className="flex items-start gap-2 px-2.5 py-1.5 text-[11px]">
+                      <span className={`mt-1 shrink-0 w-1 h-1 rounded-full ${c.isDirect ? 'bg-red-400' : 'bg-white/25'}`} />
+                      <div className="flex-1 min-w-0 flex items-baseline gap-2">
+                        <span className="text-white/80 truncate">{c.name}</span>
+                        <span className="text-white/25 text-[10px] truncate">{c.type}</span>
                       </div>
+                      {c.isDirect && <span className="text-red-400/80 text-[9px] font-mono uppercase tracking-wider shrink-0">Direct</span>}
                     </div>
                   ))}
                 </div>
               ) : (
-                <p className="text-[11px] text-white/40 italic">No competitor data available.</p>
+                <p className="text-[10px] font-mono text-white/25 italic">No competitor data available.</p>
               )}
             </div>
 
             {/* 7. Regulatory Checklist */}
             {regulatory && (
-              <div>
-                <p className="text-[10px] font-mono uppercase tracking-wider text-violet-300/70 mb-2">Regulatory Checklist</p>
-                <div className="space-y-3">
-                  {/* Inspection pass rate */}
-                  <div className="border border-white/[0.06] bg-white/[0.02] p-3">
-                    <p className="text-[10px] font-mono uppercase tracking-wider text-white/40 mb-1">Inspections</p>
-                    {regulatory.total > 0 ? (
-                      <p className="text-sm font-semibold text-white/90">
-                        {regulatory.passRate}% pass rate
-                        <span className="text-[10px] text-white/40 font-normal ml-2">
-                          ({regulatory.passed}/{regulatory.total} passed, {regulatory.failed} failed)
-                        </span>
-                      </p>
-                    ) : (
-                      <p className="text-[11px] text-white/40">No inspection data available.</p>
+              <>
+                <ModuleHeader
+                  label="Regulatory Checklist"
+                  accent="text-violet-300/70"
+                  dot="bg-violet-400/60"
+                />
+                <div className="px-4 pb-4 space-y-2">
+                  {/* Inspection pass rate bar */}
+                  <div className="border border-white/[0.05] bg-white/[0.01] p-2.5">
+                    <div className="flex items-baseline justify-between mb-1.5">
+                      <p className="text-[9px] font-mono uppercase tracking-wider text-white/40">Inspections</p>
+                      {regulatory.total > 0 && (
+                        <p className="text-[10px] font-mono text-white/50">
+                          <span className={`font-bold ${regulatory.passRate >= 80 ? 'text-emerald-400/80' : regulatory.passRate >= 60 ? 'text-amber-400/80' : 'text-red-400/80'}`}>
+                            {regulatory.passRate}%
+                          </span>
+                          <span className="text-white/30"> · {regulatory.passed}/{regulatory.total}</span>
+                        </p>
+                      )}
+                    </div>
+                    {regulatory.total > 0 && (
+                      <div className="h-1 bg-white/[0.05] overflow-hidden rounded-full">
+                        <div className={`h-1 ${regulatory.passRate >= 80 ? 'bg-emerald-400/60' : regulatory.passRate >= 60 ? 'bg-amber-400/60' : 'bg-red-400/60'}`} style={{ width: `${regulatory.passRate}%` }} />
+                      </div>
                     )}
                     {regulatory.recentInspections.length > 0 && (
-                      <div className="mt-2 space-y-1">
-                        {regulatory.recentInspections.map((i, idx) => (
+                      <div className="mt-2 space-y-0.5">
+                        {regulatory.recentInspections.slice(0, 4).map((i, idx) => (
                           <div key={idx} className="flex justify-between text-[10px]">
-                            <span className="text-white/60 truncate mr-2">{i.name}</span>
+                            <span className="text-white/55 truncate mr-2">{i.name}</span>
                             <span className={`shrink-0 font-mono ${i.result.toLowerCase().includes('pass') ? 'text-emerald-400/70' : i.result.toLowerCase().includes('fail') ? 'text-red-400/70' : 'text-white/40'}`}>
                               {i.result}
                             </span>
@@ -600,12 +641,12 @@ export default function LocationReportPanel({ profile, neighborhoodData, loading
 
                   {/* Permits by type */}
                   {regulatory.permitBreakdown.length > 0 && (
-                    <div className="border border-white/[0.06] bg-white/[0.02] p-3">
-                      <p className="text-[10px] font-mono uppercase tracking-wider text-white/40 mb-1">Permits by Type</p>
-                      <div className="space-y-1">
+                    <div className="border border-white/[0.05] bg-white/[0.01] p-2.5">
+                      <p className="text-[9px] font-mono uppercase tracking-wider text-white/40 mb-1.5">Permits by Type</p>
+                      <div className="space-y-0.5">
                         {regulatory.permitBreakdown.map((p) => (
                           <div key={p.type} className="flex justify-between text-[10px]">
-                            <span className="text-white/60">{p.type}</span>
+                            <span className="text-white/55 truncate">{p.type}</span>
                             <span className="text-white/40 font-mono">{p.count}</span>
                           </div>
                         ))}
@@ -615,44 +656,83 @@ export default function LocationReportPanel({ profile, neighborhoodData, loading
 
                   {/* Federal alerts */}
                   {regulatory.federalAlerts.length > 0 && (
-                    <div className="border border-red-500/10 bg-red-500/[0.03] p-3">
-                      <p className="text-[10px] font-mono uppercase tracking-wider text-red-300/60 mb-1">Federal Regulation Alerts</p>
-                      <div className="space-y-1.5">
+                    <div className="border border-red-500/15 bg-red-500/[0.03] p-2.5">
+                      <p className="text-[9px] font-mono uppercase tracking-wider text-red-300/60 mb-1.5">Federal Regulation Alerts</p>
+                      <div className="space-y-1">
                         {regulatory.federalAlerts.map((a, idx) => (
                           <div key={idx} className="text-[10px]">
-                            <p className="text-white/70">{a.title}</p>
-                            <p className="text-white/30">{a.agency}</p>
+                            <p className="text-white/70 line-clamp-2">{a.title}</p>
+                            <p className="text-[9px] font-mono text-red-300/40 mt-0.5">{a.agency}</p>
                           </div>
                         ))}
                       </div>
                     </div>
                   )}
                 </div>
-              </div>
+              </>
             )}
 
-            {/* 7. Key Metrics Grid */}
-            <div>
-              <p className="text-[10px] font-mono uppercase tracking-wider text-white/35 mb-2">Key Metrics</p>
-              <div className="grid grid-cols-2 gap-2">
-                {metrics.map((m) => (
-                  <div key={m.label} className="border border-white/[0.06] bg-white/[0.02] p-2.5">
-                    <p className="text-[10px] text-white/40 font-mono truncate">{m.label}</p>
-                    <p className="text-sm font-semibold text-white/90 mt-0.5">{m.value}</p>
-                  </div>
-                ))}
-              </div>
+            {/* 8. Key Metrics Grid */}
+            <ModuleHeader label="Key Metrics" accent="text-white/45" />
+            <div className="px-4 pb-4 grid grid-cols-2 gap-px bg-white/[0.04]">
+              {metrics.map((m) => (
+                <div key={m.label} className="bg-[#06080d] px-2.5 py-2">
+                  <p className="text-[9px] font-mono uppercase tracking-wider text-white/30 truncate">{m.label}</p>
+                  <p className="text-[13px] font-semibold font-mono text-white/85 mt-0.5">{m.value}</p>
+                </div>
+              ))}
             </div>
 
-            {/* 8. Data Sources */}
-            <div className="pt-3 border-t border-white/[0.06]">
-              <p className="text-[10px] font-mono text-white/25">
-                {sourcesData.total} documents analyzed across {sourcesData.sources.length} sources
+            {/* 9. Source footer */}
+            <div className="px-4 py-3 border-t border-white/[0.06] flex items-center justify-between">
+              <p className="text-[9px] font-mono uppercase tracking-wider text-white/30">
+                {sourcesData.total} docs · {sourcesData.sources.length} sources
               </p>
+              <div className="flex items-center gap-1">
+                {sourcesData.sources.slice(0, 6).map((s) => (
+                  <span
+                    key={s.name}
+                    title={`${s.name}: ${s.count}`}
+                    className="w-1 h-1 rounded-full bg-emerald-400/50"
+                  />
+                ))}
+              </div>
             </div>
           </>
         )}
       </div>
     </section>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Shared brief rail helpers
+// ────────────────────────────────────────────────────────────────────
+
+function ModuleHeader({ label, count, accent, dot }: { label: string; count?: number; accent: string; dot?: string }) {
+  return (
+    <div className="px-4 pt-4 pb-2 flex items-center gap-2">
+      {dot && <span className={`w-1 h-1 rounded-full ${dot}`} />}
+      <p className={`text-[9px] font-mono uppercase tracking-[0.2em] ${accent}`}>{label}</p>
+      {count !== undefined && count > 0 && (
+        <span className="text-[9px] font-mono text-white/25">({count})</span>
+      )}
+      <div className="flex-1 h-px bg-white/[0.05] ml-1" />
+    </div>
+  )
+}
+
+function BriefRow({ title, detail, tone }: { title: string; detail: string; tone: 'positive' | 'warning' | 'info' }) {
+  const tones = {
+    positive: { border: 'border-l-emerald-500/40', text: 'text-emerald-200/90', bg: 'bg-emerald-500/[0.025]' },
+    warning: { border: 'border-l-amber-500/40', text: 'text-amber-200/90', bg: 'bg-amber-500/[0.025]' },
+    info: { border: 'border-l-cyan-500/40', text: 'text-cyan-200/90', bg: 'bg-cyan-500/[0.025]' },
+  }
+  const t = tones[tone]
+  return (
+    <div className={`border-l-2 ${t.border} ${t.bg} px-2.5 py-1.5`}>
+      <p className={`text-[11px] font-semibold ${t.text}`}>{title}</p>
+      <p className="text-[10px] text-white/55 mt-0.5 leading-relaxed">{detail}</p>
+    </div>
   )
 }
