@@ -148,6 +148,7 @@ export default function MarketPanel({ reviews, realestate }: Props) {
 
   const saleListings = realestate.filter(r => (r.metadata?.listing_type as string)?.toLowerCase() === 'sale').length
   const leaseListings = realestate.filter(r => (r.metadata?.listing_type as string)?.toLowerCase() === 'lease').length
+  const untaggedListings = Math.max(0, realestate.length - saleListings - leaseListings)
 
   return (
     <div className="space-y-4">
@@ -174,11 +175,19 @@ export default function MarketPanel({ reviews, realestate }: Props) {
           <div className="text-[9px] font-mono text-white/25 mt-0.5">opportunity gap</div>
         </div>
         <div className="bg-[#06080d] px-4 py-3">
-          <div className="text-[9px] font-mono uppercase tracking-wider text-white/30">Space Available</div>
+          <div className="text-[9px] font-mono uppercase tracking-wider text-white/30">Listings Indexed</div>
           <div className="text-xl font-bold font-mono text-white mt-1">
-            {leaseListings + saleListings}
+            {realestate.length}
           </div>
-          <div className="text-[9px] font-mono text-white/25 mt-0.5">{leaseListings} lease · {saleListings} sale</div>
+          <div className="text-[9px] font-mono text-white/25 mt-0.5">
+            {(() => {
+              const parts: string[] = []
+              if (leaseListings) parts.push(`${leaseListings} lease`)
+              if (saleListings) parts.push(`${saleListings} sale`)
+              if (untaggedListings) parts.push(`${untaggedListings} unspec.`)
+              return parts.length ? parts.join(' · ') : 'commercial properties'
+            })()}
+          </div>
         </div>
       </div>
 

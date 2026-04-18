@@ -128,9 +128,19 @@ function TikTokPost({ video }: { video: Document }) {
   const rawTitle = (video.title || '').trim()
   const transcriptTitle = transcriptHeadline(video.content)
   const hasMeaningfulTitle = rawTitle && !isCountOnlyText(rawTitle) && rawTitle.toLowerCase() !== 'tiktok video'
+  // Prefer meaningful content over generic fallbacks. If none is available,
+  // flag the row as a no-caption placeholder instead of echoing the same
+  // "TikTok video" / creator handle across every row.
+  const hasCaptionText = !!(hasMeaningfulTitle || transcriptTitle)
   const titleText = hasMeaningfulTitle
     ? rawTitle
-    : transcriptTitle || (creator ? `@${creator}` : '') || (query ? `TikTok: ${query}` : 'TikTok video')
+    : transcriptTitle
+      ? transcriptTitle
+      : creator
+        ? `@${creator}`
+        : query
+          ? `TikTok · ${query}`
+          : '— no caption —'
   const contentText = cleanTikTokContent(video.content)
 
   return (
@@ -153,7 +163,9 @@ function TikTokPost({ video }: { video: Document }) {
               <span>{new Date(video.timestamp).toLocaleDateString()}</span>
             </div>
           </div>
-          <h4 className="text-[13px] font-semibold text-white/90 leading-snug line-clamp-2">{titleText}</h4>
+          <h4 className={`text-[13px] leading-snug line-clamp-2 ${hasCaptionText ? 'font-semibold text-white/90' : 'font-mono uppercase tracking-wider text-white/25 text-[10px]'}`}>
+            {titleText}
+          </h4>
           {contentText && (
             <p className="text-[11px] text-white/45 mt-1 leading-relaxed line-clamp-2">
               {contentText.substring(0, 150)}

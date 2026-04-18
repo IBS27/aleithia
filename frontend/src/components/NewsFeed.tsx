@@ -1,4 +1,5 @@
 import type { Document } from '../types/index.ts'
+import { cleanArticleText, dedupeNews, dedupePolicy } from '../feedDedup.ts'
 
 interface Props {
   news: Document[]
@@ -38,13 +39,17 @@ function NewsRow({ article }: { article: Document }) {
               {new Date(article.timestamp).toLocaleDateString()}
             </span>
           </div>
-          <h4 className="text-[13px] font-semibold text-white/90 leading-snug line-clamp-2">{article.title}</h4>
-          {article.content && (
-            <p className="text-[11px] text-white/45 mt-1 leading-relaxed line-clamp-2">
-              {article.content.substring(0, 180)}
-              {article.content.length > 180 && '...'}
-            </p>
-          )}
+          <h4 className="text-[13px] font-semibold text-white/90 leading-snug line-clamp-2">{cleanArticleText(article.title)}</h4>
+          {article.content && (() => {
+            const cleaned = cleanArticleText(article.content)
+            if (!cleaned) return null
+            return (
+              <p className="text-[11px] text-white/45 mt-1 leading-relaxed line-clamp-2">
+                {cleaned.substring(0, 180)}
+                {cleaned.length > 180 && '…'}
+              </p>
+            )
+          })()}
         </div>
         {article.url && (
           <a
@@ -81,7 +86,7 @@ function PolicyRow({ item }: { item: Document }) {
               {new Date(item.timestamp).toLocaleDateString()}
             </span>
           </div>
-          <h4 className="text-[13px] font-semibold text-white/90 leading-snug line-clamp-2">{item.title}</h4>
+          <h4 className="text-[13px] font-semibold text-white/90 leading-snug line-clamp-2">{cleanArticleText(item.title)}</h4>
         </div>
         {item.url && (
           <a
@@ -99,7 +104,9 @@ function PolicyRow({ item }: { item: Document }) {
 }
 
 export default function NewsFeed({ news, politics }: Props) {
-  const hasContent = news.length > 0 || politics.length > 0
+  const dedupedNews = dedupeNews(news)
+  const dedupedPolitics = dedupePolicy(politics)
+  const hasContent = dedupedNews.length > 0 || dedupedPolitics.length > 0
 
   if (!hasContent) {
     return (
@@ -116,13 +123,13 @@ export default function NewsFeed({ news, politics }: Props) {
       <div className="border border-white/[0.06] bg-white/[0.01]">
         <FeedHeader
           label="Local News"
-          count={news.length}
+          count={dedupedNews.length}
           accent="text-blue-300/70"
           dot="bg-blue-400/70"
           suffix="articles"
         />
-        {news.length > 0 ? (
-          <div>{news.map((article) => <NewsRow key={article.id} article={article} />)}</div>
+        {dedupedNews.length > 0 ? (
+          <div>{dedupedNews.map((article) => <NewsRow key={article.id} article={article} />)}</div>
         ) : (
           <div className="p-6 text-center text-[10px] font-mono text-white/20">
             No local news available for this area yet.
@@ -134,13 +141,13 @@ export default function NewsFeed({ news, politics }: Props) {
       <div className="border border-white/[0.06] bg-white/[0.01]">
         <FeedHeader
           label="City Council & Policy"
-          count={politics.length}
+          count={dedupedPolitics.length}
           accent="text-purple-300/70"
           dot="bg-purple-400/70"
           suffix="items"
         />
-        {politics.length > 0 ? (
-          <div>{politics.map((item) => <PolicyRow key={item.id} item={item} />)}</div>
+        {dedupedPolitics.length > 0 ? (
+          <div>{dedupedPolitics.map((item) => <PolicyRow key={item.id} item={item} />)}</div>
         ) : (
           <div className="p-6 text-center text-[10px] font-mono text-white/20">
             No policy activity logged for this area yet.

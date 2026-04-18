@@ -19,15 +19,17 @@ const CATEGORY_TAB_MAP: Record<string, string> = {
   community: 'community',
 }
 
+// Risk uses a /100 visual scale derived from the backend's /10 score.
+// Thresholds are the original /10 cutoffs multiplied by 10.
 function riskColor(score: number): string {
-  if (score <= 3) return 'text-emerald-400'
-  if (score <= 6) return 'text-amber-400'
+  if (score <= 30) return 'text-emerald-400'
+  if (score <= 60) return 'text-amber-400'
   return 'text-red-400'
 }
 
 function riskTint(score: number): string {
-  if (score <= 3) return 'from-emerald-500/[0.08] border-emerald-500/25'
-  if (score <= 6) return 'from-amber-500/[0.08] border-amber-500/25'
+  if (score <= 30) return 'from-emerald-500/[0.08] border-emerald-500/25'
+  if (score <= 60) return 'from-amber-500/[0.08] border-amber-500/25'
   return 'from-red-500/[0.08] border-red-500/25'
 }
 
@@ -169,24 +171,29 @@ export default function CommandPanel({ data, profile, riskScore, onTabChange }: 
         </div>
       </div>
 
-      {/* Score cockpit: Risk + Opportunity + Confidence */}
+      {/* Score cockpit: Risk + Opportunity + Confidence — all on /100 for easy comparison */}
       <div className="grid grid-cols-3 border-b border-white/[0.06]">
-        <div className={`border-r border-white/[0.06] p-4 bg-gradient-to-br ${riskTint(riskScore.overall_score)}`}>
-          <div className="text-[9px] font-mono uppercase tracking-wider text-white/40">Risk</div>
-          <div className="flex items-baseline gap-1 mt-1">
-            <span className={`text-2xl font-bold font-mono ${riskColor(riskScore.overall_score)}`}>
-              {riskScore.overall_score.toFixed(1)}
-            </span>
-            <span className="text-[10px] font-mono text-white/25">/10</span>
-          </div>
-          <div className="mt-2 w-full h-0.5 bg-white/[0.06]">
-            <div
-              className={`h-0.5 ${riskScore.overall_score <= 3 ? 'bg-emerald-400' : riskScore.overall_score <= 6 ? 'bg-amber-400' : 'bg-red-400'}`}
-              style={{ width: `${riskScore.overall_score * 10}%` }}
-            />
-          </div>
-          <div className="text-[9px] font-mono text-white/30 mt-1.5">Lower is better</div>
-        </div>
+        {(() => {
+          const riskDisplay = Math.round(riskScore.overall_score * 10)
+          return (
+            <div className={`border-r border-white/[0.06] p-4 bg-gradient-to-br ${riskTint(riskDisplay)}`}>
+              <div className="text-[9px] font-mono uppercase tracking-wider text-white/40">Risk</div>
+              <div className="flex items-baseline gap-1 mt-1">
+                <span className={`text-2xl font-bold font-mono ${riskColor(riskDisplay)}`}>
+                  {riskDisplay}
+                </span>
+                <span className="text-[10px] font-mono text-white/25">/100</span>
+              </div>
+              <div className="mt-2 w-full h-0.5 bg-white/[0.06]">
+                <div
+                  className={`h-0.5 ${riskDisplay <= 30 ? 'bg-emerald-400' : riskDisplay <= 60 ? 'bg-amber-400' : 'bg-red-400'}`}
+                  style={{ width: `${riskDisplay}%` }}
+                />
+              </div>
+              <div className="text-[9px] font-mono text-white/30 mt-1.5">Lower is better</div>
+            </div>
+          )
+        })()}
 
         <div className={`border-r border-white/[0.06] p-4 bg-gradient-to-br ${oppTint(insights.overall)}`}>
           <div className="text-[9px] font-mono uppercase tracking-wider text-white/40">Opportunity</div>
@@ -211,7 +218,7 @@ export default function CommandPanel({ data, profile, riskScore, onTabChange }: 
             <span className="text-2xl font-bold font-mono text-white/80">
               {Math.round(riskScore.confidence * 100)}
             </span>
-            <span className="text-[10px] font-mono text-white/25">%</span>
+            <span className="text-[10px] font-mono text-white/25">/100</span>
           </div>
           <div className="mt-2 w-full h-0.5 bg-white/[0.06]">
             <div
@@ -232,7 +239,14 @@ export default function CommandPanel({ data, profile, riskScore, onTabChange }: 
 
       {/* Category bars */}
       <div className="px-5 py-3 border-b border-white/[0.06]">
-        <div className="text-[9px] font-mono uppercase tracking-wider text-white/30 mb-2">Signal Matrix</div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-[9px] font-mono uppercase tracking-wider text-white/30">Signal Matrix</div>
+          <div className="flex items-center gap-3 text-[9px] font-mono text-white/30">
+            <span className="flex items-center gap-1"><span className="text-emerald-400/80">▲</span>improving</span>
+            <span className="flex items-center gap-1"><span className="text-amber-400/80">●</span>stable</span>
+            <span className="flex items-center gap-1"><span className="text-red-400/80">▼</span>declining</span>
+          </div>
+        </div>
         <div className="space-y-0.5">
           {insights.categories.map(cat => (
             <CategoryBar

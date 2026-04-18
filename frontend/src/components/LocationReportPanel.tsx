@@ -301,24 +301,16 @@ interface MetricItem {
   value: string
 }
 
+// Key Metrics are the deeper-cut stats shown in the right-sidebar brief.
+// They intentionally do NOT duplicate values already surfaced in the top
+// Tactical Stats ribbon (pop, income, rent, permits, reviews, rating, crime).
 function extractMetrics(data: NeighborhoodData): MetricItem[] {
   const stats = data.inspection_stats
-  const reviews = data.reviews || []
-  const ratings = reviews.map(r => (r.metadata?.rating as number) || 0).filter(r => r > 0)
-  const avgRating = ratings.length > 0 ? (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1) : '—'
-
-  return [
+  const demo = data.demographics
+  const items: MetricItem[] = [
     {
       label: 'Inspection Pass Rate',
       value: stats.total > 0 ? `${Math.round((stats.passed / stats.total) * 100)}%` : '—',
-    },
-    {
-      label: 'Avg Review Rating',
-      value: avgRating !== '—' ? `${avgRating}/5` : '—',
-    },
-    {
-      label: 'Active Permits',
-      value: `${data.permit_count}`,
     },
     {
       label: 'Business Licenses',
@@ -329,22 +321,27 @@ function extractMetrics(data: NeighborhoodData): MetricItem[] {
       value: data.transit ? `${data.transit.transit_score}` : '—',
     },
     {
-      label: 'Population',
-      value: data.demographics?.total_population
-        ? data.demographics.total_population.toLocaleString()
-        : '—',
+      label: 'Median Home Value',
+      value: demo?.median_home_value ? `$${Math.round(demo.median_home_value / 1000)}K` : '—',
     },
     {
-      label: 'Median Income',
-      value: data.demographics?.median_household_income
-        ? `$${Math.round(data.demographics.median_household_income / 1000)}K`
-        : '—',
+      label: 'Unemployment',
+      value: demo?.unemployment_rate !== undefined ? `${demo.unemployment_rate}%` : '—',
     },
     {
-      label: 'Review Count',
-      value: `${reviews.length}`,
+      label: 'Bachelor’s+',
+      value: demo?.bachelors_degree !== undefined ? `${demo.bachelors_degree}%` : '—',
+    },
+    {
+      label: 'Federal Alerts',
+      value: `${data.federal_register?.length || 0}`,
+    },
+    {
+      label: 'CCTV Cameras',
+      value: `${data.cctv?.cameras?.length || 0}`,
     },
   ]
+  return items
 }
 
 interface SourceCount {
@@ -572,9 +569,9 @@ export default function LocationReportPanel({ profile, neighborhoodData, loading
               )}
             </div>
 
-            {/* 6. Competitive Landscape */}
+            {/* 6. Nearby Businesses — direct competitors (if any) are flagged inline */}
             <ModuleHeader
-              label="Competitive Landscape"
+              label="Nearby Businesses"
               count={competitors.length}
               accent="text-blue-300/70"
               dot="bg-blue-400/60"

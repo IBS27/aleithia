@@ -25,6 +25,7 @@ import Drawer from './Drawer.tsx'
 import ProfilePage from './ProfilePage.tsx'
 import LoadingFlow from './LoadingFlow.tsx'
 import { InspectionOutcomesChart, TopViolationsPareto, AlertHoursStackedArea } from './VaultCharts.tsx'
+import { dedupeNews, dedupePolicy } from '../feedDedup.ts'
 
 type Tab = 'overview' | 'regulatory' | 'intel' | 'community' | 'market' | 'vision' | 'evidence'
 
@@ -436,11 +437,25 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
   }, [sources, neighborhoodData, profile.neighborhood])
 
   const regulatoryCount = (neighborhoodData?.inspection_stats.total || 0) + (neighborhoodData?.permit_count || 0) + (neighborhoodData?.license_count || 0)
-  const evidenceCount = (neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0) + (neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0) + (neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0) + (neighborhoodData?.federal_register?.length || 0)
+  const intelCount = neighborhoodData
+    ? dedupeNews(neighborhoodData.news).length + dedupePolicy(neighborhoodData.politics).length
+    : 0
+  // Keep in sync with buildEvidence() inside EvidenceExplorer — both counts must
+  // cover the same set of sources so the tab badge matches the filter's "All" count.
+  const evidenceCount =
+    (neighborhoodData?.news.length || 0) +
+    (neighborhoodData?.politics.length || 0) +
+    (neighborhoodData?.reddit?.length || 0) +
+    (neighborhoodData?.tiktok?.length || 0) +
+    (neighborhoodData?.reviews?.length || 0) +
+    (neighborhoodData?.realestate?.length || 0) +
+    (neighborhoodData?.federal_register?.length || 0) +
+    (neighborhoodData?.inspections?.length || 0) +
+    (neighborhoodData?.permits?.length || 0)
   const allTabs: { key: Tab; label: string; count?: number; isEmpty?: () => boolean }[] = [
     { key: 'overview', label: 'Overview' },
     { key: 'regulatory', label: 'Regulatory', count: regulatoryCount, isEmpty: () => !regulatoryCount },
-    { key: 'intel', label: 'News & Policy', count: (neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0), isEmpty: () => !((neighborhoodData?.news.length || 0) + (neighborhoodData?.politics.length || 0)) },
+    { key: 'intel', label: 'News & Policy', count: intelCount, isEmpty: () => !intelCount },
     { key: 'community', label: 'Community', count: (neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0), isEmpty: () => !((neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0)) },
     { key: 'market', label: 'Market', count: (neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0), isEmpty: () => !((neighborhoodData?.reviews?.length || 0) + (neighborhoodData?.realestate?.length || 0)) },
     { key: 'vision', label: 'Vision', count: neighborhoodData?.cctv?.cameras.length || 0, isEmpty: () => false },
