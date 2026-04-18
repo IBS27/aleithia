@@ -44,8 +44,7 @@ export default function DemographicsCard({ metrics, demographics, horizontal }: 
   if (horizontal) {
     const hasDemo = demographics && demographics.total_population && demographics.total_population > 0
 
-    // Primary decision-relevant values — ordered by the refactor brief:
-    // population → income → rent → permits → reviews → transit/sentiment
+    // Primary decision-relevant values — census data only.
     const primaryStats: { label: string; value: string; accent?: string }[] = []
     if (hasDemo) {
       primaryStats.push({ label: 'Pop', value: demographics!.total_population!.toLocaleString() })
@@ -55,28 +54,16 @@ export default function DemographicsCard({ metrics, demographics, horizontal }: 
       if (demographics!.median_gross_rent) {
         primaryStats.push({ label: 'Rent', value: fmt$(demographics!.median_gross_rent) })
       }
+      if (demographics!.median_age !== undefined) {
+        primaryStats.push({ label: 'Age', value: `${demographics!.median_age}` })
+      }
+      if (demographics!.unemployment_rate !== undefined) {
+        primaryStats.push({ label: 'Unemp', value: `${demographics!.unemployment_rate}%` })
+      }
+      if (demographics!.renter_pct !== undefined) {
+        primaryStats.push({ label: 'Renters', value: `${demographics!.renter_pct}%` })
+      }
     }
-    primaryStats.push({ label: 'Permits', value: (metrics.active_permits || 0).toString() })
-    if (metrics.review_count) {
-      primaryStats.push({ label: 'Reviews', value: metrics.review_count.toString() })
-    }
-    if (metrics.avg_review_rating) {
-      primaryStats.push({
-        label: 'Rating',
-        value: `${metrics.avg_review_rating.toFixed(1)}★`,
-        accent: metrics.avg_review_rating >= 4 ? 'text-emerald-400' : metrics.avg_review_rating >= 3 ? 'text-amber-400' : 'text-red-400',
-      })
-    }
-    if (metrics.crime_incidents_30d !== undefined) {
-      primaryStats.push({ label: 'Crime 30d', value: metrics.crime_incidents_30d.toString() })
-    }
-
-    // Secondary demographic values
-    const secondaryStats = hasDemo ? [
-      { label: 'Age', value: `${demographics!.median_age || 0}` },
-      { label: 'Unemp', value: `${demographics!.unemployment_rate || 0}%` },
-      { label: 'Renters', value: `${demographics!.renter_pct || 0}%` },
-    ] : []
 
     return (
       <div className="border border-white/[0.06] bg-white/[0.01]">
@@ -88,25 +75,10 @@ export default function DemographicsCard({ metrics, demographics, horizontal }: 
               {metrics.neighborhood} Tactical Stats
             </span>
           </div>
-          <div className="hidden md:flex items-center gap-4">
-            {scores.map(score => {
-              const colorClass = score.value >= 65 ? 'text-emerald-400' : score.value >= 40 ? 'text-amber-400' : 'text-red-400'
-              const barClass = score.value >= 65 ? 'bg-emerald-400' : score.value >= 40 ? 'bg-amber-400' : 'bg-red-400'
-              return (
-                <div key={score.label} className="flex items-center gap-2">
-                  <span className="text-[9px] font-mono uppercase tracking-wider text-white/25">{score.label.replace(' Score', '').replace('Overall ', '')}</span>
-                  <div className="w-14 bg-white/[0.05] h-1">
-                    <div className={`h-1 ${barClass} transition-all`} style={{ width: `${Math.min(score.value, 100)}%` }} />
-                  </div>
-                  <span className={`text-[10px] font-mono font-semibold ${colorClass} w-7 text-right`}>{score.value.toFixed(0)}</span>
-                </div>
-              )
-            })}
-          </div>
         </div>
 
         {/* Primary stats — decision-relevant first */}
-        <div className="grid grid-cols-4 md:grid-cols-7 divide-x divide-white/[0.04]">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 divide-x divide-y md:divide-y-0 divide-white/[0.04]">
           {primaryStats.map(stat => (
             <div key={stat.label} className="px-3 py-2.5">
               <div className={`text-sm font-bold font-mono leading-tight ${stat.accent || 'text-white'}`}>{stat.value}</div>
@@ -114,19 +86,6 @@ export default function DemographicsCard({ metrics, demographics, horizontal }: 
             </div>
           ))}
         </div>
-
-        {/* Secondary stats row - shown only if demographics present */}
-        {secondaryStats.length > 0 && (
-          <div className="border-t border-white/[0.04] px-4 py-1.5 flex items-center gap-5">
-            <span className="text-[9px] font-mono uppercase tracking-wider text-white/20">Census</span>
-            {secondaryStats.map(s => (
-              <div key={s.label} className="flex items-center gap-1.5">
-                <span className="text-[9px] font-mono uppercase tracking-wider text-white/25">{s.label}</span>
-                <span className="text-[10px] font-mono text-white/55">{s.value}</span>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     )
   }

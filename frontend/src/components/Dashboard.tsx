@@ -285,6 +285,7 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
   const [error, setError] = useState<string | null>(null)
   const [sourcesWarning, setSourcesWarning] = useState<string | null>(null)
   const [sourcesMetadataReady, setSourcesMetadataReady] = useState(false)
+  const [showPipelineMonitor, setShowPipelineMonitor] = useState(false)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
   const [trends, setTrends] = useState<TrendData | null>(null)
 
@@ -473,58 +474,63 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
   return (
     <div className="h-screen flex flex-col bg-[#06080d]">
       {/* Top bar */}
-      <header className="flex items-stretch justify-between bg-white/[0.02] backdrop-blur-md border-b border-white/[0.06]">
-        {/* Identity + Context */}
-        <div className="flex items-stretch">
-          <button
-            type="button"
-            onClick={onReset}
-            className="flex items-center gap-2 px-5 border-r border-white/[0.06] hover:bg-white/[0.03] transition-colors cursor-pointer group"
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-[#2B95D6] group-hover:shadow-[0_0_8px_rgba(43,149,214,0.8)] transition-shadow" />
-            <span className="text-sm font-semibold uppercase tracking-[0.18em] text-white/80 group-hover:text-white transition-colors">
-              Aleithia
-            </span>
-          </button>
-          <div className="flex items-center gap-3 px-5 border-r border-white/[0.06]">
-            <span className="text-[9px] font-mono uppercase tracking-wider text-white/25">Target</span>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-mono text-white/70">{profile.business_type}</span>
-              <span className="text-white/15">›</span>
-              <span className="text-xs font-mono text-white/45">{profile.neighborhood}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Session status + Actions */}
-        <div className="flex items-stretch">
-          <div className="flex items-center gap-3 px-5 border-l border-white/[0.06]">
-            <span className="text-[9px] font-mono uppercase tracking-wider text-white/25">Session</span>
-            <Timer running={loading} />
-            <span className={`flex items-center gap-1.5 text-[10px] font-mono ${loading ? 'text-blue-400/70' : 'text-emerald-400/70'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-blue-400 animate-pulse' : 'bg-emerald-400'}`} />
-              {loading ? 'ANALYZING' : 'READY'}
-            </span>
-          </div>
+      <header className="bg-white/[0.02] backdrop-blur-md border-b border-white/[0.06]">
+        <div className="flex h-11 items-stretch justify-between px-4">
+          {/* Identity + Context */}
           <div className="flex items-stretch">
             <button
-              onClick={refreshData}
-              className="px-4 border-l border-white/[0.06] text-[10px] font-mono uppercase tracking-wider text-white/35 hover:text-white hover:bg-white/[0.03] transition-colors cursor-pointer"
+              type="button"
+              onClick={onReset}
+              className="flex h-full items-center gap-2 px-5 border-r border-white/[0.06] hover:bg-white/[0.03] transition-colors cursor-pointer group"
             >
-              Refresh
+              <span className="w-1.5 h-1.5 rounded-full bg-[#2B95D6] group-hover:shadow-[0_0_8px_rgba(43,149,214,0.8)] transition-shadow" />
+              <span className="text-sm font-semibold uppercase tracking-[0.18em] text-white/80 group-hover:text-white transition-colors">
+                Aleithia
+              </span>
             </button>
-            <button
-              onClick={() => setProfileDrawerOpen(true)}
-              className="px-4 border-l border-white/[0.06] text-[10px] font-mono uppercase tracking-wider text-white/35 hover:text-white hover:bg-white/[0.03] transition-colors cursor-pointer"
+            <div className="flex h-full items-center gap-3 px-5 border-r border-white/[0.06]">
+              <span className="text-[9px] font-mono uppercase tracking-wider text-white/25">Target</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono text-white/70">{profile.business_type}</span>
+                <span className="text-white/15">›</span>
+                <span className="text-xs font-mono text-white/45">{profile.neighborhood}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Session status + Actions */}
+          <div className="flex items-stretch">
+            <div
+              onDoubleClick={() => setShowPipelineMonitor((visible) => !visible)}
+              className="flex h-full items-center gap-3 px-5 border-l border-white/[0.06]"
             >
-              Profile
-            </button>
-            <button
-              onClick={() => navigate('/start')}
-              className="px-4 border-l border-white/[0.06] text-[10px] font-mono uppercase tracking-wider text-white/35 hover:text-white hover:bg-white/[0.03] transition-colors cursor-pointer"
-            >
-              New Search
-            </button>
+              <span className="text-[9px] font-mono uppercase tracking-wider text-white/25">Session</span>
+              <Timer running={loading} />
+              <span className={`flex items-center gap-1.5 text-[10px] font-mono ${loading ? 'text-blue-400/70' : 'text-emerald-400/70'}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-blue-400 animate-pulse' : 'bg-emerald-400'}`} />
+                {loading ? 'ANALYZING' : 'READY'}
+              </span>
+            </div>
+            <div className="flex items-stretch">
+              <button
+                onClick={refreshData}
+                className="h-full px-4 border-l border-white/[0.06] text-[10px] font-mono uppercase tracking-wider text-white/35 hover:text-white hover:bg-white/[0.03] transition-colors cursor-pointer"
+              >
+                Refresh
+              </button>
+              <button
+                onClick={() => setProfileDrawerOpen(true)}
+                className="h-full px-4 border-l border-white/[0.06] text-[10px] font-mono uppercase tracking-wider text-white/35 hover:text-white hover:bg-white/[0.03] transition-colors cursor-pointer"
+              >
+                Profile
+              </button>
+              <button
+                onClick={() => navigate('/start')}
+                className="h-full px-4 border-l border-white/[0.06] text-[10px] font-mono uppercase tracking-wider text-white/35 hover:text-white hover:bg-white/[0.03] transition-colors cursor-pointer"
+              >
+                New Search
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -548,13 +554,15 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
       <div className="flex-1 flex min-h-0">
         {/* Left: Data */}
         <div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto">
-          {/* Pipeline Monitor - compact status strip */}
-          <PipelineMonitor
-            sourcesReady={sourcesMetadataReady}
-            sourcesWarning={sourcesWarning}
-            activeSources={sourceList.filter(s => s.active).length}
-            totalSources={sourceList.length}
-          />
+          {/* Pipeline Monitor - hidden diagnostics toggled from Session */}
+          {showPipelineMonitor && (
+            <PipelineMonitor
+              sourcesReady={sourcesMetadataReady}
+              sourcesWarning={sourcesWarning}
+              activeSources={sourceList.filter(s => s.active).length}
+              totalSources={sourceList.length}
+            />
+          )}
 
           {/* Tabs — segmented workspace navigation */}
           <div className="flex gap-0 border-b border-white/[0.06] items-stretch">
@@ -570,9 +578,6 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
                       : 'border-transparent text-white/35 hover:text-white/70 hover:bg-white/[0.02]'
                   }`}
                 >
-                  {isActive && (
-                    <span className="absolute left-0 top-0 bottom-0 w-px bg-[#2B95D6]/30" />
-                  )}
                   <span className="uppercase tracking-wider text-[11px]">{tab.label}</span>
                   {tab.count !== undefined && tab.count > 0 && (
                     <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
@@ -624,17 +629,17 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
                     </div>
                   </div>
 
-                  {/* Full-width demographics strip */}
-                  {neighborhoodData?.metrics && (
-                    <DemographicsCard metrics={neighborhoodData.metrics} demographics={neighborhoodData.demographics} horizontal />
-                  )}
-
                   {/* Evidence preview row (Phase 2e) */}
                   {neighborhoodData && (
                     <OverviewPreviewRow
                       data={neighborhoodData}
                       onTabChange={(tab) => setActiveTab(tab as Tab)}
                     />
+                  )}
+
+                  {/* Bottom tactical stats strip */}
+                  {neighborhoodData?.metrics && (
+                    <DemographicsCard metrics={neighborhoodData.metrics} demographics={neighborhoodData.demographics} horizontal />
                   )}
                 </div>
               )}
@@ -1070,17 +1075,21 @@ function RegulatorySubTabs({ neighborhoodData }: { neighborhoodData: Neighborhoo
           </div>
         </div>
         {/* Segmented control */}
-        <div className="flex gap-0 divide-x divide-white/[0.04]">
-          {subTabs.map(tab => {
+        <div className="flex gap-0">
+          {subTabs.map((tab, index) => {
             const isActive = subTab === tab.key
+            const previousTab = subTabs[index - 1]
+            const hidesLeftDivider = index === 0 || isActive || subTab === previousTab?.key
             return (
               <button
                 key={tab.key}
                 onClick={() => setSubTab(tab.key)}
-                className={`flex-1 flex items-center justify-between px-4 py-3 transition-all cursor-pointer border-b-2 ${
+                className={`flex-1 flex items-center justify-between px-4 py-3 transition-all cursor-pointer border-b-2 border-l ${
                   isActive
                     ? 'border-violet-400 bg-violet-500/[0.04]'
                     : 'border-transparent hover:bg-white/[0.02]'
+                } ${
+                  hidesLeftDivider ? 'border-l-transparent' : 'border-l-white/[0.04]'
                 }`}
               >
                 <div className="flex flex-col items-start gap-0.5">
@@ -1199,16 +1208,16 @@ function PreviewPanel({ title, accent, dot, count, onClick, items, emptyMsg }: P
   return (
     <button
       onClick={onClick}
-      className="text-left border border-white/[0.06] bg-white/[0.01] hover:border-white/[0.12] hover:bg-white/[0.02] transition-all cursor-pointer group"
+      className="flex flex-col text-left border border-white/[0.06] bg-white/[0.01] hover:border-white/[0.12] hover:bg-white/[0.02] transition-all cursor-pointer group"
     >
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.04]">
+      <div className="flex h-8 items-center justify-between px-4 border-b border-white/[0.04]">
         <div className="flex items-center gap-2">
           <span className={`w-1 h-1 rounded-full ${dot}`} />
-          <span className={`text-[10px] font-mono uppercase tracking-wider ${accent}`}>{title}</span>
+          <span className={`text-[10px] font-mono uppercase tracking-wider leading-none ${accent}`}>{title}</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-mono text-white/25">{count}</span>
-          <span className="text-[10px] text-white/25 group-hover:text-white/60 transition-colors">›</span>
+          <span className="text-[10px] font-mono text-white/25 leading-none">{count}</span>
+          <span className="text-[10px] text-white/25 leading-none group-hover:text-white/60 transition-colors">›</span>
         </div>
       </div>
       <div className="p-3 space-y-2 min-h-[130px]">

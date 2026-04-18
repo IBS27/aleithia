@@ -296,102 +296,6 @@ function extractRegulatory(data: NeighborhoodData): RegulatorySummary {
   }
 }
 
-interface MetricItem {
-  label: string
-  value: string
-}
-
-// Key Metrics are the deeper-cut stats shown in the right-sidebar brief.
-// They intentionally do NOT duplicate values already surfaced in the top
-// Tactical Stats ribbon (pop, income, rent, permits, reviews, rating, crime).
-function extractMetrics(data: NeighborhoodData): MetricItem[] {
-  const stats = data.inspection_stats
-  const demo = data.demographics
-  const items: MetricItem[] = [
-    {
-      label: 'Inspection Pass Rate',
-      value: stats.total > 0 ? `${Math.round((stats.passed / stats.total) * 100)}%` : '—',
-    },
-    {
-      label: 'Business Licenses',
-      value: `${data.license_count}`,
-    },
-    {
-      label: 'Transit Score',
-      value: data.transit ? `${data.transit.transit_score}` : '—',
-    },
-    {
-      label: 'Median Home Value',
-      value: demo?.median_home_value ? `$${Math.round(demo.median_home_value / 1000)}K` : '—',
-    },
-    {
-      label: 'Unemployment',
-      value: demo?.unemployment_rate !== undefined ? `${demo.unemployment_rate}%` : '—',
-    },
-    {
-      label: 'Bachelor’s+',
-      value: demo?.bachelors_degree !== undefined ? `${demo.bachelors_degree}%` : '—',
-    },
-    {
-      label: 'Federal Alerts',
-      value: `${data.federal_register?.length || 0}`,
-    },
-    {
-      label: 'CCTV Cameras',
-      value: `${data.cctv?.cameras?.length || 0}`,
-    },
-  ]
-  return items
-}
-
-interface SourceCount {
-  name: string
-  count: number
-}
-
-function extractSources(data: NeighborhoodData): { sources: SourceCount[]; total: number } {
-  const raw: [string, number][] = [
-    ['News', data.news?.length || 0],
-    ['Politics', data.politics?.length || 0],
-    ['Reddit', data.reddit?.length || 0],
-    ['Reviews', data.reviews?.length || 0],
-    ['Real Estate', data.realestate?.length || 0],
-    ['TikTok', data.tiktok?.length || 0],
-    ['Traffic', data.traffic?.length || 0],
-    ['Federal Register', data.federal_register?.length || 0],
-    ['Inspections', data.inspections?.length || 0],
-    ['Permits', data.permits?.length || 0],
-    ['Licenses', data.licenses?.length || 0],
-  ]
-
-  const sources = raw
-    .filter(([, count]) => count > 0)
-    .map(([name, count]) => ({ name, count }))
-
-  const total = sources.reduce((sum, s) => sum + s.count, 0)
-  return { sources, total }
-}
-
-// ── Score color helpers ─────────────────────────────────────────────
-
-function scoreColor(score: number): string {
-  if (score >= 65) return 'text-emerald-400'
-  if (score >= 40) return 'text-amber-400'
-  return 'text-red-400'
-}
-
-function scoreBorderColor(score: number): string {
-  if (score >= 65) return 'border-emerald-500/30'
-  if (score >= 40) return 'border-amber-500/30'
-  return 'border-red-500/30'
-}
-
-function scoreBgColor(score: number): string {
-  if (score >= 65) return 'bg-emerald-500/[0.08]'
-  if (score >= 40) return 'bg-amber-500/[0.08]'
-  return 'bg-red-500/[0.08]'
-}
-
 // ── Component ───────────────────────────────────────────────────────
 
 export default function LocationReportPanel({ profile, neighborhoodData, loading, agentInfo: _agentInfo }: Props) {
@@ -426,38 +330,9 @@ export default function LocationReportPanel({ profile, neighborhoodData, loading
   const risks = neighborhoodData ? extractAllRisks(neighborhoodData, profile) : []
   const competitors = neighborhoodData ? extractCompetitors(neighborhoodData, profile) : []
   const regulatory = neighborhoodData ? extractRegulatory(neighborhoodData) : null
-  const metrics = neighborhoodData ? extractMetrics(neighborhoodData) : []
-  const sourcesData = neighborhoodData ? extractSources(neighborhoodData) : { sources: [], total: 0 }
-  const rankedCategories = insights ? [...insights.categories].sort((a, b) => b.score - a.score) : []
-  const strongestCategory = rankedCategories[0]
-  const weakestCategory = rankedCategories[rankedCategories.length - 1]
 
   return (
     <section className="h-full flex flex-col border border-white/[0.06] bg-white/[0.02]">
-      {/* Header: identity + context + brief status */}
-      <div className="px-4 py-3 border-b border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="w-1 h-1 rounded-full bg-[#2B95D6]" />
-            <p className="text-[9px] font-mono uppercase tracking-[0.22em] text-white/40">Intelligence Brief</p>
-          </div>
-          {!loading && neighborhoodData && insights && (
-            <span className={`text-[9px] font-mono px-1.5 py-0.5 border ${
-              insights.overall >= 65 ? 'border-emerald-500/30 text-emerald-300/80' :
-              insights.overall >= 40 ? 'border-amber-500/30 text-amber-300/80' :
-              'border-red-500/30 text-red-300/80'
-            }`}>
-              SIGNAL: {insights.overall >= 65 ? 'FAVORABLE' : insights.overall >= 40 ? 'MIXED' : 'ADVERSE'}
-            </span>
-          )}
-        </div>
-        <div className="mt-2 flex items-baseline gap-2 min-w-0">
-          <h3 className="text-base font-semibold text-white truncate">{profile.business_type}</h3>
-          <span className="text-white/20 shrink-0">·</span>
-          <p className="text-[11px] text-white/50 truncate">{profile.neighborhood}</p>
-        </div>
-      </div>
-
       <div className="flex-1 overflow-y-auto">
         {loading ? (
           <div className="p-4 text-xs text-white/40 font-mono">Generating intelligence brief from live pipeline signals…</div>
@@ -465,48 +340,7 @@ export default function LocationReportPanel({ profile, neighborhoodData, loading
           <div className="p-4 text-xs text-white/40 font-mono">Select a neighborhood to generate intelligence brief.</div>
         ) : (
           <>
-            {/* 1. Score banner */}
-            <div className={`relative px-4 py-4 border-b border-white/[0.06] ${scoreBgColor(insights.overall)}`}>
-              <div className="flex items-center gap-4">
-                <div className={`text-4xl font-bold font-mono leading-none ${scoreColor(insights.overall)}`}>
-                  {insights.overall}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[9px] font-mono uppercase tracking-wider text-white/45">Business Intelligence Score</div>
-                  <div className="text-[10px] text-white/35 mt-0.5">
-                    {insights.profile} · {insights.coverageCount}/6 categories · {sourcesData.total} docs
-                  </div>
-                  <div className="mt-2 flex h-1 bg-black/30 rounded-full overflow-hidden">
-                    <div className={`h-full ${scoreBorderColor(insights.overall).replace('border-', 'bg-').replace('/30', '/60')}`} style={{ width: `${insights.overall}%` }} />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* 2. Verdict / Strongest + Weakest signal modules */}
-            <ModuleHeader label="Verdict" accent="text-white/45" />
-            <div className="px-4 pb-4 grid grid-cols-2 gap-2">
-              <div className="border border-emerald-500/15 bg-emerald-500/[0.03] px-2.5 py-2">
-                <p className="text-[9px] font-mono uppercase tracking-wider text-emerald-300/60">Strongest</p>
-                <p className="text-[11px] font-semibold text-white/85 mt-1 truncate">
-                  {strongestCategory ? strongestCategory.name : '—'}
-                </p>
-                <p className="text-[10px] font-mono text-emerald-300/60 mt-0.5">
-                  {strongestCategory ? `${strongestCategory.score}/100` : '—'}
-                </p>
-              </div>
-              <div className="border border-red-500/15 bg-red-500/[0.03] px-2.5 py-2">
-                <p className="text-[9px] font-mono uppercase tracking-wider text-red-300/60">Primary Risk</p>
-                <p className="text-[11px] font-semibold text-white/85 mt-1 truncate">
-                  {weakestCategory ? weakestCategory.name : '—'}
-                </p>
-                <p className="text-[10px] font-mono text-red-300/60 mt-0.5">
-                  {weakestCategory ? `${weakestCategory.score}/100` : '—'}
-                </p>
-              </div>
-            </div>
-
-            {/* 3. Advantages */}
+            {/* 1. Advantages */}
             <ModuleHeader
               label="Advantages"
               count={advantages.length}
@@ -526,7 +360,7 @@ export default function LocationReportPanel({ profile, neighborhoodData, loading
               )}
             </div>
 
-            {/* 4. Risks */}
+            {/* 2. Risks */}
             <ModuleHeader
               label="Risks"
               count={risks.length}
@@ -546,7 +380,7 @@ export default function LocationReportPanel({ profile, neighborhoodData, loading
               )}
             </div>
 
-            {/* 5. Social Media Trends */}
+            {/* 3. Social Media Trends */}
             <ModuleHeader
               label="Social Trends"
               accent="text-cyan-300/70"
@@ -569,7 +403,7 @@ export default function LocationReportPanel({ profile, neighborhoodData, loading
               )}
             </div>
 
-            {/* 6. Nearby Businesses — direct competitors (if any) are flagged inline */}
+            {/* 4. Nearby Businesses — direct competitors (if any) are flagged inline */}
             <ModuleHeader
               label="Nearby Businesses"
               count={competitors.length}
@@ -595,7 +429,7 @@ export default function LocationReportPanel({ profile, neighborhoodData, loading
               )}
             </div>
 
-            {/* 7. Regulatory Checklist */}
+            {/* 5. Regulatory Checklist */}
             {regulatory && (
               <>
                 <ModuleHeader
@@ -669,32 +503,6 @@ export default function LocationReportPanel({ profile, neighborhoodData, loading
               </>
             )}
 
-            {/* 8. Key Metrics Grid */}
-            <ModuleHeader label="Key Metrics" accent="text-white/45" />
-            <div className="px-4 pb-4 grid grid-cols-2 gap-px bg-white/[0.04]">
-              {metrics.map((m) => (
-                <div key={m.label} className="bg-[#06080d] px-2.5 py-2">
-                  <p className="text-[9px] font-mono uppercase tracking-wider text-white/30 truncate">{m.label}</p>
-                  <p className="text-[13px] font-semibold font-mono text-white/85 mt-0.5">{m.value}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* 9. Source footer */}
-            <div className="px-4 py-3 border-t border-white/[0.06] flex items-center justify-between">
-              <p className="text-[9px] font-mono uppercase tracking-wider text-white/30">
-                {sourcesData.total} docs · {sourcesData.sources.length} sources
-              </p>
-              <div className="flex items-center gap-1">
-                {sourcesData.sources.slice(0, 6).map((s) => (
-                  <span
-                    key={s.name}
-                    title={`${s.name}: ${s.count}`}
-                    className="w-1 h-1 rounded-full bg-emerald-400/50"
-                  />
-                ))}
-              </div>
-            </div>
           </>
         )}
       </div>

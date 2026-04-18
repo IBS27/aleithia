@@ -177,19 +177,6 @@ export default function PipelineMonitor({ sourcesReady, sourcesWarning, activeSo
             </div>
           ))}
 
-          {Object.keys(status.costs).length > 0 && (
-            <div className="col-span-full border-t border-white/[0.06] pt-2 mt-2">
-              <div className="text-[9px] font-mono uppercase tracking-wider text-white/25 mb-1.5">Compute Costs</div>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-                {Object.entries(status.costs).map(([key, val]) => (
-                  <div key={key} className="flex justify-between text-[10px] font-mono px-2 py-1 bg-white/[0.02] border border-white/[0.04]">
-                    <span className="text-white/30">{key}</span>
-                    <span className="text-emerald-400/70">${typeof val === 'object' ? JSON.stringify(val) : String(val)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>

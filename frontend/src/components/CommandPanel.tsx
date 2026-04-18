@@ -142,21 +142,6 @@ export default function CommandPanel({ data, profile, riskScore, onTabChange }: 
     return items.slice(0, 3)
   }, [insights.categories])
 
-  const verdict = useMemo(() => {
-    const opp = insights.overall
-    const risk = riskScore.overall_score
-    if (opp >= 60 && risk <= 4) return { tone: 'positive' as const, label: 'PROCEED', detail: 'Strong opportunity with low risk signals.' }
-    if (opp >= 40 && risk <= 6) return { tone: 'neutral' as const, label: 'PROCEED WITH CAUTION', detail: 'Moderate signals — validate key assumptions before committing.' }
-    if (risk > 7 || opp < 30) return { tone: 'negative' as const, label: 'HIGH RISK', detail: 'Significant risk indicators — reconsider or mitigate before entry.' }
-    return { tone: 'neutral' as const, label: 'MIXED SIGNALS', detail: 'Balanced risk/opportunity profile — prioritize evidence review.' }
-  }, [insights.overall, riskScore.overall_score])
-
-  const verdictTint = verdict.tone === 'positive'
-    ? 'border-emerald-500/30 bg-emerald-500/[0.06] text-emerald-300'
-    : verdict.tone === 'negative'
-      ? 'border-red-500/30 bg-red-500/[0.06] text-red-300'
-      : 'border-amber-500/30 bg-amber-500/[0.06] text-amber-300'
-
   return (
     <div className="flex flex-col h-full border border-white/[0.06] bg-white/[0.01]">
       {/* Header: Location + Profile Toggle */}
@@ -230,13 +215,6 @@ export default function CommandPanel({ data, profile, riskScore, onTabChange }: 
         </div>
       </div>
 
-      {/* Verdict strip */}
-      <div className={`px-5 py-2.5 border-b border-white/[0.06] flex items-center gap-3 ${verdictTint}`}>
-        <span className="text-[9px] font-mono uppercase tracking-[0.2em] shrink-0">Verdict</span>
-        <span className="text-[10px] font-mono font-bold tracking-wider shrink-0">{verdict.label}</span>
-        <span className="text-[10px] text-white/55 truncate">— {verdict.detail}</span>
-      </div>
-
       {/* Category bars */}
       <div className="px-5 py-3 border-b border-white/[0.06]">
         <div className="flex items-center justify-between mb-2">
@@ -297,30 +275,6 @@ export default function CommandPanel({ data, profile, riskScore, onTabChange }: 
           )}
         </div>
       </div>
-
-      {/* Quick-jump chips */}
-      {onTabChange && (
-        <div className="flex flex-wrap gap-1.5 px-5 py-3">
-          <span className="text-[9px] font-mono uppercase tracking-wider text-white/30 self-center mr-1">Drill:</span>
-          {[
-            { key: 'regulatory', label: 'Regulatory', count: (data.inspections?.length ?? 0) + (data.permits?.length ?? 0) + (data.licenses?.length ?? 0) },
-            { key: 'intel', label: 'News', count: (data.news?.length ?? 0) + (data.politics?.length ?? 0) },
-            { key: 'community', label: 'Community', count: (data.reddit?.length ?? 0) + (data.tiktok?.length ?? 0) },
-            { key: 'market', label: 'Market', count: (data.reviews?.length ?? 0) + (data.realestate?.length ?? 0) },
-            { key: 'vision', label: 'Vision', count: data.cctv?.cameras.length ?? 0 },
-          ].filter(chip => chip.count > 0).map(chip => (
-            <button
-              key={chip.key}
-              onClick={() => onTabChange(chip.key)}
-              className="flex items-center gap-1.5 px-2.5 py-1 border border-white/[0.08] hover:border-[#2B95D6]/40 hover:bg-[#2B95D6]/[0.05] text-[10px] font-mono uppercase tracking-wider text-white/55 hover:text-white/90 transition-colors cursor-pointer"
-            >
-              <span>{chip.label}</span>
-              <span className="text-white/30 group-hover:text-[#2B95D6]">{chip.count}</span>
-              <span className="text-white/20">›</span>
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   )
 }

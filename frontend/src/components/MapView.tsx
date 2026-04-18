@@ -283,18 +283,6 @@ function addSourceAndLayers(map: mapboxgl.Map, geojson: GeoJSON.FeatureCollectio
 
   return (
     <div className="border border-white/[0.06] bg-white/[0.01] overflow-hidden h-full flex flex-col">
-      {/* Header: heatmap console title + active layer indicator */}
-      <div className="flex items-center gap-3 px-3 py-2 border-b border-white/[0.06] bg-white/[0.015]">
-        <div className="flex items-center gap-2">
-          <span className="w-1 h-1 rounded-full" style={{ background: LAYER_CONFIG[activeLayer].color }} />
-          <span className="text-[10px] font-mono uppercase tracking-[0.22em] text-white/50">Heatmap Console</span>
-        </div>
-        <div className="flex-1" />
-        <span className="text-[9px] font-mono text-white/30">
-          Active: <span className="text-white/60">{LAYER_CONFIG[activeLayer].label}</span>
-        </span>
-      </div>
-
       {/* Layer control row */}
       <div className="flex gap-0 border-b border-white/[0.06] bg-white/[0.008]">
         {layerKeys.map((layer, index) => {
