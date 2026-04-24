@@ -1,8 +1,5 @@
 """Shared fixtures for Arize tracing tests."""
-import sys
-from types import ModuleType
 from typing import Sequence
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -30,7 +27,7 @@ class InMemorySpanExporter(SpanExporter):
         self.clear()
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture()
 def _reset_instrumentation():
     """Reset instrumentation module state between tests."""
     import modal_app.instrumentation as inst

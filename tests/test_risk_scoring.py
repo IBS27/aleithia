@@ -7,7 +7,7 @@ The canonical risk model uses:
     accessibility (0.15), political (0.10), community (0.10)
   - 0-10 scale (higher = more risk)
 """
-import math
+import pytest
 
 
 def _make_inspection(result: str) -> dict:
@@ -41,73 +41,37 @@ def test_risk_wlc_no_data_returns_neutral():
     assert score == 5.0
 
 
-def test_risk_wlc_high_fail_rate_increases_risk():
-    """High inspection failure rate should produce elevated risk."""
+@pytest.mark.parametrize(
+    ("name", "higher_signal_args", "lower_signal_args", "higher_signal_should_raise_risk"),
+    [
+        (
+            "inspection failure rate",
+            ([_make_inspection("Fail")] * 8 + [_make_inspection("Pass")] * 2, [], [], [], [], []),
+            ([_make_inspection("Fail")] + [_make_inspection("Pass")] * 19, [], [], [], [], []),
+            True,
+        ),
+        ("permit activity", ([], [{}] * 20, [], [], [], []), ([], [{}] * 2, [], [], [], []), False),
+        ("license density", ([], [], [{}] * 30, [], [], []), ([], [], [{}] * 3, [], [], []), True),
+        (
+            "review quality",
+            ([], [], [], [], [], [_make_review(4.8)] * 10),
+            ([], [], [], [], [], [_make_review(2.5)] * 10),
+            False,
+        ),
+        ("news visibility", ([], [], [], [{}] * 15, [], []), ([], [], [], [{}], [], []), False),
+        ("legislative activity", ([], [], [], [], [{}] * 10, []), ([], [], [], [], [{}], []), True),
+    ],
+)
+def test_risk_wlc_directional_signals(name, higher_signal_args, lower_signal_args, higher_signal_should_raise_risk):
     from modal_app.web import _compute_risk_wlc
 
-    # 80% fail rate — should be high risk
-    inspections = [_make_inspection("Fail")] * 8 + [_make_inspection("Pass")] * 2
-    score = _compute_risk_wlc(inspections, [], [], [], [])
-    assert score > 7.0, f"80% fail rate should be high risk, got {score}"
+    higher_signal_score = _compute_risk_wlc(*higher_signal_args)
+    lower_signal_score = _compute_risk_wlc(*lower_signal_args)
 
-
-def test_risk_wlc_low_fail_rate_lowers_risk():
-    """Low inspection failure rate should produce low risk."""
-    from modal_app.web import _compute_risk_wlc
-
-    # 5% fail rate — should be low risk
-    inspections = [_make_inspection("Fail")] * 1 + [_make_inspection("Pass")] * 19
-    score = _compute_risk_wlc(inspections, [], [], [], [])
-    assert score < 4.0, f"5% fail rate should be low risk, got {score}"
-
-
-def test_risk_wlc_many_permits_lowers_risk():
-    """Active development (many permits) should reduce risk."""
-    from modal_app.web import _compute_risk_wlc
-
-    # 20 permits — active area
-    permits = [{}] * 20
-    score_many = _compute_risk_wlc([], permits, [], [], [])
-    score_few = _compute_risk_wlc([], [{}] * 2, [], [], [])
-    assert score_many < score_few, f"More permits should lower risk: {score_many} vs {score_few}"
-
-
-def test_risk_wlc_many_licenses_increases_risk():
-    """High license density (competition) should increase risk."""
-    from modal_app.web import _compute_risk_wlc
-
-    score_crowded = _compute_risk_wlc([], [], [{}] * 30, [], [])
-    score_sparse = _compute_risk_wlc([], [], [{}] * 3, [], [])
-    assert score_crowded > score_sparse, f"More licenses should raise risk: {score_crowded} vs {score_sparse}"
-
-
-def test_risk_wlc_high_reviews_lowers_risk():
-    """High average review ratings should lower market risk."""
-    from modal_app.web import _compute_risk_wlc
-
-    good_reviews = [_make_review(4.8)] * 10
-    bad_reviews = [_make_review(2.5)] * 10
-    score_good = _compute_risk_wlc([], [], [], [], [], good_reviews)
-    score_bad = _compute_risk_wlc([], [], [], [], [], bad_reviews)
-    assert score_good < score_bad, f"Good reviews should lower risk: {score_good} vs {score_bad}"
-
-
-def test_risk_wlc_more_news_lowers_risk():
-    """More news/community visibility should slightly lower risk."""
-    from modal_app.web import _compute_risk_wlc
-
-    score_visible = _compute_risk_wlc([], [], [], [{}] * 15, [])
-    score_quiet = _compute_risk_wlc([], [], [], [{}] * 1, [])
-    assert score_visible < score_quiet, f"More news should lower risk: {score_visible} vs {score_quiet}"
-
-
-def test_risk_wlc_legislative_activity_increases_risk():
-    """Active legislation creates regulatory uncertainty — higher risk."""
-    from modal_app.web import _compute_risk_wlc
-
-    score_active = _compute_risk_wlc([], [], [], [], [{}] * 10)
-    score_quiet = _compute_risk_wlc([], [], [], [], [{}] * 1)
-    assert score_active > score_quiet, f"More politics should raise risk: {score_active} vs {score_quiet}"
+    if higher_signal_should_raise_risk:
+        assert higher_signal_score > lower_signal_score, name
+    else:
+        assert higher_signal_score < lower_signal_score, name
 
 
 def test_risk_wlc_multi_dimension_integration():

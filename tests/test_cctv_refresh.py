@@ -19,6 +19,45 @@ class _DummyVolume:
     reload = _DummyReload()
 
 
+def _synthetic_cctv_payload(camera_id: str = "synth-loop-1") -> dict:
+    return {
+        "Loop": {
+            "cameras": {
+                "cameras": [
+                    {
+                        "camera_id": camera_id,
+                        "lat": 41.8819,
+                        "lng": -87.6278,
+                        "distance_km": 0.4,
+                        "pedestrians": 18,
+                        "vehicles": 35,
+                        "bicycles": 2,
+                        "density_level": "medium",
+                        "timestamp": "2026-04-13T00:00:00+00:00",
+                    }
+                ],
+                "avg_pedestrians": 18.0,
+                "avg_vehicles": 35.0,
+                "density": "medium",
+            },
+            "timeseries": {
+                "hours": [
+                    {
+                        "hour": 8,
+                        "avg_pedestrians": 18.0,
+                        "avg_vehicles": 35.0,
+                        "density": "medium",
+                        "sample_count": 1,
+                    }
+                ],
+                "peak_hour": 17,
+                "peak_pedestrians": 18.0,
+                "camera_count": 1,
+            },
+        }
+    }
+
+
 def test_load_cctv_latest_index_triggers_refresh_when_stale(tmp_path, monkeypatch) -> None:
     index_path = tmp_path / "latest_by_camera.json"
     index_path.write_text(json.dumps({"cam-1": {"camera_id": "cam-1", "timestamp": "2026-03-03T00:00:00+00:00"}}))
@@ -101,101 +140,29 @@ def test_maybe_spawn_cctv_refresh_debounces(monkeypatch) -> None:
 
 def test_aggregate_timeseries_returns_synthetic_data_when_analysis_disabled(monkeypatch) -> None:
     monkeypatch.setattr(cctv_service, "ENABLE_CCTV_ANALYSIS", False)
-    monkeypatch.setattr(
-        cctv_service,
-        "load_synthetic_cctv",
-        lambda: {
-            "Loop": {
-                "cameras": {"cameras": [], "avg_pedestrians": 12.0, "avg_vehicles": 24.0, "density": "medium"},
-                "timeseries": {"hours": [{"hour": 8, "avg_pedestrians": 12.0, "avg_vehicles": 24.0, "density": "medium", "sample_count": 4}], "peak_hour": 8, "peak_pedestrians": 12.0, "camera_count": 1},
-            }
-        },
-    )
+    monkeypatch.setattr(cctv_service, "load_synthetic_cctv", _synthetic_cctv_payload)
 
     payload = asyncio.run(cctv_service.aggregate_timeseries_for_neighborhood("Loop"))
 
-    assert payload["peak_hour"] == 8
+    assert payload["peak_hour"] == 17
     assert payload["camera_count"] == 1
 
 
-def test_load_cctv_for_neighborhood_uses_synthetic_data_when_analysis_disabled(monkeypatch) -> None:
+def test_cctv_synthetic_data_contract_when_analysis_disabled(monkeypatch) -> None:
     monkeypatch.setattr(cctv_service, "ENABLE_CCTV_ANALYSIS", False)
     monkeypatch.setattr(cctv_service, "volume", _DummyVolume())
-    monkeypatch.setattr(
-        cctv_service,
-        "load_synthetic_cctv",
-        lambda: {
-            "Loop": {
-                "cameras": {
-                    "cameras": [
-                        {
-                            "camera_id": "synth-loop-1",
-                            "lat": 41.8819,
-                            "lng": -87.6278,
-                            "distance_km": 0.4,
-                            "pedestrians": 18,
-                            "vehicles": 35,
-                            "bicycles": 2,
-                            "density_level": "medium",
-                            "timestamp": "2026-04-13T00:00:00+00:00",
-                        }
-                    ],
-                    "avg_pedestrians": 18.0,
-                    "avg_vehicles": 35.0,
-                    "density": "medium",
-                },
-                "timeseries": {"hours": [], "peak_hour": 17, "peak_pedestrians": 18.0, "camera_count": 1},
-            }
-        },
-    )
+    monkeypatch.setattr(cctv_service, "load_synthetic_cctv", _synthetic_cctv_payload)
 
-    payload = asyncio.run(cctv_service.load_cctv_for_neighborhood("Loop"))
+    neighborhood_payload = asyncio.run(cctv_service.load_cctv_for_neighborhood("Loop"))
+    latest_index = asyncio.run(cctv_service.load_cctv_latest_index())
 
-    assert payload["avg_pedestrians"] == 18.0
-    assert payload["avg_vehicles"] == 35.0
-    assert payload["density"] == "medium"
-    assert payload["cameras"][0]["camera_id"] == "synth-loop-1"
-    assert payload["cameras"][0]["pedestrians"] == 18
-    assert payload["cameras"][0]["frame_available"] is False
-    assert payload["cameras"][0]["source"] == "synthetic"
-
-
-def test_load_cctv_latest_index_returns_synthetic_cameras_when_analysis_disabled(monkeypatch) -> None:
-    monkeypatch.setattr(cctv_service, "ENABLE_CCTV_ANALYSIS", False)
-    monkeypatch.setattr(cctv_service, "volume", _DummyVolume())
-    monkeypatch.setattr(
-        cctv_service,
-        "load_synthetic_cctv",
-        lambda: {
-            "Loop": {
-                "cameras": {
-                    "cameras": [
-                        {
-                            "camera_id": "synth-loop-1",
-                            "lat": 41.8819,
-                            "lng": -87.6278,
-                            "distance_km": 0.4,
-                            "pedestrians": 18,
-                            "vehicles": 35,
-                            "bicycles": 2,
-                            "density_level": "medium",
-                            "timestamp": "2026-04-13T00:00:00+00:00",
-                        }
-                    ],
-                    "avg_pedestrians": 18.0,
-                    "avg_vehicles": 35.0,
-                    "density": "medium",
-                },
-                "timeseries": {"hours": [], "peak_hour": 17, "peak_pedestrians": 18.0, "camera_count": 1},
-            }
-        },
-    )
-
-    payload = asyncio.run(cctv_service.load_cctv_latest_index())
-
-    assert payload["synth-loop-1"]["camera_id"] == "synth-loop-1"
-    assert payload["synth-loop-1"]["pedestrians"] == 18
-    assert payload["synth-loop-1"]["frame_available"] is False
+    assert neighborhood_payload["avg_pedestrians"] == 18.0
+    assert neighborhood_payload["avg_vehicles"] == 35.0
+    assert neighborhood_payload["density"] == "medium"
+    assert neighborhood_payload["cameras"][0]["source"] == "synthetic"
+    assert latest_index["synth-loop-1"]["camera_id"] == "synth-loop-1"
+    assert latest_index["synth-loop-1"]["pedestrians"] == 18
+    assert latest_index["synth-loop-1"]["frame_available"] is False
 
 
 def test_load_cctv_for_neighborhood_marks_synthetic_camera_frame_available_when_snapshot_exists(tmp_path, monkeypatch) -> None:
@@ -207,33 +174,7 @@ def test_load_cctv_for_neighborhood_marks_synthetic_camera_frame_available_when_
     monkeypatch.setattr(cctv_service, "volume", _DummyVolume())
     monkeypatch.setattr(cctv_service, "RAW_DATA_PATH", str(tmp_path / "raw"))
     monkeypatch.setattr(cctv_service, "PROCESSED_DATA_PATH", str(tmp_path / "processed"))
-    monkeypatch.setattr(
-        cctv_service,
-        "load_synthetic_cctv",
-        lambda: {
-            "Loop": {
-                "cameras": {
-                    "cameras": [
-                        {
-                            "camera_id": "synth-loop-1",
-                            "lat": 41.8819,
-                            "lng": -87.6278,
-                            "distance_km": 0.4,
-                            "pedestrians": 18,
-                            "vehicles": 35,
-                            "bicycles": 2,
-                            "density_level": "medium",
-                            "timestamp": "2026-04-13T00:00:00+00:00",
-                        }
-                    ],
-                    "avg_pedestrians": 18.0,
-                    "avg_vehicles": 35.0,
-                    "density": "medium",
-                },
-                "timeseries": {"hours": [], "peak_hour": 17, "peak_pedestrians": 18.0, "camera_count": 1},
-            }
-        },
-    )
+    monkeypatch.setattr(cctv_service, "load_synthetic_cctv", _synthetic_cctv_payload)
 
     payload = asyncio.run(cctv_service.load_cctv_for_neighborhood("Loop"))
 
@@ -260,8 +201,13 @@ def test_cctv_frame_falls_back_to_raw_frames_when_analysis_disabled(tmp_path, mo
 
 
 def test_runtime_status_and_metrics_disable_cctv_gpu(monkeypatch) -> None:
+    def _raise_modal_dict_unavailable(*args, **kwargs):
+        raise RuntimeError
+
     monkeypatch.setattr(core_routes, "ENABLE_CCTV_ANALYSIS", False)
     monkeypatch.setattr(analysis_routes, "ENABLE_CCTV_ANALYSIS", False)
+    monkeypatch.setattr(core_routes.modal.Dict, "from_name", _raise_modal_dict_unavailable)
+    monkeypatch.setattr(analysis_routes, "PROCESSED_DATA_PATH", "/tmp/alethia-test-missing-processed")
 
     status_payload = asyncio.run(core_routes.status())
     metrics_payload = asyncio.run(analysis_routes.gpu_metrics())
