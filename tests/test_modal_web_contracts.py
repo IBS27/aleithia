@@ -49,8 +49,13 @@ def test_graph_full_endpoint_contract(monkeypatch):
 
 
 def test_modal_status_is_runtime_only(monkeypatch):
+    from modal_app.api.routes import core as core_routes
     from modal_app.web import web_app
 
+    def _raise_modal_dict_unavailable(*args, **kwargs):
+        raise RuntimeError
+
+    monkeypatch.setattr(core_routes.modal.Dict, "from_name", _raise_modal_dict_unavailable)
     client = TestClient(web_app)
 
     status_resp = client.get("/status")
@@ -64,25 +69,14 @@ def test_modal_status_is_runtime_only(monkeypatch):
     assert "total_docs" not in status_data
 
 
-def test_modal_core_no_longer_owns_metrics_route():
+def test_modal_route_ownership_boundaries():
     from modal_app.web import web_app
 
     paths = {getattr(route, "path", None) for route in web_app.routes}
-    assert "/metrics" not in paths
-
-
-def test_modal_legacy_routes_no_longer_own_user_settings():
-    from modal_app.web import web_app
-
-    paths = {getattr(route, "path", None) for route in web_app.routes}
-    assert "/user/settings" not in paths
-
-
-def test_modal_core_no_longer_owns_step4_simple_read_routes():
-    from modal_app.web import web_app
-
-    paths = {getattr(route, "path", None) for route in web_app.routes}
-    for path in {
+    modal_owned = {"/status", "/gpu-metrics", "/graph/full"}
+    backend_owned = {
+        "/metrics",
+        "/user/settings",
         "/sources",
         "/summary",
         "/geo",
@@ -95,5 +89,7 @@ def test_modal_core_no_longer_owns_step4_simple_read_routes():
         "/reviews",
         "/realestate",
         "/tiktok",
-    }:
-        assert path not in paths
+    }
+
+    assert modal_owned <= paths
+    assert paths.isdisjoint(backend_owned)

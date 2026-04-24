@@ -149,7 +149,7 @@ def test_load_cctv_for_neighborhood_real_only_uses_real_summary(monkeypatch) -> 
     assert payload["density"] == "medium"
 
 
-def test_load_cctv_for_neighborhood_fake_only_when_no_index(monkeypatch) -> None:
+def test_load_cctv_for_neighborhood_uses_fake_fallback_when_needed(monkeypatch) -> None:
     fake_entry = {
         "cameras": [{
             "camera_id": "fake-loop-1",
@@ -181,8 +181,6 @@ def test_load_cctv_for_neighborhood_fake_only_when_no_index(monkeypatch) -> None
     assert payload["avg_vehicles"] == 22.0
     assert payload["density"] == "medium"
 
-
-def test_load_cctv_for_neighborhood_real_plus_fake_preserves_real_camera_ids(monkeypatch) -> None:
     clat, clng = NEIGHBORHOOD_CENTROIDS["Loop"]
     index_data = {
         "real-cam-1": {
@@ -224,10 +222,10 @@ def test_load_cctv_for_neighborhood_real_plus_fake_preserves_real_camera_ids(mon
         "has_timeseries": True,
     }
 
-    async def _fake_index():
+    async def _real_index():
         return index_data
 
-    monkeypatch.setattr(web, "_load_cctv_latest_index", _fake_index)
+    monkeypatch.setattr(web, "_load_cctv_latest_index", _real_index)
     monkeypatch.setattr(web, "_fake_cctv_entry", lambda _: fake_entry)
 
     payload = asyncio.run(web._load_cctv_for_neighborhood("Loop"))

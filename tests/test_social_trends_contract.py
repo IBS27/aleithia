@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from modal_app import web
 import modal_app.openai_utils as openai_utils
 
@@ -40,6 +42,18 @@ class _FakeCompletions:
 class _FakeClient:
     def __init__(self, completions: _FakeCompletions):
         self.chat = SimpleNamespace(completions=completions)
+
+
+def _three_trends_json() -> str:
+    return json.dumps(
+        {
+            "trends": [
+                {"title": "Trend A", "detail": "Detail A"},
+                {"title": "Trend B", "detail": "Detail B"},
+                {"title": "Trend C", "detail": "Detail C"},
+            ]
+        }
+    )
 
 
 def _mock_social_docs(monkeypatch) -> tuple[list[dict], list[dict]]:
@@ -128,16 +142,16 @@ def test_social_trends_contract_with_mixed_data(monkeypatch) -> None:
         assert trend["title"].strip()
         assert trend["detail"].strip()
     assert rank_called["value"] is True
-    assert fake_completions.last_kwargs["model"] == "gpt-5-test"
-    # GPT-5 family should get 2048 tokens and reasoning_effort
-    assert fake_completions.last_kwargs["max_completion_tokens"] == 2048
-    assert fake_completions.last_kwargs["reasoning_effort"] == "low"
-    assert "max_tokens" not in fake_completions.last_kwargs
-    assert "temperature" not in fake_completions.last_kwargs
 
 
-def test_social_trends_gpt4o_uses_legacy_kwargs(monkeypatch) -> None:
-    """Non-GPT-5 models should use 512 tokens + temperature, no reasoning_effort."""
+@pytest.mark.parametrize(
+    ("model", "expected_kwargs", "absent_kwargs"),
+    [
+        ("gpt-5-test", {"max_completion_tokens": 2048, "reasoning_effort": "low"}, {"max_tokens", "temperature"}),
+        ("gpt-4o", {"max_completion_tokens": 512, "temperature": 0.4}, {"reasoning_effort"}),
+    ],
+)
+def test_social_trends_model_request_kwargs(monkeypatch, model, expected_kwargs, absent_kwargs) -> None:
     monkeypatch.setattr(web, "volume", _DummyVolume())
     _mock_social_docs(monkeypatch)
 
@@ -145,26 +159,21 @@ def test_social_trends_gpt4o_uses_legacy_kwargs(monkeypatch) -> None:
         ("reddit", {"id": "r1", "title": "Coffee demand in Loop", "content": "Office workers.", "metadata": {"score": 10, "num_comments": 4}, "geo": {"neighborhood": "Loop"}}, 0.9),
     ])
 
-    llm_content = json.dumps(
-        {"trends": [
-            {"title": "A", "detail": "Detail A"},
-            {"title": "B", "detail": "Detail B"},
-            {"title": "C", "detail": "Detail C"},
-        ]}
-    )
-    fake_completions = _FakeCompletions(llm_content)
+    fake_completions = _FakeCompletions(_three_trends_json())
     fake_client = _FakeClient(fake_completions)
 
     monkeypatch.setattr(openai_utils, "openai_available", lambda: True)
     monkeypatch.setattr(openai_utils, "get_openai_client", lambda: fake_client)
-    monkeypatch.setattr(openai_utils, "get_social_trends_model", lambda: "gpt-4o")
+    monkeypatch.setattr(openai_utils, "get_social_trends_model", lambda: model)
 
     payload = asyncio.run(web.social_trends("Loop", "Coffee Shop"))
 
     assert len(payload["trends"]) == 3
-    assert fake_completions.last_kwargs["max_completion_tokens"] == 512
-    assert fake_completions.last_kwargs["temperature"] == 0.4
-    assert "reasoning_effort" not in fake_completions.last_kwargs
+    assert fake_completions.last_kwargs["model"] == model
+    for key, value in expected_kwargs.items():
+        assert fake_completions.last_kwargs[key] == value
+    for key in absent_kwargs:
+        assert key not in fake_completions.last_kwargs
 
 
 def test_social_trends_input_payload_matches_legacy_4o_shape(monkeypatch) -> None:
@@ -207,17 +216,7 @@ def test_social_trends_input_payload_matches_legacy_4o_shape(monkeypatch) -> Non
     monkeypatch.setattr(web, "rank_reddit_docs", lambda docs, **kwargs: docs)
     monkeypatch.setattr(web, "_rank_tiktok_docs", lambda docs, *_args, **_kwargs: docs)
 
-    fake_completions = _FakeCompletions(
-        json.dumps(
-            {
-                "trends": [
-                    {"title": "Trend A", "detail": "Detail A"},
-                    {"title": "Trend B", "detail": "Detail B"},
-                    {"title": "Trend C", "detail": "Detail C"},
-                ]
-            }
-        )
-    )
+    fake_completions = _FakeCompletions(_three_trends_json())
     fake_client = _FakeClient(fake_completions)
     monkeypatch.setattr(openai_utils, "openai_available", lambda: True)
     monkeypatch.setattr(openai_utils, "get_openai_client", lambda: fake_client)
@@ -228,16 +227,8 @@ def test_social_trends_input_payload_matches_legacy_4o_shape(monkeypatch) -> Non
     assert len(payload["trends"]) == 3
     user_prompt = fake_completions.last_kwargs["messages"][1]["content"]
 
-    # Uses legacy simple source-tagged snippets and correct source caps.
-    assert "[Reddit] Reddit Title 0:" in user_prompt
-    assert "[Reddit] Reddit Title 9:" in user_prompt
-    assert "[Reddit] Reddit Title 10:" not in user_prompt
-    assert "[TikTok] TikTok Title 0" in user_prompt
-    assert "[TikTok] TikTok Title 4" in user_prompt
-    assert "[TikTok] TikTok Title 5" not in user_prompt
-    assert "relevance=" not in user_prompt
-    assert "[Reddit #" not in user_prompt
-    assert "[TikTok #" not in user_prompt
+    assert all(snippet in user_prompt for snippet in ["[Reddit] Reddit Title 0:", "[Reddit] Reddit Title 9:", "[TikTok] TikTok Title 4"])
+    assert all(snippet not in user_prompt for snippet in ["[Reddit] Reddit Title 10:", "[TikTok] TikTok Title 5", "relevance=", "[Reddit #", "[TikTok #"])
 
 
 def test_social_trends_contract_malformed_model_output_uses_fallback(monkeypatch) -> None:

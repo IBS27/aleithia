@@ -6,6 +6,8 @@ import pytest
 
 import modal_app.instrumentation as inst
 
+pytestmark = pytest.mark.usefixtures("_reset_instrumentation")
+
 
 class TestInitTracing:
     def test_returns_none_when_no_credentials(self):
