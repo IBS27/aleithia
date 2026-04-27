@@ -13,9 +13,14 @@ const NEIGHBORHOODS = [
 ]
 
 const BUSINESS_TYPES = [
-  'Restaurant', 'Coffee Shop', 'Bar / Nightlife', 'Retail Store',
-  'Grocery / Convenience', 'Salon / Barbershop', 'Fitness Studio',
-  'Professional Services', 'Food Truck', 'Bakery',
+  {
+    value: 'Coffee Shop',
+    label: 'Coffee shop',
+  },
+  {
+    value: 'Restaurant',
+    label: 'Restaurant',
+  },
 ]
 
 interface Props {
@@ -130,16 +135,28 @@ export default function OnboardingForm({ onSubmit, onCancel, initialProfile, emb
             <label className="block text-xs font-mono uppercase tracking-wider text-white/30 mb-2">
               Business Type
             </label>
-            <select
-              value={businessType}
-              onChange={(e) => setBusinessType(e.target.value)}
-              className="w-full bg-white/[0.03] border border-white/[0.08] px-4 py-3 text-sm text-white focus:outline-none focus:border-white/30 transition-colors appearance-none cursor-pointer"
+            <div
+              className="grid grid-cols-2 gap-1 border border-white/[0.08] bg-white/[0.03] p-1"
+              role="radiogroup"
+              aria-label="Business type"
             >
-              <option value="" className="bg-[#0a0c12]">Select type...</option>
               {BUSINESS_TYPES.map((type) => (
-                <option key={type} value={type} className="bg-[#0a0c12]">{type}</option>
+                <button
+                  key={type.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={businessType === type.value}
+                  onClick={() => setBusinessType(type.value)}
+                  className={`px-4 py-3 text-center text-sm font-medium transition-colors cursor-pointer focus:outline-none focus:ring-1 focus:ring-white/30 ${
+                    businessType === type.value
+                      ? 'bg-white text-[#06080d]'
+                      : 'bg-transparent text-white/70 hover:bg-white/[0.05] hover:text-white'
+                  }`}
+                >
+                  {type.label}
+                </button>
               ))}
-            </select>
+            </div>
             </div>
 
             <div>
