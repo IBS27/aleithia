@@ -1,6 +1,6 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
 import type { NeighborhoodData, RiskScore, UserProfile, Document, SocialTrend } from '../types/index.ts'
-import { api, type TrendData } from '../api.ts'
+import { type TrendData } from '../api.ts'
 import { computeInsights, LICENSE_MAP } from '../insights.ts'
 import MapView from './MapView.tsx'
 import CommandPanel from './CommandPanel.tsx'
@@ -11,6 +11,9 @@ interface Props {
   neighborhoodData: NeighborhoodData | null
   riskScore: RiskScore | null
   trends: TrendData | null
+  socialTrends: SocialTrend[]
+  socialLoading: boolean
+  socialError: string | null
   onTabChange: (tab: string) => void
 }
 
@@ -40,30 +43,7 @@ interface RegulatorySummary {
   federalAlerts: { title: string; agency: string }[]
 }
 
-export default function OverviewTab({ profile, neighborhoodData, riskScore, trends, onTabChange }: Props) {
-  const [socialTrends, setSocialTrends] = useState<SocialTrend[]>([])
-  const [socialLoading, setSocialLoading] = useState(false)
-  const [socialError, setSocialError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!profile.neighborhood) return
-    let cancelled = false
-    setSocialLoading(true)
-    setSocialError(null)
-    setSocialTrends([])
-    api.socialTrends(profile.neighborhood, profile.business_type)
-      .then((data) => {
-        if (!cancelled) setSocialTrends(data.trends)
-      })
-      .catch((err) => {
-        if (!cancelled) setSocialError(err.message || 'Failed to load social trends')
-      })
-      .finally(() => {
-        if (!cancelled) setSocialLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [profile.neighborhood, profile.business_type])
-
+export default function OverviewTab({ profile, neighborhoodData, riskScore, trends, socialTrends, socialLoading, socialError, onTabChange }: Props) {
   const insights = neighborhoodData
     ? computeInsights(neighborhoodData, profile)
     : null

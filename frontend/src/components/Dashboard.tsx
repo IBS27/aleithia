@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import type { UserProfile, NeighborhoodData, DataSources, RiskScore, CCTVData, ParkingData } from '../types/index.ts'
+import type { UserProfile, NeighborhoodData, DataSources, RiskScore, CCTVData, ParkingData, SocialTrend } from '../types/index.ts'
 import { api, API_BASE, BACKEND_API_BASE, fetchTrends, type TrendData } from '../api.ts'
 import Timer from './Timer.tsx'
 import InspectionTable from './InspectionTable.tsx'
@@ -274,6 +274,9 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
   const [showPipelineMonitor, setShowPipelineMonitor] = useState(false)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
   const [trends, setTrends] = useState<TrendData | null>(null)
+  const [socialTrends, setSocialTrends] = useState<SocialTrend[]>([])
+  const [socialLoading, setSocialLoading] = useState(false)
+  const [socialError, setSocialError] = useState<string | null>(null)
 
   const sourcesRetryTimeoutRef = useRef<number | null>(null)
 
@@ -343,6 +346,33 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
       }
     }
   }, [profile])
+
+  useEffect(() => {
+    if (!profile.neighborhood) {
+      setSocialTrends([])
+      setSocialLoading(false)
+      setSocialError(null)
+      return
+    }
+
+    let cancelled = false
+    setSocialLoading(true)
+    setSocialError(null)
+    setSocialTrends([])
+
+    api.socialTrends(profile.neighborhood, profile.business_type)
+      .then((data) => {
+        if (!cancelled) setSocialTrends(data.trends)
+      })
+      .catch((err) => {
+        if (!cancelled) setSocialError(err instanceof Error ? err.message : 'Failed to load social trends')
+      })
+      .finally(() => {
+        if (!cancelled) setSocialLoading(false)
+      })
+
+    return () => { cancelled = true }
+  }, [profile.neighborhood, profile.business_type])
 
   const sourceList = sources
     ? (Object.entries(sources) as Array<[string, { count: number; active: boolean }]>).map(([name, info]) => ({
@@ -516,6 +546,9 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
                   neighborhoodData={neighborhoodData}
                   riskScore={riskScore}
                   trends={trends}
+                  socialTrends={socialTrends}
+                  socialLoading={socialLoading}
+                  socialError={socialError}
                   onTabChange={(tab) => setActiveTab(tab as Tab)}
                 />
               )}
