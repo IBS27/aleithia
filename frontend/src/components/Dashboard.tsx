@@ -17,6 +17,7 @@ import CityGraph from './CityGraph.tsx'
 import OverviewTab from './OverviewTab.tsx'
 import FootTrafficChart from './FootTrafficChart.tsx'
 import StreetscapeCard from './StreetscapeCard.tsx'
+import BusinessCommandPage from './BusinessCommandPage.tsx'
 // import RecursiveAgentPanel from './RecursiveAgentPanel.tsx' // temporarily hidden — re-enable with Models tab
 import Drawer from './Drawer.tsx'
 import ProfilePage from './ProfilePage.tsx'
@@ -24,7 +25,7 @@ import LoadingFlow from './LoadingFlow.tsx'
 import { InspectionOutcomesChart, TopViolationsPareto, AlertHoursStackedArea } from './VaultCharts.tsx'
 import { dedupeNews, dedupePolicy } from '../feedDedup.ts'
 
-type Tab = 'overview' | 'regulatory' | 'intel' | 'community' | 'market' | 'vision' | 'evidence'
+type Tab = 'overview' | 'command' | 'regulatory' | 'intel' | 'community' | 'market' | 'vision' | 'evidence'
 
 /**
  * Multi-Criteria Risk Assessment using Weighted Linear Combination (WLC).
@@ -369,6 +370,7 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
     (neighborhoodData?.permits?.length || 0)
   const allTabs: { key: Tab; label: string; count?: number; isEmpty?: () => boolean }[] = [
     { key: 'overview', label: 'Overview' },
+    { key: 'command', label: 'Command' },
     { key: 'regulatory', label: 'Regulatory', count: regulatoryCount, isEmpty: () => !regulatoryCount },
     { key: 'intel', label: 'News & Policy', count: intelCount, isEmpty: () => !intelCount },
     { key: 'community', label: 'Community', count: (neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0), isEmpty: () => !((neighborhoodData?.reddit?.length || 0) + (neighborhoodData?.tiktok?.length || 0)) },
@@ -516,6 +518,10 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
                   trends={trends}
                   onTabChange={(tab) => setActiveTab(tab as Tab)}
                 />
+              )}
+
+              {activeTab === 'command' && (
+                <BusinessCommandPage />
               )}
 
               {activeTab === 'regulatory' && neighborhoodData && (
