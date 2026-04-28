@@ -1,12 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import {
   getBusinessIntelligenceSnapshot,
-  listBusinessScenarios,
   type BusinessIntelligenceSnapshot,
   type BusinessRecommendation,
   type Daypart,
   type ProductMetric,
 } from '../business/index.ts'
+import type { NeighborhoodData, UserProfile } from '../types/index.ts'
 
 const money = (cents: number) => `$${Math.round(cents / 100).toLocaleString()}`
 
@@ -24,10 +24,16 @@ const EFFORT_TONE: Record<BusinessRecommendation['effort'], string> = {
   high: 'text-red-300 border-red-400/25 bg-red-400/[0.06]',
 }
 
-export default function BusinessCommandPage() {
-  const scenarios = useMemo(() => listBusinessScenarios(), [])
-  const [scenarioId, setScenarioId] = useState(scenarios[0]?.id ?? '')
-  const snapshot = useMemo(() => getBusinessIntelligenceSnapshot(scenarioId), [scenarioId])
+interface Props {
+  profile: UserProfile
+  neighborhoodData: NeighborhoodData | null
+}
+
+export default function BusinessCommandPage({ profile, neighborhoodData }: Props) {
+  const snapshot = useMemo(
+    () => getBusinessIntelligenceSnapshot(profile.business_type, neighborhoodData, profile.neighborhood),
+    [profile.business_type, profile.neighborhood, neighborhoodData],
+  )
 
   return (
     <div className="space-y-4">
@@ -35,25 +41,18 @@ export default function BusinessCommandPage() {
         <div>
           <div className="text-[9px] font-mono uppercase tracking-wider text-white/30">Business Command</div>
           <div className="mt-1 flex flex-wrap items-baseline gap-2">
-            <h2 className="text-lg font-semibold text-white/90">{snapshot.scenario.business.name}</h2>
+            <h2 className="text-lg font-semibold text-white/90">{snapshot.mockBusiness.business.name}</h2>
             <span className="text-white/15">/</span>
-            <span className="text-xs font-mono text-white/45">{snapshot.scenario.business.neighborhood}</span>
-            <span className="text-xs font-mono text-white/30">{snapshot.scenario.business.kind.replace('_', ' ')}</span>
+            <span className="text-xs font-mono text-white/45">{snapshot.context.neighborhood}</span>
+            <span className="text-xs font-mono text-white/30">{snapshot.mockBusiness.business.kind.replace('_', ' ')}</span>
           </div>
         </div>
 
-        <label className="flex items-center gap-3">
-          <span className="text-[9px] font-mono uppercase tracking-wider text-white/30">Scenario</span>
-          <select
-            value={scenarioId}
-            onChange={(event) => setScenarioId(event.target.value)}
-            className="min-w-[280px] border border-white/[0.08] bg-[#080d13] px-3 py-2 text-xs font-mono text-white/75 outline-none focus:border-[#2B95D6]/60"
-          >
-            {scenarios.map(scenario => (
-              <option key={scenario.id} value={scenario.id}>{scenario.label}</option>
-            ))}
-          </select>
-        </label>
+        <div className="grid grid-cols-3 gap-3 text-right">
+          <HeaderMetric label="Context" value={snapshot.context.neighborhood} />
+          <HeaderMetric label="Confidence" value={`${Math.round(snapshot.context.confidence * 100)}%`} />
+          <HeaderMetric label="Competition" value={snapshot.context.competitorPressure} />
+        </div>
       </header>
 
       <KpiStrip snapshot={snapshot} />
@@ -87,6 +86,15 @@ function KpiStrip({ snapshot }: { snapshot: BusinessIntelligenceSnapshot }) {
       <Kpi label="Weekly Gross Profit" value={money(metrics.grossProfitCents)} sub={`${metrics.refundRatePct}% refund rate today`} tone="text-emerald-300" />
       <Kpi label="Opportunity" value={money(opportunity)} sub={`${recommendations.length} actions`} tone="text-emerald-300" />
       <Kpi label="Confidence" value={`${confidence}%`} sub="Mock POS coverage" tone="text-white/80" />
+    </div>
+  )
+}
+
+function HeaderMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[9px] font-mono uppercase tracking-wider text-white/25">{label}</div>
+      <div className="mt-1 text-xs font-mono uppercase text-white/55">{value}</div>
     </div>
   )
 }
@@ -159,7 +167,8 @@ function OperatorBrief({ snapshot }: { snapshot: BusinessIntelligenceSnapshot })
         <BriefLine label="Revenue" text={`${money(snapshot.metrics.todayRevenueCents)} today with ${snapshot.metrics.orderCount} orders.`} />
         <BriefLine label="Mix" text={topProduct ? `${topProduct.name} leads product revenue at ${money(topProduct.revenueCents)} this week.` : 'No product revenue available.'} />
         <BriefLine label="Inventory" text={stockoutText} />
-        <BriefLine label="Risk" text={`Inspection pressure is ${snapshot.scenario.neighborhoodContext.inspectionPressure}.`} />
+        <BriefLine label="Market" text={`${snapshot.context.competitorPressure} competitor pressure with ${snapshot.context.eveningDemandIndex}/100 evening demand.`} />
+        <BriefLine label="Risk" text={`Inspection pressure is ${snapshot.context.inspectionPressure}.`} />
       </div>
     </section>
   )

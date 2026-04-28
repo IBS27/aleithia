@@ -50,11 +50,14 @@ export interface InventorySignal {
 }
 
 export interface NeighborhoodBusinessContext {
+  neighborhood: string
   eveningDemandIndex: number
   inspectionPressure: 'low' | 'medium' | 'high'
+  competitorPressure: 'low' | 'medium' | 'high'
+  confidence: number
 }
 
-export interface BusinessScenario {
+export interface MockBusiness {
   id: string
   label: string
   business: Business
@@ -63,7 +66,6 @@ export interface BusinessScenario {
   orderItems: OrderItem[]
   operatingHours: OperatingHours[]
   inventorySignals: InventorySignal[]
-  neighborhoodContext: NeighborhoodBusinessContext
 }
 
 export interface ProductMetric {
@@ -78,7 +80,6 @@ export interface ProductMetric {
 
 export interface BusinessMetrics {
   businessId: string
-  scenarioId: string
   todayRevenueCents: number
   projectedWeekRevenueCents: number
   grossProfitCents: number
@@ -103,7 +104,8 @@ export interface BusinessRecommendation {
 }
 
 export interface BusinessIntelligenceSnapshot {
-  scenario: BusinessScenario
+  mockBusiness: MockBusiness
+  context: NeighborhoodBusinessContext
   metrics: BusinessMetrics
   recommendations: BusinessRecommendation[]
 }

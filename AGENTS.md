@@ -14,6 +14,7 @@ Instructions for coding agents working in this repository. Keep this file practi
 
 - `frontend/`: React 19 + TypeScript + Vite UI.
 - `frontend/src/api.ts`: primary client API contract. Check this before changing routes or response shapes.
+- `frontend/src/business/`: frontend-local mock POS and business intelligence layer for the dashboard Command screen. Keep this deterministic and derived from raw mock orders/menu/hours/inventory; do not hardcode final dashboard card values.
 - `frontend/.env.example`: documents `VITE_MODAL_URL` and optional `VITE_BACKEND_URL`; Clerk frontend env vars were removed.
 - `backend/`: local FastAPI service for health checks, user profile/history, and some JSON-backed local data endpoints.
 - `modal_app/`: the main Modal application and the production-facing API in `modal_app/web.py`.
@@ -105,6 +106,7 @@ Instructions for coding agents working in this repository. Keep this file practi
 - Search for the server implementation before changing frontend API assumptions. Several endpoint families are documented in the UI but are backed only by the Modal API.
 - For user-scoped requests, check `frontend/src/api.ts` before editing components: it is responsible for generating/storing the local user id and attaching the `x-user-id` header.
 - When changing response shapes, update `frontend/src/types`, `frontend/src/api.ts`, and affected components together.
+- For the Command/business screen, keep `frontend/src/business/` narrow: fixed mock coffee shop/restaurant internals plus derived neighborhood context; no backend route or POS-provider abstraction until a real integration needs it.
 
 ## Backend and Modal guidance
 

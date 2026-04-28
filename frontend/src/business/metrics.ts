@@ -1,14 +1,14 @@
-import type { BusinessMetrics, BusinessScenario, Daypart, MenuItem, Order, ProductMetric } from './types.ts'
+import type { BusinessMetrics, Daypart, MenuItem, MockBusiness, Order, ProductMetric } from './types.ts'
 
 const TODAY = '2026-05-15'
 const DAYPARTS: Daypart[] = ['morning', 'lunch', 'afternoon', 'dinner', 'evening']
 
-export function computeBusinessMetrics(scenario: BusinessScenario): BusinessMetrics {
-  const menuById = new Map(scenario.menuItems.map(item => [item.id, item]))
-  const ordersById = new Map(scenario.orders.map(order => [order.id, order]))
-  const todayOrders = scenario.orders.filter(order => order.openedAt.startsWith(TODAY))
-  const weekOrders = scenario.orders.filter(order => isWithinLastSevenDays(order.openedAt))
-  const productMetrics = computeProductMetrics(scenario, menuById, ordersById)
+export function computeBusinessMetrics(mockBusiness: MockBusiness): BusinessMetrics {
+  const menuById = new Map(mockBusiness.menuItems.map(item => [item.id, item]))
+  const ordersById = new Map(mockBusiness.orders.map(order => [order.id, order]))
+  const todayOrders = mockBusiness.orders.filter(order => order.openedAt.startsWith(TODAY))
+  const weekOrders = mockBusiness.orders.filter(order => isWithinLastSevenDays(order.openedAt))
+  const productMetrics = computeProductMetrics(mockBusiness, menuById, ordersById)
   const daypartRevenueCents = computeDaypartRevenue(todayOrders)
   const grossProfitCents = productMetrics.reduce((sum, item) => sum + item.grossProfitCents, 0)
   const revenueCents = weekOrders.reduce((sum, order) => sum + netOrderRevenue(order), 0)
@@ -18,12 +18,11 @@ export function computeBusinessMetrics(scenario: BusinessScenario): BusinessMetr
       .map(item => item.menuItemId),
   )
   const highMarginOrderCount = todayOrders.filter(order =>
-    scenario.orderItems.some(item => item.orderId === order.id && topHighMarginIds.has(item.menuItemId)),
+    mockBusiness.orderItems.some(item => item.orderId === order.id && topHighMarginIds.has(item.menuItemId)),
   ).length
 
   return {
-    businessId: scenario.business.id,
-    scenarioId: scenario.id,
+    businessId: mockBusiness.business.id,
     todayRevenueCents: todayOrders.reduce((sum, order) => sum + netOrderRevenue(order), 0),
     projectedWeekRevenueCents: Math.round(revenueCents * (7 / Math.max(1, countUniqueDays(weekOrders)))),
     grossProfitCents,
@@ -38,7 +37,7 @@ export function computeBusinessMetrics(scenario: BusinessScenario): BusinessMetr
     productMetrics,
     daypartRevenueCents,
     highMarginAttachRatePct: pct(highMarginOrderCount, Math.max(1, todayOrders.length)),
-    stockoutRiskItems: scenario.inventorySignals
+    stockoutRiskItems: mockBusiness.inventorySignals
       .filter(signal => signal.stockoutHour !== null || signal.unitsRemaining <= 5)
       .map(signal => menuById.get(signal.menuItemId)?.name)
       .filter((name): name is string => Boolean(name)),
@@ -46,13 +45,13 @@ export function computeBusinessMetrics(scenario: BusinessScenario): BusinessMetr
 }
 
 function computeProductMetrics(
-  scenario: BusinessScenario,
+  mockBusiness: MockBusiness,
   menuById: Map<string, MenuItem>,
   ordersById: Map<string, Order>,
 ): ProductMetric[] {
   const metrics = new Map<string, ProductMetric>()
 
-  scenario.orderItems.forEach(orderItem => {
+  mockBusiness.orderItems.forEach(orderItem => {
     const menuItem = menuById.get(orderItem.menuItemId)
     const order = ordersById.get(orderItem.orderId)
     if (!menuItem || !order || !isWithinLastSevenDays(order.openedAt)) return

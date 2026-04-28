@@ -554,7 +554,7 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
               )}
 
               {activeTab === 'command' && (
-                <BusinessCommandPage />
+                <BusinessCommandPage profile={profile} neighborhoodData={neighborhoodData} />
               )}
 
               {activeTab === 'regulatory' && neighborhoodData && (
