@@ -262,6 +262,7 @@
         <a href="#workload-map">Workload map</a>
         <a href="#target-architecture">Target architecture</a>
         <a href="#migration-plan">Migration plan</a>
+        <a href="#step-1-baseline">Step 1 baseline</a>
         <a href="#cost-speed">Cost and speed</a>
         <a href="#risks">Risks</a>
       </nav>
@@ -509,6 +510,244 @@
             Keep the Modal fallback until the new path is stable, then remove the old route or worker.
           </li>
         </ol>
+      </section>
+
+      <section id="step-1-baseline">
+        <h2>Step 1 Baseline</h2>
+        <p>
+          Measured on June 4, 2026 in the local Modal profile. This baseline used existing Modal
+          billing, app, dict, queue, and volume metadata first. It did not run deploys, broad
+          pipelines, OpenAI calls, sandbox analysis, or GPU jobs.
+        </p>
+
+        <div class="callout risk">
+          <strong>Baseline limitation:</strong> the current Modal profile has no deployed app named
+          <code>alethia</code> or <code>hackillinois2026</code>, the configured frontend Modal URL
+          returns 404s for representative read endpoints, and the Modal cost dictionaries are empty.
+          Treat invocation counts, failure rate, GPU seconds, OpenAI token usage, and historical cost
+          as unknown until a Modal dashboard export, billing export, or external log export is attached.
+        </div>
+
+        <h3>Read-Only Checks Run</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Observation</th>
+              <th>Baseline impact</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Modal app registry and logs</td>
+              <td><code>modal app list --json</code> returned an empty list. <code>modal app history</code> and <code>modal app logs</code> could not find <code>alethia</code> or <code>hackillinois2026</code>.</td>
+              <td>No current app-level invocation, latency, or failure log data is available from this CLI profile.</td>
+            </tr>
+            <tr>
+              <td>Modal billing</td>
+              <td><code>modal billing report --for "this month" --json</code> returned <code>[]</code>. A follow-up historical report hit the Modal billing-report rate limit.</td>
+              <td>No current-month spend is reported through CLI. Historical cost still needs a dashboard or billing export after the rate limit clears.</td>
+            </tr>
+            <tr>
+              <td>Modal cost and refresh dictionaries</td>
+              <td><code>alethia-costs</code>, <code>alethia-restarts</code>, <code>alethia-cctv-refresh-recent</code>, and <code>alethia-tiktok-refresh-recent</code> exist but have no items.</td>
+              <td>The in-app cost tracker has no function-level cost, duration, or GPU-second records to summarize.</td>
+            </tr>
+            <tr>
+              <td>Modal queues</td>
+              <td><code>new-docs</code> length is <code>0</code>. <code>impact-docs</code> length is <code>0</code>.</td>
+              <td>No queued classification or impact-analysis backlog is present.</td>
+            </tr>
+            <tr>
+              <td>Configured Modal URL</td>
+              <td><code>https://aleithia--alethia-serve.modal.run</code> returned 404 for <code>/health</code>, <code>/status</code>, <code>/graph/stats</code>, <code>/cctv/latest</code>, and <code>/parking/latest</code> in roughly 102-148 ms.</td>
+              <td>These are edge 404 timings, not application latency. Do not use them as a production P95 baseline.</td>
+            </tr>
+            <tr>
+              <td>Modal Volume metadata</td>
+              <td><code>alethia-data</code> and <code>alethia-weights</code> exist. <code>alethia-data</code> contains <code>raw</code>, <code>processed</code>, <code>cache</code>, and <code>dedup</code>.</td>
+              <td>The shared dataset still exists on Modal Volume, but freshness is stale enough that route migration should prioritize storage abstraction and contract checks over performance conclusions.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Current Inventory</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Observed value</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Modal functions</td>
+              <td><code>40</code></td>
+              <td>Counted from <code>@app.function</code> decorators in <code>modal_app/</code>.</td>
+            </tr>
+            <tr>
+              <td>Modal classes</td>
+              <td><code>4</code></td>
+              <td>Classifier, sentiment, CCTV, and parking classes.</td>
+            </tr>
+            <tr>
+              <td>Scheduled functions in code</td>
+              <td><code>4</code></td>
+              <td><code>data_reconciler</code>, <code>process_queue_batch</code>, <code>public_data_ingester</code>, and <code>news_ingester</code>. No deployed app was visible in the profile, so these should not be treated as active schedules.</td>
+            </tr>
+            <tr>
+              <td>GPU declarations</td>
+              <td><code>7</code></td>
+              <td>T4: document classifier, sentiment analyzer, CCTV analyzer, vision training, vision analysis, parking analyzer. A10G: TikTok transcription.</td>
+            </tr>
+            <tr>
+              <td>Tracked-cost wrappers</td>
+              <td><code>31</code></td>
+              <td>The wrappers exist, but <code>alethia-costs</code> currently has no entries.</td>
+            </tr>
+            <tr>
+              <td>Modal spawn call sites</td>
+              <td><code>9</code></td>
+              <td>Used by agent fan-out, scaling demo, reconciler, Supermemory sync, and on-demand social refresh paths.</td>
+            </tr>
+            <tr>
+              <td>Sandbox call sites</td>
+              <td><code>1</code></td>
+              <td><code>/analyze</code> creates a Modal Sandbox after OpenAI code generation.</td>
+            </tr>
+            <tr>
+              <td>OpenAI call sites</td>
+              <td><code>14</code></td>
+              <td>Includes social trends, command synthesis, vision assessment, deep-dive codegen, agents, Lead Analyst, and vision labeling.</td>
+            </tr>
+            <tr>
+              <td>Queue backlog</td>
+              <td><code>0</code></td>
+              <td>Both named queues are empty.</td>
+            </tr>
+            <tr>
+              <td>Current-month Modal cost</td>
+              <td><code>$0 reported</code></td>
+              <td>CLI billing returned an empty report for this month. Historical billing is still unverified.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Source Freshness</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Volume path</th>
+              <th>Entries listed</th>
+              <th>Latest metadata timestamp</th>
+              <th>Baseline reading</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>/raw/demographics</code></td>
+              <td>1 directory</td>
+              <td>March 29, 2026 16:58 CDT</td>
+              <td>Stale.</td>
+            </tr>
+            <tr>
+              <td><code>/raw/realestate</code></td>
+              <td>3 directories</td>
+              <td>April 26, 2026 22:02 CDT</td>
+              <td>Stale.</td>
+            </tr>
+            <tr>
+              <td><code>/raw/cctv</code></td>
+              <td>11 directories</td>
+              <td>April 27, 2026 19:18 CDT</td>
+              <td>Stale. No GPU analysis was triggered.</td>
+            </tr>
+            <tr>
+              <td><code>/raw/tiktok</code></td>
+              <td>10 directories</td>
+              <td>April 27, 2026 20:06 CDT</td>
+              <td>Stale.</td>
+            </tr>
+            <tr>
+              <td><code>/raw/traffic</code></td>
+              <td>10 directories</td>
+              <td>April 27, 2026 22:23 CDT</td>
+              <td>Stale.</td>
+            </tr>
+            <tr>
+              <td><code>/raw/reviews</code>, <code>/raw/politics</code>, <code>/raw/reddit</code>, <code>/raw/federal_register</code>, <code>/raw/public_data</code></td>
+              <td>9, 9, 56, 9, and 9 directories</td>
+              <td>April 27, 2026 23:03 CDT</td>
+              <td>Stale.</td>
+            </tr>
+            <tr>
+              <td><code>/raw/news</code></td>
+              <td>82 directories</td>
+              <td>April 28, 2026 00:03 CDT</td>
+              <td>Stale.</td>
+            </tr>
+            <tr>
+              <td><code>/processed/enriched</code></td>
+              <td>13,228 files</td>
+              <td>April 28, 2026 00:13 CDT</td>
+              <td>Largest confirmed processed dataset. File-level count was available, but recursive storage size was not measured to avoid broad downloads.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Path Classification</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Class</th>
+              <th>Modal paths or functions</th>
+              <th>Migration note</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Portable read routes</td>
+              <td><code>/graph/full</code>, <code>/graph/neighborhood/*</code>, <code>/graph/stats</code>, <code>/cctv/latest</code>, <code>/cctv/frame/*</code>, <code>/cctv/timeseries/*</code>, <code>/vision/streetscape/*</code>, <code>/parking/latest</code>, <code>/parking/*</code>, <code>/parking/annotated/*</code>, <code>/impact-briefs</code>, and <code>/impact-briefs/*</code>.</td>
+              <td>Good early candidates after storage access is abstracted. They primarily read JSON or images from the shared dataset.</td>
+            </tr>
+            <tr>
+              <td>Mixed read plus side effects</td>
+              <td><code>/neighborhood/*</code> and <code>/social-trends/*</code>.</td>
+              <td>They read shared data but can trigger Reddit fallback persistence, TikTok refresh, or OpenAI synthesis. Move only after fallback behavior is made explicit.</td>
+            </tr>
+            <tr>
+              <td>CPU ingestion jobs</td>
+              <td><code>news_ingester</code>, <code>public_data_ingester</code>, <code>politics_ingester</code>, <code>federal_register_ingester</code>, <code>demographics_ingester</code>, <code>review_ingester</code>, <code>realestate_ingester</code>, <code>reddit_ingester</code>, <code>traffic_ingester</code>, <code>cctv_ingester</code>, <code>parking_ingester</code>, <code>ingest_tiktok</code>, and <code>ingest_worldpop_demographics</code>.</td>
+              <td>Move after object storage and queue adapters exist. Preserve document schema and idempotent writes.</td>
+            </tr>
+            <tr>
+              <td>Queue worker</td>
+              <td><code>process_queue_batch</code> consumes <code>new-docs</code>; Lead Analyst uses <code>impact-docs</code>.</td>
+              <td>Backlog is currently zero, but retry semantics still need an adapter before migration.</td>
+            </tr>
+            <tr>
+              <td>GPU jobs</td>
+              <td><code>DocClassifier</code>, <code>SentimentAnalyzer</code>, <code>TrafficAnalyzer</code>, <code>ParkingAnalyzer</code>, <code>vision.train_detector</code>, <code>vision.analyze_neighborhood</code>, and <code>transcribe_video</code>.</td>
+              <td>No GPU benchmark was run. Keep these on Modal until real billing and success-rate data is available.</td>
+            </tr>
+            <tr>
+              <td>Sandbox job</td>
+              <td><code>/analyze</code>.</td>
+              <td>Requires a real isolation boundary. It should move late, after storage and API contracts are stable.</td>
+            </tr>
+            <tr>
+              <td>Agent flow</td>
+              <td><code>/brief/*</code>, <code>/impact-briefs/analyze</code>, <code>orchestrate_query</code>, <code>neighborhood_intel_agent</code>, <code>regulatory_agent</code>, and Lead Analyst functions.</td>
+              <td>Keep behind stable contracts until queues, storage, OpenAI tracing, and fallback behavior are measurable.</td>
+            </tr>
+            <tr>
+              <td>External-memory reads</td>
+              <td><code>/graph</code> and <code>/user/memories</code>.</td>
+              <td>These depend on Supermemory when configured. They are not pure Modal Volume reads.</td>
+            </tr>
+          </tbody>
+        </table>
       </section>
 
       <section>
