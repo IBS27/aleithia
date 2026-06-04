@@ -62,7 +62,7 @@ Canonical backend runtime data source:
 Demo fixtures are under `fixtures/demo_data/` and are not read automatically. Seed local runtime when needed:
 
 ```bash
-python scripts/bootstrap/bootstrap_demo_data.py
+.venv/bin/python scripts/bootstrap/bootstrap_demo_data.py
 ```
 
 Use `--force` to overwrite existing runtime files.

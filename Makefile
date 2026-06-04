@@ -15,13 +15,13 @@ build-frontend:
 	cd frontend && npm run build
 
 test:
-	pytest -q
+	.venv/bin/pytest -q
 
 bootstrap-demo-data:
-	python scripts/bootstrap/bootstrap_demo_data.py
+	.venv/bin/python scripts/bootstrap/bootstrap_demo_data.py
 
 pipeline-smoke:
-	python scripts/maintenance/test_pipelines.py
+	.venv/bin/python scripts/maintenance/test_pipelines.py
 
 docker-up:
 	docker-compose up --build
