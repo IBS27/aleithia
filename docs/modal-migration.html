@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aleithia Modal Migration Brief</title>
+  <style>
+    :root {
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --text: #1b2330;
+      --muted: #5b6676;
+      --line: #d9dee7;
+      --accent: #1f6feb;
+      --accent-soft: #e8f1ff;
+      --risk: #a64200;
+      --risk-soft: #fff4e8;
+      --ok: #146c43;
+      --ok-soft: #e9f7ef;
+      --code: #263343;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+
+    header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .wrap {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .hero {
+      padding: 48px 0 28px;
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 0.9rem;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 820px;
+      font-size: clamp(2rem, 5vw, 3.6rem);
+      line-height: 1.05;
+      letter-spacing: 0;
+    }
+
+    .summary {
+      max-width: 860px;
+      margin: 18px 0 0;
+      color: var(--muted);
+      font-size: 1.05rem;
+    }
+
+    nav {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 0 0 26px;
+    }
+
+    nav a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 7px 11px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--text);
+      text-decoration: none;
+      background: #fbfcff;
+      font-size: 0.92rem;
+    }
+
+    main {
+      padding: 28px 0 56px;
+    }
+
+    section {
+      margin: 0 0 28px;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 1.55rem;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 22px 0 10px;
+      font-size: 1.12rem;
+    }
+
+    p {
+      margin: 0 0 12px;
+    }
+
+    ul, ol {
+      margin: 0 0 14px;
+      padding-left: 22px;
+    }
+
+    li {
+      margin: 5px 0;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      padding: 14px 16px;
+      border-radius: 6px;
+      margin: 14px 0;
+    }
+
+    .callout.risk {
+      border-color: var(--risk);
+      background: var(--risk-soft);
+    }
+
+    .callout.ok {
+      border-color: var(--ok);
+      background: var(--ok-soft);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    th, td {
+      padding: 12px 13px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 0.94rem;
+    }
+
+    th {
+      background: #eef2f7;
+      font-weight: 700;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    code {
+      color: var(--code);
+      background: #eef2f7;
+      border: 1px solid #dce3ed;
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9em;
+    }
+
+    .tag {
+      display: inline-block;
+      margin: 0 5px 5px 0;
+      padding: 3px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fbfcff;
+      color: var(--muted);
+      font-size: 0.82rem;
+      white-space: nowrap;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .source-list a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .source-list a:hover {
+      text-decoration: underline;
+    }
+
+    @media (max-width: 780px) {
+      .wrap {
+        width: min(100% - 22px, 1120px);
+      }
+
+      .hero {
+        padding-top: 34px;
+      }
+
+      .grid,
+      .grid.two {
+        grid-template-columns: 1fr;
+      }
+
+      table {
+        display: block;
+        overflow-x: auto;
+      }
+
+      th, td {
+        min-width: 180px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap hero">
+      <p class="eyebrow">Aleithia architecture brief</p>
+      <h1>Modal workload map and migration plan</h1>
+      <p class="summary">
+        Aleithia already has a backend in <code>backend/</code>. The confusing part is that
+        Modal also hosts a second FastAPI app in <code>modal_app/web.py</code>. Migration should
+        consolidate portable Modal routes into the existing backend, then replace Modal storage,
+        queues, GPU jobs, and sandbox primitives in stages.
+      </p>
+    </div>
+    <div class="wrap">
+      <nav aria-label="Document sections">
+        <a href="#current-state">Current state</a>
+        <a href="#workload-map">Workload map</a>
+        <a href="#target-architecture">Target architecture</a>
+        <a href="#migration-plan">Migration plan</a>
+        <a href="#cost-speed">Cost and speed</a>
+        <a href="#risks">Risks</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <section id="current-state">
+        <h2>Current State</h2>
+        <div class="callout ok">
+          <strong>Recommendation:</strong> keep <code>backend/</code> as the main API, move
+          read-heavy Modal routes into that existing backend first, keep GPU jobs on Modal until
+          they are benchmarked against alternatives, and move the shared dataset from Modal Volume
+          to object storage before replacing worker primitives.
+        </div>
+        <div class="callout">
+          <strong>API clarification:</strong> this document uses "API migration" to mean removing
+          the second Modal-hosted FastAPI surface over time. It does not mean creating a new
+          backend or abandoning <code>backend/main.py</code>.
+        </div>
+
+        <div class="grid">
+          <article class="card">
+            <h3>Two API Surfaces</h3>
+            <p>
+              <code>backend/main.py</code> is the local backend and owns <code>/api/data/*</code>.
+              <code>modal_app/web.py</code> builds another FastAPI app and exposes richer routes
+              with <code>@modal.asgi_app()</code>. The migration target is not a new API; it is
+              route consolidation into <code>backend/</code>.
+            </p>
+            <span class="tag">backend/main.py</span>
+            <span class="tag">modal_app/web.py</span>
+            <span class="tag">/neighborhood</span>
+            <span class="tag">/analyze</span>
+            <span class="tag">/vision/*</span>
+            <span class="tag">/parking/*</span>
+            <span class="tag">/graph/*</span>
+          </article>
+
+          <article class="card">
+            <h3>Runtime Data</h3>
+            <p>
+              The canonical runtime dataset is the Modal Volume <code>alethia-data</code>,
+              mounted as <code>/data</code>. Code writes raw documents under
+              <code>/data/raw</code> and derived outputs under <code>/data/processed</code>.
+            </p>
+            <span class="tag">raw JSON</span>
+            <span class="tag">processed JSON</span>
+            <span class="tag">images</span>
+            <span class="tag">dedup state</span>
+          </article>
+
+          <article class="card">
+            <h3>Workers</h3>
+            <p>
+              Modal functions and classes cover scheduled ingestion, stale-source reconciliation,
+              queue processing, GPU classifiers, CCTV analysis, parking analysis, TikTok scraping,
+              OpenAI synthesis, and impact-brief generation.
+            </p>
+            <span class="tag">modal.Queue</span>
+            <span class="tag">modal.Dict</span>
+            <span class="tag">modal.Sandbox</span>
+            <span class="tag">.spawn()</span>
+          </article>
+        </div>
+
+        <p class="small">
+          Code inspection found roughly 40 Modal functions, 4 Modal classes, 7 GPU-declared
+          workloads, and 4 active <code>modal.Period</code> schedules. The Lead Analyst schedule
+          exists in code but is commented out.
+        </p>
+      </section>
+
+      <section id="workload-map">
+        <h2>Workload Map</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Area</th>
+              <th>What Modal does today</th>
+              <th>Migration difficulty</th>
+              <th>Best replacement target</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Modal-owned API routes</td>
+              <td>Serves read and aggregation endpoints for neighborhoods, graphs, social trends, CCTV, parking, and status through the Modal-hosted FastAPI app.</td>
+              <td>Medium. Endpoint code is portable, but route ownership and reads assume Modal Volume paths.</td>
+              <td>Move portable routes into the existing <code>backend/</code> app, backed by S3/GCS/R2 or another shared storage layer.</td>
+            </tr>
+            <tr>
+              <td>Existing backend reads</td>
+              <td>Some reads have already moved to <code>backend/</code>, which accesses Modal Volume through <code>backend/shared_data.py</code>.</td>
+              <td>Low to medium. Add an object-storage accessor beside the Modal accessor.</td>
+              <td>Keep this route ownership in <code>backend/</code> and swap the storage backend.</td>
+            </tr>
+            <tr>
+              <td>CPU ingestion</td>
+              <td>Fetches news, public data, politics, demographics, reviews, real estate, traffic, Reddit, and Federal Register data.</td>
+              <td>Medium. Most code is normal Python, but scheduling, retries, volume commits, and queue pushes are Modal-specific.</td>
+              <td>Cloud Run Jobs plus Cloud Scheduler, ECS scheduled tasks, AWS Batch, or GitHub Actions for low cadence.</td>
+            </tr>
+            <tr>
+              <td>Queue processing</td>
+              <td><code>modal.Queue</code> carries raw docs into classification and high-impact docs into Lead Analyst.</td>
+              <td>Medium. Replace queue API and idempotency behavior.</td>
+              <td>SQS, Pub/Sub, Redis Streams, Celery, or Cloud Tasks.</td>
+            </tr>
+            <tr>
+              <td>GPU classification</td>
+              <td>T4 classes run BART zero-shot classification and RoBERTa sentiment analysis in batches.</td>
+              <td>High if preserving GPU batching and cold-start behavior.</td>
+              <td>Keep on Modal initially; benchmark Cloud Run GPU L4, RunPod, or AWS Batch GPU.</td>
+            </tr>
+            <tr>
+              <td>CCTV and parking vision</td>
+              <td>Downloads frames or tiles, runs YOLO, SegFormer, and vehicle detection, then writes analysis JSON and annotated images.</td>
+              <td>High. Requires GPU, image dependencies, artifact storage, and batch orchestration.</td>
+              <td>Keep disabled or on Modal until production value is proven; then test RunPod or Cloud Run GPU jobs.</td>
+            </tr>
+            <tr>
+              <td>TikTok pipeline</td>
+              <td>Uses Kernel cloud browser and Playwright for scraping, with optional Whisper transcription on A10G.</td>
+              <td>High. Scraping reliability and GPU transcription are separate concerns.</td>
+              <td>Run scraper as CPU job; use managed transcription API or keep GPU transcription off by default.</td>
+            </tr>
+            <tr>
+              <td>Deep Dive analysis</td>
+              <td><code>/analyze</code> uses OpenAI to generate Python, then executes it in <code>modal.Sandbox</code> against mounted data.</td>
+              <td>High. Security and isolation matter.</td>
+              <td>E2B, Firecracker-style sandbox service, or tightly scoped ephemeral container jobs.</td>
+            </tr>
+            <tr>
+              <td>Impact briefs and agents</td>
+              <td>Uses Modal fan-out via <code>.spawn()</code>, reads volume data, calls OpenAI, and optionally uses E2B workers.</td>
+              <td>Medium to high. Logic is portable, orchestration is not.</td>
+              <td>Background worker service plus queue; preserve E2B for sandbox execution.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="target-architecture">
+        <h2>Target Architecture</h2>
+        <p>
+          The target should keep the existing backend as the API consolidation point and separate
+          normal dashboard requests from bursty compute. Hosting choices such as Cloud Run, ECS,
+          Fly, Render, or App Runner only matter when deploying that existing backend; they are not
+          replacements for the backend code already in the repo.
+        </p>
+
+        <div class="grid two">
+          <article class="card">
+            <h3>Recommended Hybrid</h3>
+            <ul>
+              <li><strong>API:</strong> existing <code>backend/</code> app with portable Modal routes folded into it.</li>
+              <li><strong>Backend hosting:</strong> keep local for development; deploy the same backend to Cloud Run, ECS, Fly, Render, or App Runner if production hosting is needed.</li>
+              <li><strong>Storage:</strong> S3, GCS, or R2 for raw JSON, processed JSON, and images.</li>
+              <li><strong>Queues:</strong> SQS, Pub/Sub, Redis Streams, or Cloud Tasks.</li>
+              <li><strong>State:</strong> Redis, DynamoDB, Postgres, or Firestore for cost and refresh dictionaries.</li>
+              <li><strong>GPU:</strong> keep Modal first, then benchmark RunPod, Cloud Run GPU, and AWS Batch.</li>
+              <li><strong>Sandbox:</strong> E2B or isolated container jobs for generated code execution.</li>
+            </ul>
+          </article>
+
+          <article class="card">
+            <h3>Why Not Move Everything At Once</h3>
+            <ul>
+              <li>Modal Volume paths are embedded in most worker modules.</li>
+              <li>Queue behavior is coupled to classifier and Lead Analyst flow.</li>
+              <li>GPU classes rely on Modal snapshots, batching, and per-call dispatch.</li>
+              <li><code>modal.Sandbox</code> is a security boundary, not just a subprocess wrapper.</li>
+              <li>Moving all workloads together makes cost and latency regressions hard to isolate.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="migration-plan">
+        <h2>Migration Plan</h2>
+        <p>
+          Treat this as staged consolidation, not a platform swap. The existing <code>backend/</code>
+          becomes the main API surface, while workers, GPU jobs, and sandbox execution remain separate
+          services behind stable contracts.
+        </p>
+        <ol>
+          <li>
+            <strong>Set the baseline.</strong>
+            Measure endpoint latency, Modal function invocations, GPU seconds, queue volume, storage size,
+            OpenAI calls, failure rate, and source freshness. Classify each Modal path as a read route,
+            CPU job, queue worker, GPU job, sandbox job, or agent flow.
+          </li>
+          <li>
+            <strong>Make storage portable first.</strong>
+            Move the raw documents, processed documents, generated images, impact briefs, and file-backed
+            state toward object storage. Keep reads and writes behind a storage abstraction so routes and
+            workers do not care whether the data is coming from Modal Volume, S3, GCS, or R2.
+          </li>
+          <li>
+            <strong>Consolidate read routes into <code>backend/</code>.</strong>
+            Move Modal routes that only read JSON or images into the existing backend. Start with graph,
+            parking reads, CCTV reads, streetscape summaries, social summaries where fallback behavior is
+            clear, and impact-brief list/detail routes. Keep the frontend response contracts unchanged.
+          </li>
+          <li>
+            <strong>Move CPU ingestion jobs.</strong>
+            Convert CPU-only ingesters into standalone scheduled jobs. Each job should fetch external data,
+            normalize documents, write to object storage, enqueue classification work, update freshness
+            metadata, and retry safely.
+          </li>
+          <li>
+            <strong>Replace queues and small shared state.</strong>
+            Put queue and dictionary operations behind adapters. Use SQS, Pub/Sub, Redis Streams, Celery,
+            or Cloud Tasks for queues, and Redis, DynamoDB, Firestore, or Postgres for refresh locks,
+            restart backoff, and cost/freshness metadata.
+          </li>
+          <li>
+            <strong>Keep GPU on Modal until benchmarked.</strong>
+            Do not move GPU first. Benchmark document classification, sentiment, CCTV YOLO, parking analysis,
+            and Whisper transcription independently. Move a GPU workload only if the new platform is clearly
+            cheaper, faster, or easier to operate for that specific job.
+          </li>
+          <li>
+            <strong>Move sandbox and agent flows last.</strong>
+            Keep generated-code execution isolated with E2B or another real sandbox boundary. Move agent fan-out
+            only after storage and queues are stable, and preserve the contracts for <code>/analyze</code>,
+            <code>/command/synthesis</code>, <code>/brief/*</code>, and impact analysis.
+          </li>
+        </ol>
+
+        <h3>Cutover Method</h3>
+        <ol>
+          <li>
+            Run the old Modal path and the new path side by side.
+          </li>
+          <li>
+            Compare response shape, status codes, data counts, freshness, latency, and error rate.
+          </li>
+          <li>
+            Switch traffic with a config flag or frontend base URL change, starting in local or internal use.
+          </li>
+          <li>
+            Keep the Modal fallback until the new path is stable, then remove the old route or worker.
+          </li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>Important Non-Goal</h2>
+        <div class="callout risk">
+          Do not collapse everything into the web backend. The backend should serve API requests.
+          Workers should run separately. GPU jobs should stay isolated. Sandbox execution should stay
+          isolated. Putting all of that into one server would make the app harder to operate and slower
+          under load.
+        </div>
+      </section>
+
+      <section id="cost-speed">
+        <h2>Cost and Speed Notes</h2>
+        <div class="callout risk">
+          Pricing changes. Treat the numbers below as current reference points to verify before a final
+          decision, not as fixed commitments.
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Platform</th>
+              <th>Useful fit</th>
+              <th>Cost and performance notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Modal</td>
+              <td>Bursty Python jobs, GPU inference, quick scheduling, snapshots, sandbox, and volume-mounted data.</td>
+              <td>
+                Public pricing lists T4 at about <code>$0.000164/sec</code>, A10 at about
+                <code>$0.000306/sec</code>, CPU by core-second, and Volume storage by GiB-month.
+                It is often cost-effective for spiky GPU jobs because idle GPU time is avoided.
+              </td>
+            </tr>
+            <tr>
+              <td>Cloud Run</td>
+              <td>Optional hosting for the existing backend, CPU jobs, and some GPU batch/inference on L4 or RTX Pro 6000.</td>
+              <td>
+                Good fit if the existing backend needs production hosting outside local development,
+                and for CPU ingestion jobs. GPU jobs are fully managed, but L4 requires minimum CPU
+                and memory, and GPU is billed for the instance lifecycle.
+              </td>
+            </tr>
+            <tr>
+              <td>AWS Batch or ECS</td>
+              <td>Scheduled and batch jobs, especially if the project already uses AWS.</td>
+              <td>
+                AWS Batch has no additional Batch charge, but you pay for EC2, Fargate, storage, logs,
+                network, and queue resources. Operational setup is heavier than Modal.
+              </td>
+            </tr>
+            <tr>
+              <td>RunPod</td>
+              <td>GPU experimentation and potentially cheaper GPU batch jobs.</td>
+              <td>
+                Can be attractive for GPU cost, but storage should not become the source of truth.
+                Availability and cold-start reliability must be tested with this app's exact jobs.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="risks">
+        <h2>Risks and Controls</h2>
+        <div class="grid two">
+          <article class="card">
+            <h3>Migration Risks</h3>
+            <ul>
+              <li>Endpoint contracts drift while moving route ownership.</li>
+              <li>Object storage listing semantics differ from filesystem traversal.</li>
+              <li>Queue retries can duplicate documents without idempotent writes.</li>
+              <li>Generated code execution can become unsafe if sandbox isolation weakens.</li>
+              <li>GPU migration may increase latency if model load and artifact transfer are slower.</li>
+            </ul>
+          </article>
+
+          <article class="card">
+            <h3>Controls</h3>
+            <ul>
+              <li>Snapshot response contracts before moving each endpoint.</li>
+              <li>Use adapter interfaces for storage, queues, and dictionary state.</li>
+              <li>Keep document IDs deterministic and writes idempotent.</li>
+              <li>Run old and new endpoints side by side during cutover.</li>
+              <li>Benchmark per workload instead of choosing one GPU provider globally.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <h2>Decision Gates</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Gate</th>
+              <th>Pass criteria</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Storage move</td>
+              <td>Source counts, latest timestamps, image retrieval, and key dashboards match Modal-backed results.</td>
+            </tr>
+            <tr>
+              <td>Route consolidation</td>
+              <td>P95 latency improves or stays flat, error rate is unchanged, and frontend views require no contract changes after Modal-owned read routes move into <code>backend/</code>.</td>
+            </tr>
+            <tr>
+              <td>CPU jobs move</td>
+              <td>Jobs write the same document schema, retry safely, and update freshness within current thresholds.</td>
+            </tr>
+            <tr>
+              <td>GPU move</td>
+              <td>Total cost per successful batch is lower or latency is materially better without lowering success rate.</td>
+            </tr>
+            <tr>
+              <td>Sandbox move</td>
+              <td>Generated code remains isolated, network access is controlled, output schema is preserved, and timeout behavior is predictable.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Source References</h2>
+        <p class="small source-list">
+          Code references: <code>frontend/src/api.ts</code>, <code>backend/main.py</code>,
+          <code>backend/shared_data.py</code>,
+          <code>modal_app/web.py</code>, <code>modal_app/volume.py</code>,
+          <code>modal_app/classify.py</code>, <code>modal_app/reconciler.py</code>,
+          <code>modal_app/pipelines/cctv.py</code>, <code>modal_app/pipelines/parking.py</code>,
+          <code>modal_app/pipelines/tiktok.py</code>, <code>modal_app/api/routes/analysis.py</code>,
+          <code>modal_app/agents.py</code>, and <code>modal_app/lead_analyst.py</code>.
+        </p>
+        <p class="small source-list">
+          Pricing and platform references:
+          <a href="https://modal.com/pricing">Modal pricing</a>,
+          <a href="https://cloud.google.com/run/pricing">Cloud Run pricing</a>,
+          <a href="https://docs.cloud.google.com/run/docs/configuring/jobs/gpu">Cloud Run GPU jobs</a>,
+          <a href="https://docs.runpod.io/pods/pricing">RunPod pricing docs</a>,
+          <a href="https://aws.amazon.com/id/batch/pricing/">AWS Batch pricing</a>, and
+          <a href="https://docs.aws.amazon.com/batch/latest/userguide/gpu-jobs.html">AWS Batch GPU jobs</a>.
+        </p>
+        <p class="small">Last reviewed: June 4, 2026.</p>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
