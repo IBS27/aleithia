@@ -8,10 +8,12 @@ export function computeBusinessMetrics(mockBusiness: MockBusiness): BusinessMetr
   const ordersById = new Map(mockBusiness.orders.map(order => [order.id, order]))
   const todayOrders = mockBusiness.orders.filter(order => order.openedAt.startsWith(TODAY))
   const weekOrders = mockBusiness.orders.filter(order => isWithinLastSevenDays(order.openedAt))
+  const dailyRevenueCents = computeDailyRevenue(weekOrders)
   const productMetrics = computeProductMetrics(mockBusiness, menuById, ordersById)
   const daypartRevenueCents = computeDaypartRevenue(todayOrders)
   const grossProfitCents = productMetrics.reduce((sum, item) => sum + item.grossProfitCents, 0)
   const revenueCents = weekOrders.reduce((sum, order) => sum + netOrderRevenue(order), 0)
+  const projectedWeekRevenueCents = projectWeeklyRevenue(dailyRevenueCents)
   const topHighMarginIds = new Set(
     productMetrics
       .filter(item => item.marginPct >= 65)
@@ -24,7 +26,8 @@ export function computeBusinessMetrics(mockBusiness: MockBusiness): BusinessMetr
   return {
     businessId: mockBusiness.business.id,
     todayRevenueCents: todayOrders.reduce((sum, order) => sum + netOrderRevenue(order), 0),
-    projectedWeekRevenueCents: Math.round(revenueCents * (7 / Math.max(1, countUniqueDays(weekOrders)))),
+    projectedWeekRevenueCents,
+    weekRevenueCents: revenueCents,
     grossProfitCents,
     averageOrderValueCents: todayOrders.length > 0
       ? Math.round(todayOrders.reduce((sum, order) => sum + netOrderRevenue(order), 0) / todayOrders.length)
@@ -34,6 +37,7 @@ export function computeBusinessMetrics(mockBusiness: MockBusiness): BusinessMetr
       todayOrders.reduce((sum, order) => sum + order.refundCents, 0),
       todayOrders.reduce((sum, order) => sum + order.totalCents, 0),
     ),
+    dailyRevenueCents,
     productMetrics,
     daypartRevenueCents,
     highMarginAttachRatePct: pct(highMarginOrderCount, Math.max(1, todayOrders.length)),
@@ -75,6 +79,31 @@ function computeProductMetrics(
   return [...metrics.values()].sort((a, b) => b.revenueCents - a.revenueCents)
 }
 
+function computeDailyRevenue(orders: Order[]): Array<{ date: string; revenueCents: number }> {
+  const byDate = new Map<string, number>()
+  orders.forEach(order => {
+    const date = order.openedAt.slice(0, 10)
+    byDate.set(date, (byDate.get(date) ?? 0) + netOrderRevenue(order))
+  })
+  return [...byDate.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, revenueCents]) => ({ date, revenueCents }))
+}
+
+function projectWeeklyRevenue(dailyRevenueCents: Array<{ revenueCents: number }>): number {
+  if (dailyRevenueCents.length === 0) return 0
+  const values = dailyRevenueCents.map(day => day.revenueCents)
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length
+  const recent = values.slice(-3)
+  const prior = values.slice(0, Math.max(1, values.length - recent.length))
+  const recentAverage = recent.reduce((sum, value) => sum + value, 0) / recent.length
+  const priorAverage = prior.reduce((sum, value) => sum + value, 0) / prior.length
+  const momentum = priorAverage > 0
+    ? Math.max(0.85, Math.min(1.15, recentAverage / priorAverage))
+    : 1
+  return Math.round(average * 7 * momentum)
+}
+
 function computeDaypartRevenue(orders: Order[]): Record<Daypart, number> {
   const revenue = Object.fromEntries(DAYPARTS.map(daypart => [daypart, 0])) as Record<Daypart, number>
   orders.forEach(order => {
@@ -96,10 +125,6 @@ function isWithinLastSevenDays(isoDate: string): boolean {
   const start = Date.UTC(2026, 4, 9)
   const end = Date.UTC(2026, 4, 16)
   return time >= start && time < end
-}
-
-function countUniqueDays(orders: Order[]): number {
-  return new Set(orders.map(order => order.openedAt.slice(0, 10))).size
 }
 
 function netOrderRevenue(order: Order): number {

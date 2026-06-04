@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from modal_app.api.routes import neighborhoods as neighborhoods_routes
 from modal_app.api.routes import vision as vision_routes
 from modal_app.api.routes.analysis import router as analysis_router
+from modal_app.api.routes.command import command_synthesis, router as command_router
 from modal_app.api.routes.core import router as core_router
 from modal_app.api.routes.graph import router as graph_router
 from modal_app.api.routes.legacy import router as legacy_router
@@ -42,6 +43,7 @@ for router in (
     vision_router,
     graph_router,
     analysis_router,
+    command_router,
 ):
     web_app.include_router(router)
 

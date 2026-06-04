@@ -7,6 +7,7 @@ import os
 
 DEFAULT_SOCIAL_TRENDS_MODEL = "gpt-5"
 DEFAULT_VISION_ASSESS_MODEL = "gpt-5-mini"
+DEFAULT_COMMAND_SYNTHESIS_MODEL = "gpt-5"
 
 
 def openai_available() -> bool:
@@ -22,6 +23,11 @@ def get_social_trends_model() -> str:
 def get_vision_assess_model() -> str:
     """Resolve model for vision assessment."""
     return os.environ.get("OPENAI_MODEL_VISION_ASSESS", DEFAULT_VISION_ASSESS_MODEL)
+
+
+def get_command_synthesis_model() -> str:
+    """Resolve model for command-page operator synthesis."""
+    return os.environ.get("OPENAI_MODEL_COMMAND_SYNTHESIS", DEFAULT_COMMAND_SYNTHESIS_MODEL)
 
 
 def is_gpt5_family_model(model_name: str) -> bool:

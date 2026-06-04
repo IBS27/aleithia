@@ -1,4 +1,5 @@
 import type { DataSources, GeoJSON, NeighborhoodData, Document, CCTVTimeseries, StreetscapeData, VisionAssessData, ParkingData, SocialTrendsData } from './types'
+import type { CommandAnalysisSnapshot, CommandSynthesis } from './business/types.ts'
 
 // Modal deployed endpoint — set via VITE_MODAL_URL, fallback to local proxy
 export const API_BASE = import.meta.env.VITE_MODAL_URL || '/api/data'
@@ -347,6 +348,13 @@ export const api = {
     const qs = businessType ? `?business_type=${encodeURIComponent(businessType)}` : ''
     return fetchJSON<SocialTrendsData>(`/social-trends/${encodeURIComponent(neighborhood)}${qs}`)
   },
+
+  commandSynthesis: (snapshot: CommandAnalysisSnapshot) =>
+    fetchJSON<CommandSynthesis>('/command/synthesis', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(snapshot),
+    }),
 }
 
 export interface GraphNode {

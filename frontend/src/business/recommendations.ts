@@ -26,12 +26,15 @@ function recommendHoursExtension(
   if (latestCloseMinute >= eveningDemandMinute) return null
 
   const dinnerRevenue = metrics.daypartRevenueCents.dinner + metrics.daypartRevenueCents.evening
-  const impact = Math.max(42_000, Math.round(dinnerRevenue * 0.22))
+  const demandGap = Math.max(0, context.eveningDemandIndex - 70) / 30
+  const impact = Math.max(42_000, Math.round(dinnerRevenue * (0.18 + demandGap * 0.12)))
 
   return {
     id: `${mockBusiness.id}-extend-hours-${context.neighborhood}`,
     title: mockBusiness.business.kind === 'coffee_shop' ? 'Extend Friday hours' : 'Add late dinner window',
     detail: 'Capture demand that remains active after current operating hours.',
+    whyNow: `${context.neighborhood} demand is strongest after the current close window.`,
+    nextStepLabel: 'Schedule hours',
     impactCentsPerWeek: impact,
     confidence: 0.82,
     effort: 'low',
@@ -60,7 +63,9 @@ function recommendHighMarginPush(
     id: `${mockBusiness.id}-high-margin-push-${context.neighborhood}`,
     title: mockBusiness.business.kind === 'coffee_shop' ? 'Bundle high-margin pastry' : 'Promote high-margin add-on',
     detail: `Increase attachment for ${highMarginProduct.name}, which has stronger margin than the current mix.`,
-    impactCentsPerWeek: Math.round(highMarginProduct.grossProfitCents * 0.18),
+    whyNow: `${highMarginProduct.name} has ${highMarginProduct.marginPct}% margin but is not carrying enough of the order mix.`,
+    nextStepLabel: mockBusiness.business.kind === 'coffee_shop' ? 'Update menu' : 'Promote add-on',
+    impactCentsPerWeek: Math.max(28_000, Math.round(highMarginProduct.grossProfitCents * 0.18)),
     confidence: 0.74,
     effort: 'low',
     evidence: [
@@ -82,6 +87,8 @@ function recommendStockoutFix(
     id: `${mockBusiness.id}-stockout-risk`,
     title: 'Reduce stockout risk',
     detail: `Protect peak-period sales for ${metrics.stockoutRiskItems.join(', ')}.`,
+    whyNow: 'Low inventory overlaps with the current peak demand pattern.',
+    nextStepLabel: 'Reorder items',
     impactCentsPerWeek: Math.round(metrics.todayRevenueCents * 0.08),
     confidence: 0.78,
     effort: 'medium',
@@ -102,6 +109,8 @@ function recommendComplianceWork(
     id: `${mockBusiness.id}-compliance-work-${context.neighborhood}`,
     title: 'Close inspection checklist gaps',
     detail: 'Address high-friction compliance items before the next inspection window.',
+    whyNow: `${context.neighborhood} inspection pressure is high, so avoidable downtime risk is elevated.`,
+    nextStepLabel: 'View checklist',
     impactCentsPerWeek: 79_000,
     confidence: 0.9,
     effort: 'low',
@@ -109,7 +118,7 @@ function recommendComplianceWork(
       `Inspection pressure is high in ${context.neighborhood}.`,
       'Refund and service issue patterns increase late-day operational risk.',
     ],
-    sources: ['neighborhood', 'pos'],
+    sources: ['compliance', 'neighborhood', 'pos'],
   }
 }
 
