@@ -1,11 +1,19 @@
-"""Shared dataset helpers for backend access to Modal Volume-backed raw and processed data."""
+"""Shared dataset helpers for backend access to portable raw and processed data."""
 
 from __future__ import annotations
 
 import fnmatch
+import hashlib
+import hmac
+import html
+import io
 import json
 import logging
 import os
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -20,6 +28,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODAL_VOLUME_NAME = "alethia-data"
 DEFAULT_RAW_PREFIX = "raw"
 DEFAULT_PROCESSED_PREFIX = "processed"
+DEFAULT_OBJECT_STORAGE_REGION = "us-east-1"
 
 _LAST_LOGGED_LAYOUT: tuple[str, str] | None = None
 _VOLUME: modal.Volume | None = None
@@ -31,6 +40,8 @@ class SharedDataAccessor(Protocol):
     def list_entries(self, relative_path: str, *, recursive: bool = False) -> list["SharedFileEntry"]: ...
 
     def read_bytes(self, relative_path: str) -> bytes: ...
+
+    def write_bytes(self, relative_path: str, data: bytes, *, content_type: str | None = None) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -73,6 +84,10 @@ class SharedDataPath:
         object.__setattr__(self, "relative_path", _normalize_relative_path(self.relative_path))
 
     def __str__(self) -> str:
+        display_uri = getattr(self.accessor, "display_uri", None)
+        if callable(display_uri):
+            return display_uri(self.relative_path)
+
         volume_name = os.getenv("ALEITHIA_MODAL_VOLUME_NAME", DEFAULT_MODAL_VOLUME_NAME).strip() or DEFAULT_MODAL_VOLUME_NAME
         return f"modal://{volume_name}/{self.relative_path}" if self.relative_path else f"modal://{volume_name}"
 
@@ -136,6 +151,15 @@ class SharedDataPath:
     def read_text(self, encoding: str = "utf-8") -> str:
         return self.read_bytes().decode(encoding)
 
+    def write_bytes(self, data: bytes, *, content_type: str | None = None) -> None:
+        write_bytes = getattr(self.accessor, "write_bytes", None)
+        if not callable(write_bytes):
+            raise OSError(f"Shared data accessor is read-only: {self}")
+        write_bytes(self.relative_path, data, content_type=content_type)
+
+    def write_text(self, data: str, encoding: str = "utf-8") -> None:
+        self.write_bytes(data.encode(encoding), content_type="text/plain; charset=utf-8")
+
     def iterdir(self) -> list["SharedDataPath"]:
         return [SharedDataPath(self.accessor, entry.path) for entry in self.accessor.list_entries(self.relative_path)]
 
@@ -155,6 +179,11 @@ class SharedDataPaths:
 class ModalVolumeAccessor:
     def __init__(self, volume: modal.Volume):
         self._volume = volume
+        self._volume_name = os.getenv("ALEITHIA_MODAL_VOLUME_NAME", DEFAULT_MODAL_VOLUME_NAME).strip() or DEFAULT_MODAL_VOLUME_NAME
+
+    def display_uri(self, relative_path: str) -> str:
+        normalized = _normalize_relative_path(relative_path)
+        return f"modal://{self._volume_name}/{normalized}" if normalized else f"modal://{self._volume_name}"
 
     def _entry_from_modal(self, entry: object) -> SharedFileEntry | None:
         entry_path = getattr(entry, "path", None)
@@ -203,6 +232,372 @@ class ModalVolumeAccessor:
             chunks.append(chunk)
         return b"".join(chunks)
 
+    def write_bytes(self, relative_path: str, data: bytes, *, content_type: str | None = None) -> None:
+        del content_type
+        normalized = _normalize_relative_path(relative_path)
+        with self._volume.batch_upload(force=True) as batch:
+            batch.put_file(io.BytesIO(data), f"/{normalized}")
+
+
+class ObjectStorageError(RuntimeError):
+    """Raised when the configured object storage backend cannot serve a request."""
+
+
+class S3ObjectStorageAccessor:
+    """S3-compatible shared-data accessor for S3, R2, and compatible object stores."""
+
+    def __init__(
+        self,
+        *,
+        bucket: str,
+        prefix: str = "",
+        endpoint_url: str | None = None,
+        region: str = DEFAULT_OBJECT_STORAGE_REGION,
+        access_key_id: str = "",
+        secret_access_key: str = "",
+        session_token: str = "",
+        timeout_seconds: float = 10.0,
+    ):
+        bucket = bucket.strip()
+        if not bucket:
+            raise ValueError("ALEITHIA_OBJECT_STORAGE_BUCKET is required when ALEITHIA_SHARED_DATA_BACKEND=s3")
+
+        self.bucket = bucket
+        self.prefix = _normalize_relative_path(prefix)
+        self.region = region.strip() or DEFAULT_OBJECT_STORAGE_REGION
+        self.access_key_id = access_key_id.strip()
+        self.secret_access_key = secret_access_key
+        self.session_token = session_token.strip()
+        self.timeout_seconds = timeout_seconds
+        self.endpoint_url = (endpoint_url or f"https://s3.{self.region}.amazonaws.com").rstrip("/")
+
+    @classmethod
+    def from_env(cls) -> "S3ObjectStorageAccessor":
+        timeout_raw = os.getenv("ALEITHIA_OBJECT_STORAGE_TIMEOUT_SECONDS", "10").strip()
+        try:
+            timeout_seconds = float(timeout_raw)
+        except ValueError:
+            timeout_seconds = 10.0
+
+        return cls(
+            bucket=(
+                os.getenv("ALEITHIA_OBJECT_STORAGE_BUCKET")
+                or os.getenv("ALEITHIA_S3_BUCKET")
+                or ""
+            ),
+            prefix=(
+                os.getenv("ALEITHIA_OBJECT_STORAGE_PREFIX")
+                or os.getenv("ALEITHIA_S3_PREFIX")
+                or ""
+            ),
+            endpoint_url=(
+                os.getenv("ALEITHIA_OBJECT_STORAGE_ENDPOINT_URL")
+                or os.getenv("ALEITHIA_S3_ENDPOINT_URL")
+                or None
+            ),
+            region=(
+                os.getenv("ALEITHIA_OBJECT_STORAGE_REGION")
+                or os.getenv("AWS_REGION")
+                or os.getenv("AWS_DEFAULT_REGION")
+                or DEFAULT_OBJECT_STORAGE_REGION
+            ),
+            access_key_id=(
+                os.getenv("ALEITHIA_OBJECT_STORAGE_ACCESS_KEY_ID")
+                or os.getenv("AWS_ACCESS_KEY_ID")
+                or ""
+            ),
+            secret_access_key=(
+                os.getenv("ALEITHIA_OBJECT_STORAGE_SECRET_ACCESS_KEY")
+                or os.getenv("AWS_SECRET_ACCESS_KEY")
+                or ""
+            ),
+            session_token=(
+                os.getenv("ALEITHIA_OBJECT_STORAGE_SESSION_TOKEN")
+                or os.getenv("AWS_SESSION_TOKEN")
+                or ""
+            ),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def display_uri(self, relative_path: str) -> str:
+        key = self._object_key(relative_path)
+        return f"s3://{self.bucket}/{key}" if key else f"s3://{self.bucket}"
+
+    def _object_key(self, relative_path: str) -> str:
+        normalized = _normalize_relative_path(relative_path)
+        if self.prefix and normalized:
+            return f"{self.prefix}/{normalized}"
+        return self.prefix or normalized
+
+    def _relative_from_key(self, key: str) -> str:
+        key = key.strip("/")
+        if self.prefix:
+            prefix = f"{self.prefix}/"
+            if key == self.prefix:
+                return ""
+            if not key.startswith(prefix):
+                return ""
+            key = key[len(prefix):]
+        return key.strip("/")
+
+    def _url_for_key(self, key: str, query: Mapping[str, str] | None = None) -> str:
+        encoded_bucket = urllib.parse.quote(self.bucket, safe="")
+        encoded_key = "/".join(urllib.parse.quote(part, safe="-_.~") for part in key.split("/") if part)
+        path = f"/{encoded_bucket}"
+        if encoded_key:
+            path = f"{path}/{encoded_key}"
+        query_string = _canonical_query_string(query or {})
+        return f"{self.endpoint_url}{path}{f'?{query_string}' if query_string else ''}"
+
+    def _signing_headers(
+        self,
+        *,
+        method: str,
+        url: str,
+        body: bytes,
+        extra_headers: Mapping[str, str],
+    ) -> dict[str, str]:
+        parsed = urllib.parse.urlparse(url)
+        payload_hash = hashlib.sha256(body).hexdigest()
+        headers = {
+            "host": parsed.netloc,
+            "x-amz-content-sha256": payload_hash,
+            "x-amz-date": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
+            **{key.lower(): value for key, value in extra_headers.items()},
+        }
+        if self.session_token:
+            headers["x-amz-security-token"] = self.session_token
+
+        if not self.access_key_id or not self.secret_access_key:
+            return headers
+
+        signed_header_names = sorted(headers)
+        canonical_headers = "".join(f"{name}:{headers[name].strip()}\n" for name in signed_header_names)
+        canonical_request = "\n".join(
+            [
+                method.upper(),
+                parsed.path or "/",
+                parsed.query,
+                canonical_headers,
+                ";".join(signed_header_names),
+                payload_hash,
+            ]
+        )
+        date_stamp = headers["x-amz-date"][:8]
+        credential_scope = f"{date_stamp}/{self.region}/s3/aws4_request"
+        string_to_sign = "\n".join(
+            [
+                "AWS4-HMAC-SHA256",
+                headers["x-amz-date"],
+                credential_scope,
+                hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+            ]
+        )
+        signing_key = _aws_sigv4_signing_key(self.secret_access_key, date_stamp, self.region, "s3")
+        signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+        headers["authorization"] = (
+            "AWS4-HMAC-SHA256 "
+            f"Credential={self.access_key_id}/{credential_scope}, "
+            f"SignedHeaders={';'.join(signed_header_names)}, "
+            f"Signature={signature}"
+        )
+        return headers
+
+    def _request(
+        self,
+        method: str,
+        key: str = "",
+        *,
+        query: Mapping[str, str] | None = None,
+        body: bytes = b"",
+        headers: Mapping[str, str] | None = None,
+    ) -> tuple[int, Mapping[str, str], bytes]:
+        url = self._url_for_key(key, query)
+        signed_headers = self._signing_headers(
+            method=method,
+            url=url,
+            body=body,
+            extra_headers=headers or {},
+        )
+        request = urllib.request.Request(
+            url,
+            data=body if method.upper() in {"POST", "PUT"} else None,
+            headers={key: value for key, value in signed_headers.items()},
+            method=method.upper(),
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                return int(getattr(response, "status", 200) or 200), response.headers, response.read()
+        except urllib.error.HTTPError as exc:
+            raise ObjectStorageError(f"object storage {method.upper()} {key or '/'} failed with {exc.code}") from exc
+        except urllib.error.URLError as exc:
+            raise ObjectStorageError(f"object storage {method.upper()} {key or '/'} failed: {exc}") from exc
+
+    def get_entry(self, relative_path: str) -> SharedFileEntry | None:
+        normalized = _normalize_relative_path(relative_path)
+        if not normalized:
+            return SharedFileEntry(path="", is_file=False, is_dir=True, mtime=0.0, size=0)
+
+        key = self._object_key(normalized)
+        try:
+            _, headers, _ = self._request("HEAD", key)
+            return SharedFileEntry(
+                path=normalized,
+                is_file=True,
+                is_dir=False,
+                mtime=_parse_http_mtime(headers.get("Last-Modified")),
+                size=int(headers.get("Content-Length") or 0),
+            )
+        except ObjectStorageError as exc:
+            if " with 404" not in str(exc):
+                return None
+
+        dir_prefix = f"{key.rstrip('/')}/"
+        try:
+            _, _, raw = self._request(
+                "GET",
+                "",
+                query={"list-type": "2", "prefix": dir_prefix, "max-keys": "1"},
+            )
+        except ObjectStorageError:
+            return None
+        entries, is_truncated, _token = self._parse_list_response(raw, base_relative=normalized, recursive=True)
+        del is_truncated, _token
+        return SharedFileEntry(path=normalized, is_file=False, is_dir=True, mtime=0.0, size=0) if entries else None
+
+    def list_entries(self, relative_path: str, *, recursive: bool = False) -> list[SharedFileEntry]:
+        normalized = _normalize_relative_path(relative_path)
+        prefix_key = self._object_key(normalized)
+        if prefix_key:
+            prefix_key = f"{prefix_key.rstrip('/')}/"
+
+        entries: list[SharedFileEntry] = []
+        token = ""
+        while True:
+            query = {"list-type": "2", "prefix": prefix_key}
+            if not recursive:
+                query["delimiter"] = "/"
+            if token:
+                query["continuation-token"] = token
+            try:
+                _, _, raw = self._request("GET", "", query=query)
+            except ObjectStorageError:
+                return []
+            page_entries, is_truncated, token = self._parse_list_response(
+                raw,
+                base_relative=normalized,
+                recursive=recursive,
+            )
+            entries.extend(page_entries)
+            if not is_truncated or not token:
+                break
+        return entries
+
+    def read_bytes(self, relative_path: str) -> bytes:
+        _, _, raw = self._request("GET", self._object_key(relative_path))
+        return raw
+
+    def write_bytes(self, relative_path: str, data: bytes, *, content_type: str | None = None) -> None:
+        headers = {"content-type": content_type} if content_type else {}
+        self._request("PUT", self._object_key(relative_path), body=data, headers=headers)
+
+    def _parse_list_response(
+        self,
+        raw: bytes,
+        *,
+        base_relative: str,
+        recursive: bool,
+    ) -> tuple[list[SharedFileEntry], bool, str]:
+        del recursive
+        text = raw.decode("utf-8", errors="replace")
+
+        entries: list[SharedFileEntry] = []
+        seen: set[str] = set()
+        base_path = PurePosixPath(base_relative) if base_relative else PurePosixPath()
+        for item in _xml_blocks(text, "Contents"):
+            key = (_xml_text(item, "Key") or "").strip()
+            relative = self._relative_from_key(key)
+            if not relative or relative == base_relative:
+                continue
+            try:
+                rel_to_base = PurePosixPath(relative).relative_to(base_path) if base_relative else PurePosixPath(relative)
+            except ValueError:
+                continue
+            if str(rel_to_base) in {"", "."}:
+                continue
+            size = int(_xml_text(item, "Size") or 0)
+            mtime = _parse_s3_mtime(_xml_text(item, "LastModified"))
+            if relative not in seen:
+                entries.append(SharedFileEntry(path=relative, is_file=True, is_dir=False, mtime=mtime, size=size))
+                seen.add(relative)
+
+        for item in _xml_blocks(text, "CommonPrefixes"):
+            key = (_xml_text(item, "Prefix") or "").strip().rstrip("/")
+            relative = self._relative_from_key(key)
+            if not relative or relative == base_relative:
+                continue
+            try:
+                rel_to_base = PurePosixPath(relative).relative_to(base_path) if base_relative else PurePosixPath(relative)
+            except ValueError:
+                continue
+            if str(rel_to_base) in {"", "."}:
+                continue
+            if relative not in seen:
+                entries.append(SharedFileEntry(path=relative, is_file=False, is_dir=True, mtime=0.0, size=0))
+                seen.add(relative)
+
+        is_truncated = (_xml_text(text, "IsTruncated") or "").strip().lower() == "true"
+        next_token = (_xml_text(text, "NextContinuationToken") or "").strip()
+        return entries, is_truncated, next_token
+
+
+def _canonical_query_string(query: Mapping[str, str]) -> str:
+    pairs = []
+    for key, value in sorted((str(k), str(v)) for k, v in query.items()):
+        pairs.append(
+            f"{urllib.parse.quote(key, safe='-_.~')}={urllib.parse.quote(value, safe='-_.~')}"
+        )
+    return "&".join(pairs)
+
+
+def _xml_blocks(text: str, tag: str) -> list[str]:
+    pattern = rf"<(?:[A-Za-z0-9_.-]+:)?{re.escape(tag)}\b[^>]*>(.*?)</(?:[A-Za-z0-9_.-]+:)?{re.escape(tag)}>"
+    return [match.group(1) for match in re.finditer(pattern, text, flags=re.DOTALL)]
+
+
+def _xml_text(text: str, tag: str) -> str:
+    blocks = _xml_blocks(text, tag)
+    return html.unescape(blocks[0].strip()) if blocks else ""
+
+
+def _aws_sigv4_signing_key(secret_key: str, date_stamp: str, region: str, service: str) -> bytes:
+    date_key = hmac.new(f"AWS4{secret_key}".encode("utf-8"), date_stamp.encode("utf-8"), hashlib.sha256).digest()
+    region_key = hmac.new(date_key, region.encode("utf-8"), hashlib.sha256).digest()
+    service_key = hmac.new(region_key, service.encode("utf-8"), hashlib.sha256).digest()
+    return hmac.new(service_key, b"aws4_request", hashlib.sha256).digest()
+
+
+def _parse_s3_mtime(value: str | None) -> float:
+    if not value:
+        return 0.0
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _parse_http_mtime(value: str | None) -> float:
+    if not value:
+        return 0.0
+    try:
+        from email.utils import parsedate_to_datetime
+
+        parsed = parsedate_to_datetime(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except (TypeError, ValueError):
+        return 0.0
 
 def _get_volume() -> modal.Volume:
     global _VOLUME
@@ -216,7 +611,15 @@ def _get_volume() -> modal.Volume:
 
 
 def _get_accessor() -> SharedDataAccessor:
-    return ModalVolumeAccessor(_get_volume())
+    backend = os.getenv("ALEITHIA_SHARED_DATA_BACKEND", "modal").strip().lower()
+    if backend in {"", "modal", "modal-volume", "volume"}:
+        return ModalVolumeAccessor(_get_volume())
+    if backend in {"s3", "r2", "gcs", "object", "object-storage"}:
+        return S3ObjectStorageAccessor.from_env()
+    raise ValueError(
+        "Unsupported ALEITHIA_SHARED_DATA_BACKEND="
+        f"{backend!r}; expected 'modal' or 's3'"
+    )
 
 
 def get_shared_data_paths() -> SharedDataPaths:
@@ -231,7 +634,7 @@ def get_shared_data_paths() -> SharedDataPaths:
     if layout != _LAST_LOGGED_LAYOUT:
         _LAST_LOGGED_LAYOUT = layout
         logger.info(
-            "Resolved Aleithia shared data roots from Modal Volume: raw=%s processed=%s",
+            "Resolved Aleithia shared data roots: raw=%s processed=%s",
             paths.raw_dir,
             paths.processed_dir,
         )

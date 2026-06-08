@@ -5,11 +5,13 @@ import copy
 import json
 import re
 import urllib.request
-from pathlib import Path
 
 from backend.read_helpers import filter_docs_by_neighborhood_match
 from backend.shared_data import (
+    get_processed_data_dir,
+    get_raw_data_dir,
     load_first_existing_json,
+    load_json_file,
     load_json_docs_from_directory,
     scan_source_directories,
 )
@@ -21,17 +23,17 @@ from modal_app.common import (
     detect_neighborhood,
     neighborhood_to_ca,
 )
-from modal_app.volume import PROCESSED_DATA_PATH, RAW_DATA_PATH, volume
 
 _COUNT_ONLY_RE = re.compile(r"^\s*\d[\d,.\s]*[KMBkmb]?\s*$")
 
 
 def load_docs(source: str, limit: int = 200) -> list[dict]:
-    """Load documents from a source directory on the volume."""
-    cache_key = f"docs:{source}:{limit}"
+    """Load documents from a source directory in the shared dataset."""
+    raw_dir = get_raw_data_dir()
+    cache_key = f"docs:{raw_dir}:{source}:{limit}"
 
     def _loader() -> list[dict]:
-        source_dir = Path(RAW_DATA_PATH) / source
+        source_dir = raw_dir / source
         return load_json_docs_from_directory(
             source_dir,
             limit=limit,
@@ -229,15 +231,16 @@ def filter_news_relevance(
 
 
 def load_demographics_summary() -> dict:
+    processed_dir = get_processed_data_dir()
     candidate_paths = [
-        Path(PROCESSED_DATA_PATH) / "demographics_summary.json",
-        Path(PROCESSED_DATA_PATH) / "summaries" / "demographics_summary.json",
+        processed_dir / "demographics_summary.json",
+        processed_dir / "summaries" / "demographics_summary.json",
     ]
 
     def _loader() -> dict:
         return load_first_existing_json(candidate_paths, default={})
 
-    return copy.deepcopy(cache.get_or_set("demographics:summary", 60.0, _loader))
+    return copy.deepcopy(cache.get_or_set(f"demographics:summary:{processed_dir}", 60.0, _loader))
 
 
 def aggregate_demographics(neighborhood: str) -> dict:
@@ -255,14 +258,13 @@ def aggregate_city_demographics() -> dict:
 
 
 def load_cta_stations() -> list[dict]:
-    cache_path = Path(PROCESSED_DATA_PATH) / "cache" / "cta_stations.json"
+    processed_dir = get_processed_data_dir()
+    cache_path = processed_dir / "cache" / "cta_stations.json"
 
     def _loader() -> list[dict]:
-        if cache_path.exists():
-            try:
-                return json.loads(cache_path.read_text())
-            except Exception:
-                pass
+        cached = load_json_file(cache_path, default=None)
+        if isinstance(cached, list):
+            return cached
 
         try:
             url = "https://data.cityofchicago.org/resource/8pix-ypme.json?$limit=500"
@@ -288,15 +290,16 @@ def load_cta_stations() -> list[dict]:
                     seen.add(station["station_name"])
                     deduped.append(station)
 
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            cache_path.write_text(json.dumps(deduped, indent=2))
-            volume.commit()
+            try:
+                cache_path.write_text(json.dumps(deduped, indent=2))
+            except Exception as exc:
+                print(f"_load_cta_stations: cache write failed: {exc}")
             return deduped
         except Exception as exc:
             print(f"_load_cta_stations: fetch failed: {exc}")
             return []
 
-    return copy.deepcopy(cache.get_or_set("cta:stations", 3600.0, _loader))
+    return copy.deepcopy(cache.get_or_set(f"cta:stations:{processed_dir}", 3600.0, _loader))
 
 
 def compute_transit_score(neighborhood_name: str) -> dict:
@@ -351,13 +354,14 @@ def compute_transit_score(neighborhood_name: str) -> dict:
 
 def get_source_stats() -> dict[str, dict]:
     """Shared source scan used by status/metrics/sources/summary."""
+    raw_dir = get_raw_data_dir()
 
     def _loader() -> dict[str, dict]:
         return scan_source_directories(
-            {source: Path(RAW_DATA_PATH) / source for source in NON_SENSOR_PIPELINE_SOURCES}
+            {source: raw_dir / source for source in NON_SENSOR_PIPELINE_SOURCES}
         )
 
-    raw_stats = cache.get_or_set("sources:stats", 15.0, _loader)
+    raw_stats = cache.get_or_set(f"sources:stats:{raw_dir}", 15.0, _loader)
     copied: dict[str, dict] = {}
     for source, data in raw_stats.items():
         copied[source] = {

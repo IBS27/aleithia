@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import urllib.parse
 
 from tests.backend_test_helpers import StrictRecursiveAccessor, install_local_accessor, write_json
 
@@ -17,6 +18,124 @@ def test_shared_data_resolution_prefers_env_over_detected_layout(tmp_path, monke
     assert shared_data.get_raw_data_dir().relative_path == "raw"
     assert shared_data.get_processed_data_dir().relative_path == "processed"
     assert str(shared_data.get_raw_data_dir()).startswith("modal://")
+
+
+def test_shared_data_can_resolve_explicit_object_storage_backend(monkeypatch) -> None:
+    monkeypatch.setenv("ALEITHIA_SHARED_DATA_BACKEND", "s3")
+    monkeypatch.setenv("ALEITHIA_OBJECT_STORAGE_BUCKET", "alethia-data-portable")
+    monkeypatch.setenv("ALEITHIA_OBJECT_STORAGE_PREFIX", "runtime")
+    monkeypatch.setenv("ALEITHIA_OBJECT_STORAGE_ENDPOINT_URL", "https://objects.example")
+    shared_data._LAST_LOGGED_LAYOUT = None
+    shared_data._VOLUME = None
+
+    paths = shared_data.get_shared_data_paths()
+
+    assert isinstance(paths.raw_dir.accessor, shared_data.S3ObjectStorageAccessor)
+    assert str(paths.raw_dir) == "s3://alethia-data-portable/runtime/raw"
+    assert str(paths.processed_dir) == "s3://alethia-data-portable/runtime/processed"
+
+
+class _FakeObjectStorageResponse:
+    def __init__(self, body: bytes = b"", *, status: int = 200, headers: dict[str, str] | None = None):
+        self._body = body
+        self.status = status
+        self.headers = headers or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        return False
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def test_s3_object_storage_accessor_lists_reads_and_writes(monkeypatch) -> None:
+    objects = {
+        "runtime/raw/news/current.json": b'{"id":"current","title":"Current"}',
+        "runtime/raw/news/2026/doc.json": b'{"id":"nested","title":"Nested"}',
+    }
+    uploads: dict[str, bytes] = {}
+
+    def _key_from_url(url: str) -> str:
+        parsed = urllib.parse.urlparse(url)
+        parts = [urllib.parse.unquote(part) for part in parsed.path.strip("/").split("/")]
+        return "/".join(parts[1:])
+
+    def _list_xml(prefix: str, recursive: bool) -> bytes:
+        if recursive:
+            body = """
+              <ListBucketResult>
+                <Contents>
+                  <Key>runtime/raw/news/current.json</Key>
+                  <LastModified>2026-04-28T00:03:00Z</LastModified>
+                  <Size>34</Size>
+                </Contents>
+                <Contents>
+                  <Key>runtime/raw/news/2026/doc.json</Key>
+                  <LastModified>2026-04-28T00:04:00Z</LastModified>
+                  <Size>33</Size>
+                </Contents>
+                <IsTruncated>false</IsTruncated>
+              </ListBucketResult>
+            """
+        else:
+            assert prefix == "runtime/raw/news/"
+            body = """
+              <ListBucketResult>
+                <Contents>
+                  <Key>runtime/raw/news/current.json</Key>
+                  <LastModified>2026-04-28T00:03:00Z</LastModified>
+                  <Size>34</Size>
+                </Contents>
+                <CommonPrefixes>
+                  <Prefix>runtime/raw/news/2026/</Prefix>
+                </CommonPrefixes>
+                <IsTruncated>false</IsTruncated>
+              </ListBucketResult>
+            """
+        return body.encode("utf-8")
+
+    def fake_urlopen(request, timeout=0):
+        del timeout
+        parsed = urllib.parse.urlparse(request.full_url)
+        query = urllib.parse.parse_qs(parsed.query)
+        method = request.get_method()
+        if method == "GET" and query.get("list-type") == ["2"]:
+            prefix = query.get("prefix", [""])[0]
+            recursive = "delimiter" not in query
+            return _FakeObjectStorageResponse(_list_xml(prefix, recursive))
+
+        key = _key_from_url(request.full_url)
+        if method == "GET":
+            return _FakeObjectStorageResponse(objects[key])
+        if method == "PUT":
+            uploads[key] = request.data or b""
+            return _FakeObjectStorageResponse()
+        raise AssertionError(f"unexpected object storage request: {method} {request.full_url}")
+
+    monkeypatch.setattr(shared_data.urllib.request, "urlopen", fake_urlopen)
+    accessor = shared_data.S3ObjectStorageAccessor(
+        bucket="alethia-data-portable",
+        prefix="runtime",
+        endpoint_url="https://objects.example",
+        timeout_seconds=1,
+    )
+
+    news_dir = shared_data.SharedDataPath(accessor, "raw/news")
+    immediate = accessor.list_entries("raw/news")
+    assert {(entry.path, entry.is_dir) for entry in immediate} == {
+        ("raw/news/2026", True),
+        ("raw/news/current.json", False),
+    }
+
+    docs = shared_data.load_json_docs_from_directory(news_dir)
+    assert {doc["id"] for doc in docs} == {"current", "nested"}
+
+    out_path = shared_data.SharedDataPath(accessor, "processed/summaries/news_summary.json")
+    out_path.write_text('{"count":2}')
+    assert uploads["runtime/processed/summaries/news_summary.json"] == b'{"count":2}'
 
 
 def test_load_raw_docs_recurses_and_skips_invalid_payloads(tmp_path, monkeypatch) -> None:

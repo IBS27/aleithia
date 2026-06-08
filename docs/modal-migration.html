@@ -210,6 +210,12 @@
       font-size: 0.9rem;
     }
 
+    .page-start {
+      margin-top: 46px;
+      padding-top: 30px;
+      border-top: 2px solid var(--line);
+    }
+
     .source-list a {
       color: var(--accent);
       text-decoration: none;
@@ -262,9 +268,9 @@
         <a href="#workload-map">Workload map</a>
         <a href="#target-architecture">Target architecture</a>
         <a href="#migration-plan">Migration plan</a>
-        <a href="#step-1-baseline">Step 1 baseline</a>
         <a href="#cost-speed">Cost and speed</a>
         <a href="#risks">Risks</a>
+        <a href="#implementation-page">Implementation log</a>
       </nav>
     </div>
   </header>
@@ -512,6 +518,166 @@
         </ol>
       </section>
 
+      <section>
+        <h2>Important Non-Goal</h2>
+        <div class="callout risk">
+          Do not collapse everything into the web backend. The backend should serve API requests.
+          Workers should run separately. GPU jobs should stay isolated. Sandbox execution should stay
+          isolated. Putting all of that into one server would make the app harder to operate and slower
+          under load.
+        </div>
+      </section>
+
+      <section id="cost-speed">
+        <h2>Cost and Speed Notes</h2>
+        <div class="callout risk">
+          Pricing changes. Treat the numbers below as current reference points to verify before a final
+          decision, not as fixed commitments.
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Platform</th>
+              <th>Useful fit</th>
+              <th>Cost and performance notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Modal</td>
+              <td>Bursty Python jobs, GPU inference, quick scheduling, snapshots, sandbox, and volume-mounted data.</td>
+              <td>
+                Public pricing lists T4 at about <code>$0.000164/sec</code>, A10 at about
+                <code>$0.000306/sec</code>, CPU by core-second, and Volume storage by GiB-month.
+                It is often cost-effective for spiky GPU jobs because idle GPU time is avoided.
+              </td>
+            </tr>
+            <tr>
+              <td>Cloud Run</td>
+              <td>Optional hosting for the existing backend, CPU jobs, and some GPU batch/inference on L4 or RTX Pro 6000.</td>
+              <td>
+                Good fit if the existing backend needs production hosting outside local development,
+                and for CPU ingestion jobs. GPU jobs are fully managed, but L4 requires minimum CPU
+                and memory, and GPU is billed for the instance lifecycle.
+              </td>
+            </tr>
+            <tr>
+              <td>AWS Batch or ECS</td>
+              <td>Scheduled and batch jobs, especially if the project already uses AWS.</td>
+              <td>
+                AWS Batch has no additional Batch charge, but you pay for EC2, Fargate, storage, logs,
+                network, and queue resources. Operational setup is heavier than Modal.
+              </td>
+            </tr>
+            <tr>
+              <td>RunPod</td>
+              <td>GPU experimentation and potentially cheaper GPU batch jobs.</td>
+              <td>
+                Can be attractive for GPU cost, but storage should not become the source of truth.
+                Availability and cold-start reliability must be tested with this app's exact jobs.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="risks">
+        <h2>Risks and Controls</h2>
+        <div class="grid two">
+          <article class="card">
+            <h3>Migration Risks</h3>
+            <ul>
+              <li>Endpoint contracts drift while moving route ownership.</li>
+              <li>Object storage listing semantics differ from filesystem traversal.</li>
+              <li>Queue retries can duplicate documents without idempotent writes.</li>
+              <li>Generated code execution can become unsafe if sandbox isolation weakens.</li>
+              <li>GPU migration may increase latency if model load and artifact transfer are slower.</li>
+            </ul>
+          </article>
+
+          <article class="card">
+            <h3>Controls</h3>
+            <ul>
+              <li>Snapshot response contracts before moving each endpoint.</li>
+              <li>Use adapter interfaces for storage, queues, and dictionary state.</li>
+              <li>Keep document IDs deterministic and writes idempotent.</li>
+              <li>Run old and new endpoints side by side during cutover.</li>
+              <li>Benchmark per workload instead of choosing one GPU provider globally.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <h2>Decision Gates</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Gate</th>
+              <th>Pass criteria</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Storage move</td>
+              <td>Source counts, latest timestamps, image retrieval, and key dashboards match Modal-backed results.</td>
+            </tr>
+            <tr>
+              <td>Route consolidation</td>
+              <td>P95 latency improves or stays flat, error rate is unchanged, and frontend views require no contract changes after Modal-owned read routes move into <code>backend/</code>.</td>
+            </tr>
+            <tr>
+              <td>CPU jobs move</td>
+              <td>Jobs write the same document schema, retry safely, and update freshness within current thresholds.</td>
+            </tr>
+            <tr>
+              <td>GPU move</td>
+              <td>Total cost per successful batch is lower or latency is materially better without lowering success rate.</td>
+            </tr>
+            <tr>
+              <td>Sandbox move</td>
+              <td>Generated code remains isolated, network access is controlled, output schema is preserved, and timeout behavior is predictable.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Source References</h2>
+        <p class="small source-list">
+          Code references: <code>frontend/src/api.ts</code>, <code>backend/main.py</code>,
+          <code>backend/shared_data.py</code>,
+          <code>modal_app/web.py</code>, <code>modal_app/volume.py</code>,
+          <code>modal_app/classify.py</code>, <code>modal_app/reconciler.py</code>,
+          <code>modal_app/pipelines/cctv.py</code>, <code>modal_app/pipelines/parking.py</code>,
+          <code>modal_app/pipelines/tiktok.py</code>, <code>modal_app/api/routes/analysis.py</code>,
+          <code>modal_app/agents.py</code>, and <code>modal_app/lead_analyst.py</code>.
+        </p>
+        <p class="small source-list">
+          Pricing and platform references:
+          <a href="https://modal.com/pricing">Modal pricing</a>,
+          <a href="https://cloud.google.com/run/pricing">Cloud Run pricing</a>,
+          <a href="https://docs.cloud.google.com/run/docs/configuring/jobs/gpu">Cloud Run GPU jobs</a>,
+          <a href="https://docs.runpod.io/pods/pricing">RunPod pricing docs</a>,
+          <a href="https://aws.amazon.com/id/batch/pricing/">AWS Batch pricing</a>, and
+          <a href="https://docs.aws.amazon.com/batch/latest/userguide/gpu-jobs.html">AWS Batch GPU jobs</a>.
+        </p>
+        <p class="small">Last reviewed: June 4, 2026.</p>
+      </section>
+
+      <section id="implementation-page" class="page-start">
+        <h2>Implementation Page</h2>
+        <p>
+          This page tracks implementation work that has already started. The main brief stays focused
+          on the migration plan, risks, and decision gates; completed or in-progress step details live here.
+        </p>
+        <nav aria-label="Implementation sections">
+          <a href="#step-1-baseline">Step 1 baseline</a>
+          <a href="#step-2-storage">Step 2 storage</a>
+        </nav>
+      </section>
+
       <section id="step-1-baseline">
         <h2>Step 1 Baseline</h2>
         <p>
@@ -750,153 +916,74 @@
         </table>
       </section>
 
-      <section>
-        <h2>Important Non-Goal</h2>
-        <div class="callout risk">
-          Do not collapse everything into the web backend. The backend should serve API requests.
-          Workers should run separately. GPU jobs should stay isolated. Sandbox execution should stay
-          isolated. Putting all of that into one server would make the app harder to operate and slower
-          under load.
-        </div>
-      </section>
+      <section id="step-2-storage">
+        <h2>Step 2 Storage Implementation</h2>
+        <p>
+          The backend shared-data layer now has an explicit S3-compatible object-storage accessor
+          beside the existing Modal Volume accessor, and the Modal document service resolves raw
+          and processed JSON reads through that same shared-data layer. Modal remains the default.
+          Object storage is only used when configured through environment variables, so local and
+          Modal-backed reads do not silently switch data roots.
+        </p>
 
-      <section id="cost-speed">
-        <h2>Cost and Speed Notes</h2>
-        <div class="callout risk">
-          Pricing changes. Treat the numbers below as current reference points to verify before a final
-          decision, not as fixed commitments.
+        <div class="callout ok">
+          <strong>Implemented:</strong> <code>backend/shared_data.py</code> can list, stat, read, and
+          write shared paths through either <code>modal://</code> or <code>s3://</code> roots while
+          preserving the existing <code>raw</code> and <code>processed</code> path contract.
+          <code>modal_app/api/services/documents.py</code> now uses those shared roots for document,
+          demographics, CTA cache, and source freshness reads.
         </div>
 
         <table>
           <thead>
             <tr>
-              <th>Platform</th>
-              <th>Useful fit</th>
-              <th>Cost and performance notes</th>
+              <th>Setting</th>
+              <th>Purpose</th>
+              <th>Example</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td>Modal</td>
-              <td>Bursty Python jobs, GPU inference, quick scheduling, snapshots, sandbox, and volume-mounted data.</td>
-              <td>
-                Public pricing lists T4 at about <code>$0.000164/sec</code>, A10 at about
-                <code>$0.000306/sec</code>, CPU by core-second, and Volume storage by GiB-month.
-                It is often cost-effective for spiky GPU jobs because idle GPU time is avoided.
-              </td>
+              <td><code>ALEITHIA_SHARED_DATA_BACKEND</code></td>
+              <td>Selects the storage backend. Defaults to <code>modal</code>.</td>
+              <td><code>s3</code></td>
             </tr>
             <tr>
-              <td>Cloud Run</td>
-              <td>Optional hosting for the existing backend, CPU jobs, and some GPU batch/inference on L4 or RTX Pro 6000.</td>
-              <td>
-                Good fit if the existing backend needs production hosting outside local development,
-                and for CPU ingestion jobs. GPU jobs are fully managed, but L4 requires minimum CPU
-                and memory, and GPU is billed for the instance lifecycle.
-              </td>
+              <td><code>ALEITHIA_OBJECT_STORAGE_BUCKET</code></td>
+              <td>Bucket that contains the runtime dataset.</td>
+              <td><code>alethia-data</code></td>
             </tr>
             <tr>
-              <td>AWS Batch or ECS</td>
-              <td>Scheduled and batch jobs, especially if the project already uses AWS.</td>
-              <td>
-                AWS Batch has no additional Batch charge, but you pay for EC2, Fargate, storage, logs,
-                network, and queue resources. Operational setup is heavier than Modal.
-              </td>
+              <td><code>ALEITHIA_OBJECT_STORAGE_PREFIX</code></td>
+              <td>Optional prefix before <code>raw/</code> and <code>processed/</code>.</td>
+              <td><code>runtime</code></td>
             </tr>
             <tr>
-              <td>RunPod</td>
-              <td>GPU experimentation and potentially cheaper GPU batch jobs.</td>
-              <td>
-                Can be attractive for GPU cost, but storage should not become the source of truth.
-                Availability and cold-start reliability must be tested with this app's exact jobs.
-              </td>
+              <td><code>ALEITHIA_OBJECT_STORAGE_ENDPOINT_URL</code></td>
+              <td>Optional S3-compatible endpoint for R2, MinIO, or non-default S3 endpoints.</td>
+              <td><code>https://account.r2.cloudflarestorage.com</code></td>
+            </tr>
+            <tr>
+              <td><code>ALEITHIA_OBJECT_STORAGE_REGION</code></td>
+              <td>Signing region. Defaults to <code>us-east-1</code>.</td>
+              <td><code>auto</code> for some R2 setups, or an AWS region for S3.</td>
+            </tr>
+            <tr>
+              <td><code>ALEITHIA_OBJECT_STORAGE_ACCESS_KEY_ID</code> and <code>ALEITHIA_OBJECT_STORAGE_SECRET_ACCESS_KEY</code></td>
+              <td>S3-compatible credentials. Standard <code>AWS_ACCESS_KEY_ID</code> and <code>AWS_SECRET_ACCESS_KEY</code> are also accepted.</td>
+              <td>Store as deployment secrets, not in source control.</td>
             </tr>
           </tbody>
         </table>
-      </section>
 
-      <section id="risks">
-        <h2>Risks and Controls</h2>
-        <div class="grid two">
-          <article class="card">
-            <h3>Migration Risks</h3>
-            <ul>
-              <li>Endpoint contracts drift while moving route ownership.</li>
-              <li>Object storage listing semantics differ from filesystem traversal.</li>
-              <li>Queue retries can duplicate documents without idempotent writes.</li>
-              <li>Generated code execution can become unsafe if sandbox isolation weakens.</li>
-              <li>GPU migration may increase latency if model load and artifact transfer are slower.</li>
-            </ul>
-          </article>
-
-          <article class="card">
-            <h3>Controls</h3>
-            <ul>
-              <li>Snapshot response contracts before moving each endpoint.</li>
-              <li>Use adapter interfaces for storage, queues, and dictionary state.</li>
-              <li>Keep document IDs deterministic and writes idempotent.</li>
-              <li>Run old and new endpoints side by side during cutover.</li>
-              <li>Benchmark per workload instead of choosing one GPU provider globally.</li>
-            </ul>
-          </article>
-        </div>
-      </section>
-
-      <section>
-        <h2>Decision Gates</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Gate</th>
-              <th>Pass criteria</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Storage move</td>
-              <td>Source counts, latest timestamps, image retrieval, and key dashboards match Modal-backed results.</td>
-            </tr>
-            <tr>
-              <td>Route consolidation</td>
-              <td>P95 latency improves or stays flat, error rate is unchanged, and frontend views require no contract changes after Modal-owned read routes move into <code>backend/</code>.</td>
-            </tr>
-            <tr>
-              <td>CPU jobs move</td>
-              <td>Jobs write the same document schema, retry safely, and update freshness within current thresholds.</td>
-            </tr>
-            <tr>
-              <td>GPU move</td>
-              <td>Total cost per successful batch is lower or latency is materially better without lowering success rate.</td>
-            </tr>
-            <tr>
-              <td>Sandbox move</td>
-              <td>Generated code remains isolated, network access is controlled, output schema is preserved, and timeout behavior is predictable.</td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
-
-      <section>
-        <h2>Source References</h2>
-        <p class="small source-list">
-          Code references: <code>frontend/src/api.ts</code>, <code>backend/main.py</code>,
-          <code>backend/shared_data.py</code>,
-          <code>modal_app/web.py</code>, <code>modal_app/volume.py</code>,
-          <code>modal_app/classify.py</code>, <code>modal_app/reconciler.py</code>,
-          <code>modal_app/pipelines/cctv.py</code>, <code>modal_app/pipelines/parking.py</code>,
-          <code>modal_app/pipelines/tiktok.py</code>, <code>modal_app/api/routes/analysis.py</code>,
-          <code>modal_app/agents.py</code>, and <code>modal_app/lead_analyst.py</code>.
+        <p>
+          This completes the first storage portability cut for backend shared reads. The next storage
+          work is to move Modal worker writes off direct <code>Path("/data/...")</code> operations in
+          small groups, starting with low-risk generated JSON outputs before image-heavy or GPU-owned
+          artifacts.
         </p>
-        <p class="small source-list">
-          Pricing and platform references:
-          <a href="https://modal.com/pricing">Modal pricing</a>,
-          <a href="https://cloud.google.com/run/pricing">Cloud Run pricing</a>,
-          <a href="https://docs.cloud.google.com/run/docs/configuring/jobs/gpu">Cloud Run GPU jobs</a>,
-          <a href="https://docs.runpod.io/pods/pricing">RunPod pricing docs</a>,
-          <a href="https://aws.amazon.com/id/batch/pricing/">AWS Batch pricing</a>, and
-          <a href="https://docs.aws.amazon.com/batch/latest/userguide/gpu-jobs.html">AWS Batch GPU jobs</a>.
-        </p>
-        <p class="small">Last reviewed: June 4, 2026.</p>
       </section>
+
     </div>
   </main>
 </body>
