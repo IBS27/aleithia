@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -93,3 +95,69 @@ def test_modal_route_ownership_boundaries():
 
     assert modal_owned <= paths
     assert paths.isdisjoint(backend_owned)
+
+
+@pytest.mark.asyncio
+async def test_generated_analysis_reads_outputs_before_sandbox_cleanup(monkeypatch):
+    from modal_app.api.routes import analysis as analysis_routes
+
+    calls: list[tuple] = []
+    result_payload = {"title": "Available sources", "summary": "Done", "stats": {"raw": 3}}
+
+    class FakeAsyncMethod:
+        def __init__(self, fn):
+            self._fn = fn
+
+        async def aio(self, *args, **kwargs):
+            return self._fn(*args, **kwargs)
+
+    class FakeStream:
+        def __init__(self, value: str):
+            self.read = FakeAsyncMethod(lambda: value)
+
+    class FakeFile:
+        def __init__(self, value):
+            self._value = value
+            self.read = FakeAsyncMethod(lambda: value)
+            self.close = FakeAsyncMethod(lambda: calls.append(("file_close", self._value)))
+
+    class FakeProcess:
+        stdout = FakeStream("script stdout")
+        stderr = FakeStream("")
+        returncode = 0
+        wait = FakeAsyncMethod(lambda: 0)
+
+    class FakeSandbox:
+        def __init__(self):
+            self.exec = FakeAsyncMethod(self._exec)
+            self.open = FakeAsyncMethod(self._open)
+            self.terminate = FakeAsyncMethod(self._terminate)
+
+        def _exec(self, *args, **kwargs):
+            calls.append(("exec", args, kwargs))
+            return FakeProcess()
+
+        def _open(self, path: str, mode: str):
+            calls.append(("open", path, mode))
+            if path == "/output/result.json":
+                return FakeFile(json.dumps(result_payload))
+            if path == "/output/chart.png":
+                return FakeFile(b"png")
+            raise FileNotFoundError(path)
+
+        def _terminate(self, **kwargs):
+            calls.append(("terminate", kwargs))
+
+    async def fake_create(*args, **kwargs):
+        calls.append(("create", args, kwargs))
+        return FakeSandbox()
+
+    monkeypatch.setattr(analysis_routes.modal.Sandbox.create, "aio", fake_create)
+
+    result = await analysis_routes.execute_generated_analysis("print('ok')")
+
+    assert result.result == result_payload
+    assert result.chart_b64 == "cG5n"
+    assert result.stdout == "script stdout"
+    assert ("open", "/output/result.json", "r") in calls
+    assert calls[-1][0] == "terminate"

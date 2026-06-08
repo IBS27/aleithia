@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import asyncio
 from pathlib import Path
 
 from fastapi import APIRouter
@@ -34,17 +35,13 @@ from modal_app.api.services.tiktok import (
     parse_view_count,
     profile_tiktok_freshness,
     rank_tiktok_docs,
-    spawn_reddit_fallback_persist,
 )
 from modal_app.common import CHICAGO_NEIGHBORHOODS, COMMUNITY_AREA_MAP
 from modal_app.runtime import get_modal_function
 from modal_app.volume import PROCESSED_DATA_PATH, RAW_DATA_PATH, volume
 from modal_app.pipelines.reddit import (
-    FALLBACK_BUDGET_MS,
-    merge_rank_reddit_docs,
     rank_reddit_docs,
     reddit_docs_are_weak,
-    search_reddit_fallback_runtime,
 )
 
 router = APIRouter()
@@ -169,12 +166,15 @@ async def neighborhood(name: str, business_type: str = ""):
         federal_docs = filter_politics_relevance(filter_by_neighborhood(all_federal, name), business_type)
         profile_count, local_count, freshest_epoch = profile_tiktok_freshness(all_tiktok_profile, business_type, name)
         try:
-            tiktok_refresh = await maybe_spawn_tiktok_profile_refresh(
-                neighborhood=name,
-                business_type=business_type or "small business",
-                profile_count=profile_count,
-                local_count=local_count,
-                freshest_epoch=freshest_epoch,
+            tiktok_refresh = await asyncio.wait_for(
+                maybe_spawn_tiktok_profile_refresh(
+                    neighborhood=name,
+                    business_type=business_type or "small business",
+                    profile_count=profile_count,
+                    local_count=local_count,
+                    freshest_epoch=freshest_epoch,
+                ),
+                timeout=1.5,
             )
         except Exception as exc:
             print(f"tiktok_refresh_error: {exc}")
@@ -193,39 +193,22 @@ async def neighborhood(name: str, business_type: str = ""):
             if typed_reviews:
                 reviews_docs = typed_reviews
 
-        if reddit_docs_are_weak(
+        reddit_fallback_needed = reddit_docs_are_weak(
             reddit_docs,
             business_type=business_type or "small business",
             neighborhood=name,
             min_count=3,
             median_threshold=2.0,
-        ):
-            start_ms = int(time.time() * 1000)
-            fallback_docs = await search_reddit_fallback_runtime(
-                business_type=business_type or "small business",
-                neighborhood=name,
-                budget_ms=FALLBACK_BUDGET_MS,
-            )
-            latency_ms = int(time.time() * 1000) - start_ms
+        )
+        if reddit_fallback_needed:
             print(
-                "reddit_fallback_triggered",
+                "reddit_fallback_deferred",
                 {
                     "neighborhood": name,
                     "business_type": business_type or "small business",
-                    "fallback_latency_ms": latency_ms,
-                    "fallback_docs_found": len(fallback_docs),
-                    "adapter_used": (fallback_docs[0].get("metadata", {}) or {}).get("retrieval_method", "") if fallback_docs else "",
+                    "cached_reddit_docs": len(reddit_docs),
                 },
             )
-            if fallback_docs:
-                await spawn_reddit_fallback_persist(fallback_docs)
-                reddit_docs = merge_rank_reddit_docs(
-                    reddit_docs,
-                    fallback_docs,
-                    business_type=business_type or "small business",
-                    neighborhood=name,
-                    min_score=0,
-                )
 
         if not reddit_docs and all_reddit:
             reddit_docs = rank_reddit_docs(

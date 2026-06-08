@@ -29,6 +29,7 @@ DEFAULT_MODAL_VOLUME_NAME = "alethia-data"
 DEFAULT_RAW_PREFIX = "raw"
 DEFAULT_PROCESSED_PREFIX = "processed"
 DEFAULT_OBJECT_STORAGE_REGION = "us-east-1"
+DEFAULT_MOUNTED_VOLUME_ROOT = "/data"
 
 _LAST_LOGGED_LAYOUT: tuple[str, str] | None = None
 _VOLUME: modal.Volume | None = None
@@ -237,6 +238,60 @@ class ModalVolumeAccessor:
         normalized = _normalize_relative_path(relative_path)
         with self._volume.batch_upload(force=True) as batch:
             batch.put_file(io.BytesIO(data), f"/{normalized}")
+
+
+class MountedVolumeAccessor:
+    """Shared-data accessor for the Modal Volume mounted into remote containers."""
+
+    def __init__(self, root: str | Path = DEFAULT_MOUNTED_VOLUME_ROOT):
+        self.root = Path(root)
+
+    def display_uri(self, relative_path: str) -> str:
+        normalized = _normalize_relative_path(relative_path)
+        return str(self.root / normalized) if normalized else str(self.root)
+
+    def _full_path(self, relative_path: str) -> Path:
+        return self.root / _normalize_relative_path(relative_path)
+
+    def _entry_from_path(self, path: Path) -> SharedFileEntry | None:
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        try:
+            relative = path.relative_to(self.root).as_posix()
+        except ValueError:
+            return None
+        return SharedFileEntry(
+            path=relative.strip("/"),
+            is_file=path.is_file(),
+            is_dir=path.is_dir(),
+            mtime=float(stat.st_mtime),
+            size=int(stat.st_size),
+        )
+
+    def get_entry(self, relative_path: str) -> SharedFileEntry | None:
+        normalized = _normalize_relative_path(relative_path)
+        if not normalized:
+            return SharedFileEntry(path="", is_file=False, is_dir=True, mtime=0.0, size=0)
+        return self._entry_from_path(self._full_path(normalized))
+
+    def list_entries(self, relative_path: str, *, recursive: bool = False) -> list[SharedFileEntry]:
+        directory = self._full_path(relative_path)
+        if not directory.exists() or not directory.is_dir():
+            return []
+        iterator = directory.rglob("*") if recursive else directory.iterdir()
+        entries = [self._entry_from_path(path) for path in iterator]
+        return [entry for entry in entries if entry is not None]
+
+    def read_bytes(self, relative_path: str) -> bytes:
+        return self._full_path(relative_path).read_bytes()
+
+    def write_bytes(self, relative_path: str, data: bytes, *, content_type: str | None = None) -> None:
+        del content_type
+        path = self._full_path(relative_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
 
 
 class ObjectStorageError(RuntimeError):
@@ -613,7 +668,12 @@ def _get_volume() -> modal.Volume:
 def _get_accessor() -> SharedDataAccessor:
     backend = os.getenv("ALEITHIA_SHARED_DATA_BACKEND", "modal").strip().lower()
     if backend in {"", "modal", "modal-volume", "volume"}:
+        mounted_root = Path(os.getenv("ALEITHIA_MOUNTED_VOLUME_ROOT", DEFAULT_MOUNTED_VOLUME_ROOT))
+        if (mounted_root / DEFAULT_RAW_PREFIX).exists() and (mounted_root / DEFAULT_PROCESSED_PREFIX).exists():
+            return MountedVolumeAccessor(mounted_root)
         return ModalVolumeAccessor(_get_volume())
+    if backend in {"mounted", "mount", "filesystem", "fs"}:
+        return MountedVolumeAccessor(os.getenv("ALEITHIA_MOUNTED_VOLUME_ROOT", DEFAULT_MOUNTED_VOLUME_ROOT))
     if backend in {"s3", "r2", "gcs", "object", "object-storage"}:
         return S3ObjectStorageAccessor.from_env()
     raise ValueError(
@@ -808,6 +868,42 @@ def iter_json_files(
     return sorted(files, key=sort_key, reverse=reverse) if sort_key is not None else sorted(files, reverse=reverse)
 
 
+def _limited_shared_json_files(
+    directory: SharedDataPath,
+    *,
+    limit: int,
+    recursive: bool,
+    reverse: bool,
+) -> list[SharedDataPath]:
+    """Collect up to ``limit`` JSON files without recursively listing the full tree."""
+    if limit <= 0:
+        return []
+
+    files: list[SharedDataPath] = []
+
+    def _visit(current: SharedDataPath) -> None:
+        if len(files) >= limit:
+            return
+
+        entries = sorted(
+            current.accessor.list_entries(current.relative_path, recursive=False),
+            key=lambda entry: entry.path,
+            reverse=reverse,
+        )
+        for entry in entries:
+            if len(files) >= limit:
+                break
+            if entry.is_file:
+                if fnmatch.fnmatch(PurePosixPath(entry.path).name, "*.json"):
+                    files.append(SharedDataPath(current.accessor, entry.path))
+                continue
+            if recursive and entry.is_dir:
+                _visit(SharedDataPath(current.accessor, entry.path))
+
+    _visit(directory)
+    return files
+
+
 def iter_files(
     directory: Path | SharedDataPath,
     *,
@@ -888,8 +984,18 @@ def load_json_docs_from_directory(
     reverse: bool = True,
     on_error: Callable[[Path | SharedDataPath, Exception], None] | None = None,
 ) -> list[dict]:
+    if isinstance(directory, SharedDataPath) and limit is not None and sort_key is None:
+        paths = _limited_shared_json_files(
+            directory,
+            limit=limit,
+            recursive=recursive,
+            reverse=reverse,
+        )
+    else:
+        paths = iter_json_files(directory, recursive=recursive, sort_key=sort_key, reverse=reverse)
+
     return load_json_docs_from_paths(
-        iter_json_files(directory, recursive=recursive, sort_key=sort_key, reverse=reverse),
+        paths,
         limit=limit,
         on_error=on_error,
     )

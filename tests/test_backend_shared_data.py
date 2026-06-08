@@ -35,6 +35,23 @@ def test_shared_data_can_resolve_explicit_object_storage_backend(monkeypatch) ->
     assert str(paths.processed_dir) == "s3://alethia-data-portable/runtime/processed"
 
 
+def test_modal_backend_uses_mounted_volume_accessor_when_data_root_exists(tmp_path, monkeypatch) -> None:
+    data_root = tmp_path / "mounted-data"
+    write_json(data_root / "raw" / "news" / "latest.json", '{"id":"n1"}')
+    write_json(data_root / "processed" / "summary.json", '{"ok":true}')
+
+    monkeypatch.setenv("ALEITHIA_MOUNTED_VOLUME_ROOT", str(data_root))
+    monkeypatch.delenv("ALEITHIA_SHARED_DATA_BACKEND", raising=False)
+    shared_data._LAST_LOGGED_LAYOUT = None
+    shared_data._VOLUME = None
+
+    paths = shared_data.get_shared_data_paths()
+
+    assert isinstance(paths.raw_dir.accessor, shared_data.MountedVolumeAccessor)
+    assert shared_data.load_json_docs_from_directory(paths.raw_dir / "news") == [{"id": "n1"}]
+    assert shared_data.load_json_file(paths.processed_dir / "summary.json") == {"ok": True}
+
+
 class _FakeObjectStorageResponse:
     def __init__(self, body: bytes = b"", *, status: int = 200, headers: dict[str, str] | None = None):
         self._body = body

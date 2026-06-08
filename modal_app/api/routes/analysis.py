@@ -6,6 +6,7 @@ import base64
 import json
 import re
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,6 +19,9 @@ from modal_app.runtime import ENABLE_CCTV_ANALYSIS, get_modal_cls, get_modal_fun
 from modal_app.volume import PROCESSED_DATA_PATH, RAW_DATA_PATH, app, sandbox_image, volume
 
 router = APIRouter()
+
+ANALYSIS_EXEC_TIMEOUT_SECONDS = 90
+ANALYSIS_SANDBOX_LIFETIME_SECONDS = ANALYSIS_EXEC_TIMEOUT_SECONDS + 60
 
 CODEGEN_SYSTEM_PROMPT = """You are a data analyst. Write a self-contained Python script that answers the user's question using real data files.
 
@@ -139,6 +143,127 @@ class ImpactAnalyzeRequest(BaseModel):
     doc_id: str = Field(..., description="ID of the enriched document to analyze")
 
 
+@dataclass
+class SandboxAnalysisResult:
+    stdout: str
+    stderr: str
+    returncode: int | None
+    result: dict | None
+    chart_b64: str | None
+
+
+class AnalysisSandboxTimeout(Exception):
+    pass
+
+
+async def _modal_call(method, *args, **kwargs):
+    aio = getattr(method, "aio", None)
+    if callable(aio):
+        return await aio(*args, **kwargs)
+    return await asyncio.to_thread(method, *args, **kwargs)
+
+
+async def _read_stream(stream) -> str:
+    data = await _modal_call(stream.read)
+    return data if isinstance(data, str) else data.decode("utf-8", errors="replace")
+
+
+async def _sandbox_read_file(sb, path: str, mode: str):
+    filesystem = getattr(sb, "filesystem", None)
+    if filesystem is not None:
+        if "b" in mode:
+            read_bytes = getattr(filesystem, "read_bytes", None)
+            if read_bytes is not None:
+                return await _modal_call(read_bytes, path)
+        else:
+            read_text = getattr(filesystem, "read_text", None)
+            if read_text is not None:
+                return await _modal_call(read_text, path)
+
+    file_obj = await _modal_call(sb.open, path, mode)
+    try:
+        return await _modal_call(file_obj.read)
+    finally:
+        await _modal_call(file_obj.close)
+
+
+async def _terminate_sandbox(sb) -> None:
+    try:
+        await _modal_call(sb.terminate, wait=True)
+    except TypeError:
+        await _modal_call(sb.terminate)
+    except Exception:
+        pass
+
+
+async def execute_generated_analysis(code: str) -> SandboxAnalysisResult:
+    sb = None
+    try:
+        # Keep the Sandbox container alive while the generated script runs as a
+        # child process. Modal file access is unavailable after the container's
+        # main process exits, so outputs must be read before cleanup.
+        sb = await _modal_call(
+            modal.Sandbox.create,
+            "sleep",
+            str(ANALYSIS_SANDBOX_LIFETIME_SECONDS),
+            image=sandbox_image,
+            volumes={"/data": volume},
+            timeout=ANALYSIS_SANDBOX_LIFETIME_SECONDS,
+            app=app,
+        )
+        process = await _modal_call(
+            sb.exec,
+            "python",
+            "-c",
+            code,
+            timeout=ANALYSIS_EXEC_TIMEOUT_SECONDS,
+        )
+
+        try:
+            stdout_text, stderr_text, returncode = await asyncio.gather(
+                _read_stream(process.stdout),
+                _read_stream(process.stderr),
+                _modal_call(process.wait),
+            )
+        except Exception as exc:
+            exec_timeout_error = getattr(modal.exception, "ExecTimeoutError", None)
+            if exec_timeout_error is not None and isinstance(exc, exec_timeout_error):
+                raise AnalysisSandboxTimeout(
+                    f"Generated analysis timed out after {ANALYSIS_EXEC_TIMEOUT_SECONDS}s"
+                ) from exc
+            raise
+
+        if returncode == -1:
+            raise AnalysisSandboxTimeout(
+                f"Generated analysis timed out after {ANALYSIS_EXEC_TIMEOUT_SECONDS}s"
+            )
+
+        result_data = None
+        chart_b64 = None
+        try:
+            result_text = await _sandbox_read_file(sb, "/output/result.json", "r")
+            result_data = json.loads(result_text)
+        except Exception:
+            result_data = None
+
+        try:
+            chart_bytes = await _sandbox_read_file(sb, "/output/chart.png", "rb")
+            chart_b64 = base64.b64encode(chart_bytes).decode("utf-8")
+        except Exception:
+            chart_b64 = None
+
+        return SandboxAnalysisResult(
+            stdout=stdout_text,
+            stderr=stderr_text,
+            returncode=returncode,
+            result=result_data,
+            chart_b64=chart_b64,
+        )
+    finally:
+        if sb is not None:
+            await _terminate_sandbox(sb)
+
+
 @router.get("/gpu-metrics")
 async def gpu_metrics(probe_h100: bool = False):
     del probe_h100
@@ -258,36 +383,25 @@ async def analyze(payload: AnalyzePayload):
         if not code:
             return JSONResponse({"error": "Failed to generate valid analysis code", "raw_response": response[:500]}, status_code=500)
 
-        sb = modal.Sandbox.create(
-            "python",
-            "-c",
-            code,
-            image=sandbox_image,
-            volumes={"/data": volume},
-            timeout=30,
-            app=app,
-        )
-        sb.wait()
+        sandbox_result = await execute_generated_analysis(code)
+        stderr_text = sandbox_result.stderr
+        stdout_text = sandbox_result.stdout
+        result_data = sandbox_result.result
+        chart_b64 = sandbox_result.chart_b64
 
-        stderr_text = sb.stderr.read()
-        stdout_text = sb.stdout.read()
+        if sandbox_result.returncode not in (0, None) and result_data is None:
+            return JSONResponse(
+                {
+                    "error": "Generated analysis script failed",
+                    "stderr": stderr_text[:2000] if stderr_text else None,
+                    "stdout": stdout_text[:2000] if stdout_text else None,
+                    "returncode": sandbox_result.returncode,
+                },
+                status_code=500,
+            )
 
-        result_data = None
-        chart_b64 = None
-        try:
-            result_file = sb.open("/output/result.json", "r")
-            result_data = json.loads(result_file.read())
-            result_file.close()
-        except Exception:
-            if stdout_text.strip():
-                result_data = {"title": "Analysis Result", "summary": stdout_text.strip()[:2000], "stats": {}}
-
-        try:
-            chart_file = sb.open("/output/chart.png", "rb")
-            chart_b64 = base64.b64encode(chart_file.read()).decode("utf-8")
-            chart_file.close()
-        except Exception:
-            pass
+        if result_data is None and stdout_text.strip():
+            result_data = {"title": "Analysis Result", "summary": stdout_text.strip()[:2000], "stats": {}}
 
         if span:
             span.set_attribute("deep_dive.has_chart", chart_b64 is not None)
@@ -301,6 +415,10 @@ async def analyze(payload: AnalyzePayload):
             "stderr": stderr_text[:500] if stderr_text else None,
             "model_used": model_used,
         }
+    except AnalysisSandboxTimeout as exc:
+        if span:
+            span.set_attribute("error", str(exc))
+        return JSONResponse({"error": str(exc)}, status_code=504)
     except Exception as exc:
         if span:
             span.set_attribute("error", str(exc))

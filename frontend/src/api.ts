@@ -101,6 +101,7 @@ export interface DeepDiveResult {
   result: { title?: string; summary?: string; stats?: Record<string, unknown>; raw_output?: string }
   chart: string | null
   stderr: string | null
+  model_used?: string
 }
 
 export async function requestDeepDive(
