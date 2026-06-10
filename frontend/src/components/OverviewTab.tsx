@@ -155,7 +155,15 @@ export default function OverviewTab({ profile, neighborhoodData, riskScore, tren
               >
                 <div className="space-y-1.5">
                   {socialLoading ? (
-                    <p className="text-[10px] font-mono text-cyan-300/50 animate-pulse">Analyzing social signals…</p>
+                    <div className="flex items-center gap-2 text-[10px] font-mono text-cyan-300/60">
+                      <span className="h-3 w-3 rounded-full border border-cyan-300/20 border-t-cyan-300/70 animate-spin" />
+                      <span className="uppercase tracking-wider">Analyzing social trends</span>
+                      <span className="flex gap-0.5" aria-hidden="true">
+                        <span className="h-1 w-1 rounded-full bg-cyan-300/40 animate-pulse" />
+                        <span className="h-1 w-1 rounded-full bg-cyan-300/40 animate-pulse [animation-delay:150ms]" />
+                        <span className="h-1 w-1 rounded-full bg-cyan-300/40 animate-pulse [animation-delay:300ms]" />
+                      </span>
+                    </div>
                   ) : socialError ? (
                     <p className="text-[10px] font-mono text-red-400/70">{socialError}</p>
                   ) : socialTrends.length > 0 ? socialTrends.map((trend) => (
