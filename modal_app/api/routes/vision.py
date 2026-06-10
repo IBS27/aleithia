@@ -69,7 +69,12 @@ async def cctv_frame(camera_id: str):
     frame_dirs.append((_raw_data_dir() / "cctv" / "frames", "raw"))
 
     for frame_dir, frame_type in frame_dirs:
-        frames = iter_files(frame_dir, recursive=False, pattern=f"{camera_id}_*.jpg")
+        frame_prefix = f"{camera_id}_"
+        frames = [
+            frame
+            for frame in iter_files(frame_dir, recursive=False, pattern="*.jpg")
+            if frame.name.startswith(frame_prefix)
+        ]
         if frames:
             content = read_file_bytes(frames[0], default=None)
             if content is not None:
@@ -203,16 +208,20 @@ async def vision_assess(neighborhood: str):
     frame_paths = []
 
     cctv_dir = _processed_data_dir() / "cctv" / "annotated"
-    for fp in iter_files(cctv_dir, recursive=False, pattern="*.jpg")[:5]:
+    for fp in iter_files(cctv_dir, recursive=False, pattern="*.jpg"):
+        if not fp.name.lower().replace("-", "_").startswith(slug):
+            continue
         frame_paths.append(fp)
+        if len(frame_paths) >= 5:
+            break
 
     vision_dir = _raw_data_dir() / "vision" / "frames"
-    for fp in iter_files(vision_dir, recursive=False, pattern=f"{slug}*.jpg")[:5]:
+    for fp in iter_files(vision_dir, recursive=False, pattern="*.jpg"):
+        if not fp.name.lower().replace("-", "_").startswith(slug):
+            continue
         frame_paths.append(fp)
-    if len(frame_paths) < 3:
-        for fp in iter_files(vision_dir, recursive=False, pattern="*.jpg")[:5]:
-            if fp not in frame_paths:
-                frame_paths.append(fp)
+        if len(frame_paths) >= 10:
+            break
 
     frame_paths = frame_paths[:3]
     if not frame_paths:

@@ -8,14 +8,22 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import modal
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from backend.shared_data import count_files, get_processed_data_dir, get_raw_data_dir, iter_files, load_json_file
+from backend.shared_data import (
+    SharedDataPath,
+    count_files,
+    get_processed_data_dir,
+    get_raw_data_dir,
+    iter_files,
+    load_json_file,
+    read_file_bytes,
+)
 from modal_app.runtime import ENABLE_CCTV_ANALYSIS, get_modal_cls, get_modal_function
 from modal_app.volume import app, sandbox_image, volume
 
@@ -29,7 +37,7 @@ ANALYSIS_SANDBOX_LIFETIME_SECONDS = ANALYSIS_EXEC_TIMEOUT_SECONDS + 60
 CODEGEN_SYSTEM_PROMPT = """You are a data analyst. Write a self-contained Python script that answers the user's question using real data files.
 
 Rules:
-- Read data from /data/raw/{source}/ and /data/processed/enriched/ (JSON files)
+- Read the prepared JSON files from /data/raw/{source}/ and /data/processed/enriched/
 - Write results to /output/result.json (required) and optionally /output/chart.png
 - result.json must have: {"title": str, "summary": str, "stats": {key: value}}
 - Only use: json, os, pathlib, glob, collections, datetime, pandas, numpy, matplotlib, seaborn
@@ -42,7 +50,7 @@ Rules:
 CODEGEN_SYSTEM_PROMPT_GPT4O = """You are a senior data analyst. Write a self-contained Python script that answers the user's question using real data files.
 
 Rules:
-- Read data from /data/raw/{source}/ and /data/processed/enriched/ (JSON files)
+- Read the prepared JSON files from /data/raw/{source}/ and /data/processed/enriched/
 - Write results to /output/result.json (required) and optionally /output/chart.png
 - result.json must have: {"title": str, "summary": str, "stats": {key: value}}
 - Only use: json, os, pathlib, glob, collections, datetime, pandas, numpy, matplotlib, seaborn
@@ -56,6 +64,25 @@ Rules:
 - Use seaborn color palettes for multi-series plots
 - Validate result.json schema before writing: title must be str, stats must be dict
 - Output only the Python code in a ```python``` fence. No explanation."""
+
+
+@dataclass(frozen=True)
+class AnalysisInputArtifact:
+    source_path: Path | SharedDataPath
+    sandbox_path: str
+
+
+def _relative_artifact_path(path, root) -> str:
+    try:
+        relative = path.relative_to(root)
+    except Exception:
+        relative = PurePosixPath(path.name)
+    return relative.as_posix() if hasattr(relative, "as_posix") else str(relative).replace("\\", "/")
+
+
+def _analysis_artifact(path, root, sandbox_root: str) -> AnalysisInputArtifact:
+    relative = _relative_artifact_path(path, root)
+    return AnalysisInputArtifact(source_path=path, sandbox_path=f"{sandbox_root.rstrip('/')}/{relative}")
 
 
 def discover_data_files(neighborhood: str | None = None) -> dict:
@@ -80,6 +107,10 @@ def discover_data_files(neighborhood: str | None = None) -> dict:
             "count": count_files(source_dir, pattern="*.json"),
             "sample_path": str(json_files[0]),
             "schema_keys": schema_keys,
+            "_artifacts": [
+                _analysis_artifact(path, source_dir, f"/data/raw/{source_dir.name}")
+                for path in json_files
+            ],
         }
 
     enriched = _processed_data_dir() / "enriched"
@@ -96,6 +127,10 @@ def discover_data_files(neighborhood: str | None = None) -> dict:
             "count": count_files(enriched, pattern="*.json"),
             "sample_path": str(json_files[0]),
             "schema_keys": schema_keys,
+            "_artifacts": [
+                _analysis_artifact(path, enriched, "/data/processed/enriched")
+                for path in json_files
+            ],
         }
     return sources
 
@@ -122,9 +157,10 @@ User question: {question}
 Intelligence brief context:
 {brief_truncated}
 
-Available data on the volume:
+Available data prepared inside the sandbox:
 {source_listing}
 
+The listed files are materialized under /data before your script runs.
 Write a Python script to analyze this data and answer the question. Include a chart if appropriate."""
 
 
@@ -162,6 +198,21 @@ class AnalysisSandboxTimeout(Exception):
     pass
 
 
+def _analysis_input_artifacts(available_sources: dict) -> list[AnalysisInputArtifact]:
+    artifacts: list[AnalysisInputArtifact] = []
+    for info in available_sources.values():
+        if not isinstance(info, dict):
+            continue
+        source_artifacts = info.get("_artifacts", [])
+        if isinstance(source_artifacts, list):
+            artifacts.extend(
+                artifact
+                for artifact in source_artifacts
+                if isinstance(artifact, AnalysisInputArtifact)
+            )
+    return artifacts
+
+
 async def _modal_call(method, *args, **kwargs):
     aio = getattr(method, "aio", None)
     if callable(aio):
@@ -193,6 +244,44 @@ async def _sandbox_read_file(sb, path: str, mode: str):
         await _modal_call(file_obj.close)
 
 
+async def _sandbox_mkdir(sb, directory: str) -> None:
+    if directory in {"", ".", "/"}:
+        return
+    process = await _modal_call(
+        sb.exec,
+        "python",
+        "-c",
+        f"import os; os.makedirs({directory!r}, exist_ok=True)",
+        timeout=15,
+    )
+    await _modal_call(process.wait)
+
+
+async def _sandbox_write_file(sb, path: str, data: bytes) -> None:
+    await _sandbox_mkdir(sb, str(PurePosixPath(path).parent))
+
+    filesystem = getattr(sb, "filesystem", None)
+    if filesystem is not None:
+        write_bytes = getattr(filesystem, "write_bytes", None)
+        if write_bytes is not None:
+            await _modal_call(write_bytes, path, data)
+            return
+
+    file_obj = await _modal_call(sb.open, path, "wb")
+    try:
+        await _modal_call(file_obj.write, data)
+    finally:
+        await _modal_call(file_obj.close)
+
+
+async def _materialize_analysis_inputs(sb, artifacts: list[AnalysisInputArtifact]) -> None:
+    for artifact in artifacts:
+        raw = read_file_bytes(artifact.source_path, default=None)
+        if raw is None:
+            continue
+        await _sandbox_write_file(sb, artifact.sandbox_path, raw)
+
+
 async def _terminate_sandbox(sb) -> None:
     try:
         await _modal_call(sb.terminate, wait=True)
@@ -202,7 +291,10 @@ async def _terminate_sandbox(sb) -> None:
         pass
 
 
-async def execute_generated_analysis(code: str) -> SandboxAnalysisResult:
+async def execute_generated_analysis(
+    code: str,
+    input_artifacts: list[AnalysisInputArtifact] | None = None,
+) -> SandboxAnalysisResult:
     sb = None
     try:
         # Keep the Sandbox container alive while the generated script runs as a
@@ -217,6 +309,8 @@ async def execute_generated_analysis(code: str) -> SandboxAnalysisResult:
             timeout=ANALYSIS_SANDBOX_LIFETIME_SECONDS,
             app=app,
         )
+        if input_artifacts:
+            await _materialize_analysis_inputs(sb, input_artifacts)
         process = await _modal_call(
             sb.exec,
             "python",
@@ -383,7 +477,7 @@ async def analyze(payload: AnalyzePayload):
         if not code:
             return JSONResponse({"error": "Failed to generate valid analysis code", "raw_response": response[:500]}, status_code=500)
 
-        sandbox_result = await execute_generated_analysis(code)
+        sandbox_result = await execute_generated_analysis(code, _analysis_input_artifacts(available))
         stderr_text = sandbox_result.stderr
         stdout_text = sandbox_result.stdout
         result_data = sandbox_result.result

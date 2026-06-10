@@ -18,7 +18,7 @@ import hashlib
 
 import modal
 
-from backend.shared_data import get_raw_data_dir
+from backend.shared_data import get_raw_data_dir, write_json_file
 from modal_app.common import SourceType, build_document
 from modal_app.volume import app, volume, VOLUME_MOUNT
 
@@ -265,7 +265,7 @@ def ingest_worldpop_demographics():
 
             # Write to volume
             out_path = out_dir / f"{neighborhood.lower().replace(' ', '_')}.json"
-            out_path.write_text(build_document(doc).model_dump_json(indent=2))
+            write_json_file(out_path, build_document(doc).model_dump(mode="json"))
 
             results[neighborhood] = {
                 "population": demo["total_population"],

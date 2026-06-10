@@ -320,6 +320,7 @@ def _build_geo_metrics(summaries: dict[str, DatasetSummary]) -> dict:
 @app.function(
     image=data_image,
     volumes={"/data": volume},
+    secrets=[modal.Secret.from_name("alethia-secrets")],
     timeout=600,
 )
 def compress_raw_data(days: int = 7):

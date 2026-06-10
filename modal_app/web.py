@@ -64,6 +64,7 @@ _score_social_doc = neighborhoods_routes._score_social_doc
 _parse_view_count = neighborhoods_routes.parse_view_count
 _load_fake_cctv = cctv_service.load_synthetic_cctv
 _fake_cctv_entry = cctv_service.synthetic_cctv_entry
+_original_load_cctv_latest_index = cctv_service.load_cctv_latest_index
 rank_reddit_docs = neighborhoods_routes.rank_reddit_docs
 
 
@@ -86,7 +87,7 @@ async def _load_cctv_latest_index() -> dict[str, dict]:
     await _reload_volume_compat()
 
     if CCTV_LATEST_INDEX_PATH is None:
-        return await cctv_service.load_cctv_latest_index()
+        return await _original_load_cctv_latest_index()
 
     index_path = Path(CCTV_LATEST_INDEX_PATH)
     if not index_path.exists():

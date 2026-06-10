@@ -11,9 +11,12 @@ import json
 import logging
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -293,6 +296,30 @@ class MountedVolumeAccessor:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
 
+    def try_write_bytes_if_absent(
+        self,
+        relative_path: str,
+        data: bytes,
+        *,
+        content_type: str | None = None,
+    ) -> bool:
+        del content_type
+        path = self._full_path(relative_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            return False
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        return True
+
+    def delete_entry(self, relative_path: str) -> None:
+        try:
+            self._full_path(relative_path).unlink()
+        except FileNotFoundError:
+            return
+
 
 class ObjectStorageError(RuntimeError):
     """Raised when the configured object storage backend cannot serve a request."""
@@ -556,6 +583,30 @@ class S3ObjectStorageAccessor:
         headers = {"content-type": content_type} if content_type else {}
         self._request("PUT", self._object_key(relative_path), body=data, headers=headers)
 
+    def try_write_bytes_if_absent(
+        self,
+        relative_path: str,
+        data: bytes,
+        *,
+        content_type: str | None = None,
+    ) -> bool:
+        headers = {"if-none-match": "*"}
+        if content_type:
+            headers["content-type"] = content_type
+        try:
+            self._request("PUT", self._object_key(relative_path), body=data, headers=headers)
+        except ObjectStorageError as exc:
+            if " with 409" in str(exc) or " with 412" in str(exc):
+                return False
+            raise
+        return True
+
+    def delete_entry(self, relative_path: str) -> None:
+        try:
+            self._request("DELETE", self._object_key(relative_path))
+        except ObjectStorageError:
+            return
+
     def _parse_list_response(
         self,
         raw: bytes,
@@ -719,6 +770,72 @@ def get_cache_data_dir() -> SharedDataPath:
 
 def get_dedup_data_dir() -> SharedDataPath:
     return get_shared_data_dir("dedup")
+
+
+def local_filesystem_path(path: Path | SharedDataPath) -> Path | None:
+    """Return a concrete filesystem path when shared data is mounted locally."""
+    if isinstance(path, Path):
+        return path
+
+    root = getattr(path.accessor, "root", None)
+    if root is not None:
+        return Path(root) / path.relative_path
+
+    display_path = str(path)
+    if display_path.startswith("/"):
+        return Path(display_path)
+    return None
+
+
+@contextmanager
+def shared_data_lock(
+    lock_path: Path | SharedDataPath,
+    *,
+    timeout_seconds: float = 30.0,
+    poll_seconds: float = 0.1,
+):
+    """Acquire an advisory lock for local mounts or object-storage lock keys."""
+    local_path = local_filesystem_path(lock_path)
+    if local_path is not None:
+        import fcntl
+
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(local_path, "w") as lock_fd:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        return
+
+    if isinstance(lock_path, SharedDataPath):
+        try_create = getattr(lock_path.accessor, "try_write_bytes_if_absent", None)
+        delete_entry = getattr(lock_path.accessor, "delete_entry", None)
+        if callable(try_create) and callable(delete_entry):
+            owner = str(uuid.uuid4())
+            payload = json.dumps(
+                {
+                    "owner": owner,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+            deadline = time.monotonic() + timeout_seconds
+            acquired = False
+            while time.monotonic() <= deadline:
+                if try_create(lock_path.relative_path, payload, content_type="application/json"):
+                    acquired = True
+                    break
+                time.sleep(poll_seconds)
+            if not acquired:
+                raise TimeoutError(f"Timed out acquiring shared data lock: {lock_path}")
+            try:
+                yield
+            finally:
+                delete_entry(lock_path.relative_path)
+            return
+
+    yield
 
 
 def _relative_entry_path(directory: SharedDataPath, entry_path: str) -> PurePosixPath | None:

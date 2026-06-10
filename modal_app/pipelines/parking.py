@@ -237,6 +237,19 @@ class ParkingAnalyzer:
         if not tiles:
             return {"neighborhood": neighborhood, "parking_lots": [], "error": "no tiles"}
 
+        missing_tile_bytes = [
+            str(tile.get("path", ""))
+            for tile in tiles
+            if not isinstance(tile.get("bytes"), bytes) or not tile.get("bytes")
+        ]
+        if missing_tile_bytes:
+            return {
+                "neighborhood": neighborhood,
+                "parking_lots": [],
+                "error": "missing tile bytes",
+                "missing_tiles": missing_tile_bytes,
+            }
+
         # 1. Stitch tiles into composite image
         grid_positions = {}
         for t in tiles:
@@ -255,13 +268,7 @@ class ParkingAnalyzer:
                 if not tile:
                     continue
                 tile_bytes = tile.get("bytes")
-                if isinstance(tile_bytes, bytes):
-                    img = cv2.imdecode(np.frombuffer(tile_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
-                else:
-                    tile_path = Path(tile["path"])
-                    if not tile_path.exists():
-                        continue
-                    img = cv2.imread(str(tile_path))
+                img = cv2.imdecode(np.frombuffer(tile_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
                 if img is None:
                     continue
                 # Resize to expected tile size
@@ -492,14 +499,29 @@ async def analyze_parking_batch(neighborhoods: list[str] | None = None):
             return None
 
         tiles = []
+        missing_tiles = []
         for tile in meta.get("tiles", []):
             if not isinstance(tile, dict):
                 continue
             tile_copy = dict(tile)
-            tile_bytes = read_file_bytes(tile_dir / Path(str(tile.get("path", ""))).name, default=None)
-            if tile_bytes is not None:
-                tile_copy["bytes"] = tile_bytes
+            tile_name = Path(str(tile.get("path", ""))).name
+            if not tile_name:
+                missing_tiles.append(str(tile.get("path", "")))
+                continue
+            tile_bytes = read_file_bytes(tile_dir / tile_name, default=None)
+            if not tile_bytes:
+                missing_tiles.append(tile_name)
+                continue
+            tile_copy["bytes"] = tile_bytes
             tiles.append(tile_copy)
+
+        if missing_tiles:
+            return {
+                "neighborhood": name,
+                "parking_lots": [],
+                "error": "missing tile bytes",
+                "missing_tiles": missing_tiles,
+            }
 
         try:
             return await analyzer.analyze_tiles.remote.aio({

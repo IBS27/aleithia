@@ -76,7 +76,7 @@ async def data_reconciler():
             status_report[source] = {"state": "empty", "last_update": None}
             continue
 
-        latest = max(json_files, key=lambda f: f.stat().st_mtime)
+        latest = json_files[0]
         last_update = datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc)
         age_minutes = (now - last_update).total_seconds() / 60
 

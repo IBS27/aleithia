@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 import modal
 
-from backend.shared_data import get_processed_data_dir, get_raw_data_dir, iter_files, load_json_file
+from backend.shared_data import get_processed_data_dir, get_raw_data_dir, iter_files, load_json_file, write_json_file
 from modal_app.common import compute_freshness, neighborhood_to_ca
 from modal_app.costs import track_cost
 from modal_app.pipelines.reddit import (
@@ -768,7 +768,7 @@ async def regulatory_agent(business_type: str, trace_context: dict | None = None
                         metadata={"matter_type": item.get("type", ""), "status": item.get("status", ""), "source": "legistar_live"},
                     )
                     out_path = get_raw_data_dir() / "politics" / today / f"{doc.id}.json"
-                    out_path.write_text(doc.model_dump_json())
+                    write_json_file(out_path, doc.model_dump(mode="json"))
 
                 for item in live_federal:
                     doc = Document(
@@ -780,7 +780,7 @@ async def regulatory_agent(business_type: str, trace_context: dict | None = None
                         metadata={"agency": item.get("agency", ""), "source": "federal_register_live"},
                     )
                     out_path = get_raw_data_dir() / "federal_register" / today / f"{doc.id}.json"
-                    out_path.write_text(doc.model_dump_json())
+                    write_json_file(out_path, doc.model_dump(mode="json"))
 
                 volume.commit()
             except Exception as e:

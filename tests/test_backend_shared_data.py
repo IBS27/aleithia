@@ -128,7 +128,13 @@ def test_s3_object_storage_accessor_lists_reads_and_writes(monkeypatch) -> None:
         if method == "GET":
             return _FakeObjectStorageResponse(objects[key])
         if method == "PUT":
+            headers = {key.lower(): value for key, value in request.header_items()}
+            if headers.get("if-none-match") == "*" and key in uploads:
+                raise shared_data.urllib.error.HTTPError(request.full_url, 412, "precondition failed", {}, None)
             uploads[key] = request.data or b""
+            return _FakeObjectStorageResponse()
+        if method == "DELETE":
+            uploads.pop(key, None)
             return _FakeObjectStorageResponse()
         raise AssertionError(f"unexpected object storage request: {method} {request.full_url}")
 
@@ -153,6 +159,19 @@ def test_s3_object_storage_accessor_lists_reads_and_writes(monkeypatch) -> None:
     out_path = shared_data.SharedDataPath(accessor, "processed/summaries/news_summary.json")
     out_path.write_text('{"count":2}')
     assert uploads["runtime/processed/summaries/news_summary.json"] == b'{"count":2}'
+
+    assert accessor.try_write_bytes_if_absent("locks/test.lock", b"owner") is True
+    assert accessor.try_write_bytes_if_absent("locks/test.lock", b"other") is False
+    accessor.delete_entry("locks/test.lock")
+    assert "runtime/locks/test.lock" not in uploads
+
+
+def test_shared_data_lock_uses_mounted_shared_path(tmp_path) -> None:
+    accessor = shared_data.MountedVolumeAccessor(tmp_path)
+    lock_path = shared_data.SharedDataPath(accessor, "dedup/test.lock")
+
+    with shared_data.shared_data_lock(lock_path):
+        assert (tmp_path / "dedup" / "test.lock").exists()
 
 
 def test_load_raw_docs_recurses_and_skips_invalid_payloads(tmp_path, monkeypatch) -> None:

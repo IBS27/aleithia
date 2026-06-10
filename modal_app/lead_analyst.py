@@ -23,6 +23,7 @@ from backend.shared_data import (
     get_raw_data_dir,
     iter_files,
     load_json_file,
+    shared_data_lock,
     write_json_file,
 )
 from modal_app.costs import track_cost
@@ -169,24 +170,11 @@ def _save_analyzed_ids(ids: set[str], lock_fd=None) -> None:
 
 def _with_analyzed_lock(fn):
     """Run fn(analyzed_ids) under an exclusive file lock, then save."""
-    import fcntl
-    lock_path = _impact_dedup_lock_file()
-    if not isinstance(lock_path, Path):
+    with shared_data_lock(_impact_dedup_lock_file()):
         ids = _load_analyzed_ids(None)
         result = fn(ids)
         _save_analyzed_ids(ids, None)
         return result
-
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "w") as lock_fd:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        try:
-            ids = _load_analyzed_ids(lock_fd)
-            result = fn(ids)
-            _save_analyzed_ids(ids, lock_fd)
-            return result
-        finally:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
 
 
 # ---------------------------------------------------------------------------

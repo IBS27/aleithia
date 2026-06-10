@@ -7,11 +7,10 @@ from losing dedup entries.
 """
 from __future__ import annotations
 
-import fcntl
 from datetime import datetime, timezone
 from pathlib import Path
 
-from backend.shared_data import get_dedup_data_dir, load_json_file, write_json_file
+from backend.shared_data import get_dedup_data_dir, load_json_file, shared_data_lock, write_json_file
 
 DEDUP_PATH = None
 MAX_IDS = 10_000
@@ -36,7 +35,7 @@ class SeenSet:
         self._list: list[str] = []
         self._set: set[str] = set()
         self._seen_at: dict[str, str] = {}
-        self._lock_fd = None
+        self._lock_cm = None
         self._load()
 
     def _load(self) -> None:
@@ -68,19 +67,18 @@ class SeenSet:
 
     def _acquire_lock(self) -> None:
         """Acquire exclusive file lock for save operations."""
-        if not isinstance(self._lock_file, Path):
-            self._lock_fd = None
-            return
-        self.dir.mkdir(parents=True, exist_ok=True)
-        self._lock_fd = open(self._lock_file, "w")
-        fcntl.flock(self._lock_fd, fcntl.LOCK_EX)
+        self._lock_cm = shared_data_lock(self._lock_file)
+        try:
+            self._lock_cm.__enter__()
+        except Exception:
+            self._lock_cm = None
+            raise
 
     def _release_lock(self) -> None:
         """Release file lock."""
-        if self._lock_fd:
-            fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
-            self._lock_fd.close()
-            self._lock_fd = None
+        if self._lock_cm:
+            self._lock_cm.__exit__(None, None, None)
+            self._lock_cm = None
 
     def contains(self, doc_id: str, max_age_hours: int | None = None) -> bool:
         """Check if a document ID has been seen before.

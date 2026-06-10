@@ -280,8 +280,8 @@ async def traffic_ingester():
     anomalies = []
     for doc in documents:
         fpath = processed_dir / f"{doc.id}.json"
-        fpath.write_text(doc.model_dump_json(indent=2))
-        
+        write_json_file(fpath, doc.model_dump(mode="json"))
+
         if doc.metadata.get("is_anomaly"):
             anomalies.append({
                 "neighborhood": doc.metadata.get("neighborhood"),

@@ -21,7 +21,7 @@ from urllib.parse import quote_plus
 
 import modal
 
-from backend.shared_data import get_raw_data_dir
+from backend.shared_data import get_raw_data_dir, write_json_file
 from modal_app.common import SourceType, build_document, detect_neighborhood
 from modal_app.costs import track_cost
 from modal_app.dedup import SeenSet
@@ -987,7 +987,7 @@ def ingest_tiktok(
 
         doc = build_document(doc_data)
         filepath = save_dir / f"{doc_id}.json"
-        filepath.write_text(doc.model_dump_json(indent=2))
+        write_json_file(filepath, doc.model_dump(mode="json"))
 
         seen.add(doc_id)
         new_docs.append(doc_data)

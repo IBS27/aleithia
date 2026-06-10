@@ -18,9 +18,9 @@ from pathlib import Path
 
 import modal
 
-from backend.shared_data import get_processed_data_dir, get_raw_data_dir, write_file_bytes, write_json_file
+from backend.shared_data import get_processed_data_dir, get_raw_data_dir, local_filesystem_path, write_json_file
 from modal_app.costs import track_cost
-from modal_app.volume import app, volume, video_image, label_image, yolo_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
+from modal_app.volume import app, volume, video_image, label_image, yolo_image
 
 VISION_CLASSES = [
     "person", "vehicle", "storefront_open", "storefront_closed",
@@ -45,7 +45,10 @@ def extract_frames(youtube_url: str, sample_rate: int = 5) -> str:
     import subprocess
 
     video_path = "/tmp/tour.mp4"
-    frames_dir = f"{RAW_DATA_PATH}/vision/frames"
+    frames_path = get_raw_data_dir() / "vision" / "frames"
+    frames_dir = local_filesystem_path(frames_path)
+    if frames_dir is None:
+        raise RuntimeError(f"Vision frame extraction requires a mounted shared-data path, got {frames_path}")
 
     # Download with yt-dlp
     try:
@@ -58,7 +61,7 @@ def extract_frames(youtube_url: str, sample_rate: int = 5) -> str:
         raise RuntimeError(f"Video download failed for {youtube_url}") from e
 
     # Extract frames with FFmpeg
-    Path(frames_dir).mkdir(parents=True, exist_ok=True)
+    frames_dir.mkdir(parents=True, exist_ok=True)
     try:
         subprocess.run(
             [
@@ -73,16 +76,10 @@ def extract_frames(youtube_url: str, sample_rate: int = 5) -> str:
         raise RuntimeError(f"Frame extraction failed for {video_path}") from e
 
     volume.commit()
-    frame_paths = list(Path(frames_dir).glob("*.jpg"))
-    for frame_path in frame_paths:
-        write_file_bytes(
-            get_raw_data_dir() / "vision" / "frames" / frame_path.name,
-            frame_path.read_bytes(),
-            content_type="image/jpeg",
-        )
+    frame_paths = list(frames_dir.glob("*.jpg"))
     frame_count = len(frame_paths)
     print(f"Extracted {frame_count} frames from {youtube_url}")
-    return frames_dir
+    return str(frames_dir)
 
 
 # ─── Step 2: Parallel Vision Agent Labeling ────────────────────────────────────
@@ -180,9 +177,12 @@ def label_all_frames(frames_dir: str) -> str:
     ))
 
     # Write YOLO dataset
-    dataset_dir = f"{PROCESSED_DATA_PATH}/vision/dataset"
-    images_dir = Path(dataset_dir) / "images" / "train"
-    labels_dir = Path(dataset_dir) / "labels" / "train"
+    dataset_path = get_processed_data_dir() / "vision" / "dataset"
+    dataset_dir = local_filesystem_path(dataset_path)
+    if dataset_dir is None:
+        raise RuntimeError(f"Vision labeling requires a mounted shared-data path, got {dataset_path}")
+    images_dir = dataset_dir / "images" / "train"
+    labels_dir = dataset_dir / "labels" / "train"
     images_dir.mkdir(parents=True, exist_ok=True)
     labels_dir.mkdir(parents=True, exist_ok=True)
 
@@ -209,11 +209,11 @@ names:
     for i, cls_name in enumerate(VISION_CLASSES):
         yaml_content += f"  {i}: {cls_name}\n"
 
-    (Path(dataset_dir) / "data.yaml").write_text(yaml_content)
+    (dataset_dir / "data.yaml").write_text(yaml_content)
 
     volume.commit()
     print(f"Dataset ready: {len(results)} images, {total_labels} total labels")
-    return dataset_dir
+    return str(dataset_dir)
 
 
 # ─── Step 3: Custom YOLO Training ─────────────────────────────────────────────
@@ -230,6 +230,10 @@ def train_detector(dataset_dir: str, epochs: int = 50) -> str:
     """Train custom YOLOv8n detector on labeled neighborhood data."""
     from ultralytics import YOLO
 
+    project_dir = local_filesystem_path(get_processed_data_dir() / "vision")
+    if project_dir is None:
+        raise RuntimeError("Vision training requires a mounted shared-data processed path")
+
     model = YOLO("yolov8n.pt")  # start from pretrained
     model.train(
         data=f"{dataset_dir}/data.yaml",
@@ -237,14 +241,14 @@ def train_detector(dataset_dir: str, epochs: int = 50) -> str:
         imgsz=640,
         batch=16,
         device=0,
-        project=f"{PROCESSED_DATA_PATH}/vision",
+        project=str(project_dir),
         name="neighborhood_detector",
     )
 
-    best_model = f"{PROCESSED_DATA_PATH}/vision/neighborhood_detector/weights/best.pt"
+    best_model = project_dir / "neighborhood_detector" / "weights" / "best.pt"
     volume.commit()
     print(f"Training complete. Best model: {best_model}")
-    return best_model
+    return str(best_model)
 
 
 # ─── Step 4: Inference ─────────────────────────────────────────────────────────
@@ -257,7 +261,10 @@ def analyze_neighborhood(image_path: str, model_path: str = "", neighborhood: st
     from ultralytics import YOLO
 
     if not model_path:
-        model_path = f"{PROCESSED_DATA_PATH}/vision/neighborhood_detector/weights/best.pt"
+        processed_dir = local_filesystem_path(get_processed_data_dir())
+        if processed_dir is None:
+            raise RuntimeError("Vision analysis requires a mounted shared-data processed path")
+        model_path = str(processed_dir / "vision" / "neighborhood_detector" / "weights" / "best.pt")
 
     model = YOLO(model_path)
     results = model(image_path)

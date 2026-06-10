@@ -134,7 +134,11 @@ def _atomic_write_json(path, payload: dict) -> None:
 
 def _iter_cctv_meta_dirs(max_meta_days: int | None = None) -> list:
     root = get_raw_data_dir() / "cctv"
-    dirs = [d for d in root.iterdir() if d.is_dir() and d.name != "frames"]
+    try:
+        entries = root.iterdir()
+    except OSError:
+        return []
+    dirs = [d for d in entries if d.is_dir() and d.name != "frames"]
     dirs.sort(key=lambda d: d.name, reverse=True)
 
     if not max_meta_days or max_meta_days <= 0:

@@ -343,3 +343,21 @@ def test_vision_assess_contract_model_field(monkeypatch, tmp_path: Path) -> None
     assert fake_completions.last_kwargs["reasoning_effort"] == "low"
     assert "max_tokens" not in fake_completions.last_kwargs
     assert "temperature" not in fake_completions.last_kwargs
+
+
+def test_vision_assess_does_not_use_unrelated_fallback_frames(monkeypatch, tmp_path: Path) -> None:
+    raw_root = tmp_path / "raw"
+    processed_root = tmp_path / "processed"
+    frame_dir = raw_root / "vision" / "frames"
+    frame_dir.mkdir(parents=True)
+    (frame_dir / "hyde_park_frame.jpg").write_bytes(b"fake-image-bytes")
+
+    monkeypatch.setattr(web, "RAW_DATA_PATH", str(raw_root))
+    monkeypatch.setattr(web, "PROCESSED_DATA_PATH", str(processed_root))
+    monkeypatch.setattr(web, "volume", _DummyVolume())
+    monkeypatch.setattr(openai_utils, "openai_available", lambda: True)
+
+    response = asyncio.run(web.vision_assess("Loop"))
+
+    assert response.status_code == 404
+    assert json.loads(response.body)["frame_count"] == 0
