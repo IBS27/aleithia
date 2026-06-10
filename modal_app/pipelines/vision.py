@@ -18,6 +18,7 @@ from pathlib import Path
 
 import modal
 
+from backend.shared_data import get_processed_data_dir, get_raw_data_dir, write_file_bytes, write_json_file
 from modal_app.costs import track_cost
 from modal_app.volume import app, volume, video_image, label_image, yolo_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
 
@@ -72,7 +73,14 @@ def extract_frames(youtube_url: str, sample_rate: int = 5) -> str:
         raise RuntimeError(f"Frame extraction failed for {video_path}") from e
 
     volume.commit()
-    frame_count = len(list(Path(frames_dir).glob("*.jpg")))
+    frame_paths = list(Path(frames_dir).glob("*.jpg"))
+    for frame_path in frame_paths:
+        write_file_bytes(
+            get_raw_data_dir() / "vision" / "frames" / frame_path.name,
+            frame_path.read_bytes(),
+            content_type="image/jpeg",
+        )
+    frame_count = len(frame_paths)
     print(f"Extracted {frame_count} frames from {youtube_url}")
     return frames_dir
 
@@ -278,11 +286,9 @@ def analyze_neighborhood(image_path: str, model_path: str = "", neighborhood: st
     }
 
     # Persist analysis result to disk
-    analysis_dir = Path(PROCESSED_DATA_PATH) / "vision" / "analysis"
-    analysis_dir.mkdir(parents=True, exist_ok=True)
     slug = neighborhood.lower().replace(" ", "_") if neighborhood else "unknown"
-    out_path = analysis_dir / f"{slug}_{ts}.json"
-    out_path.write_text(json.dumps(result, indent=2))
+    out_path = get_processed_data_dir() / "vision" / "analysis" / f"{slug}_{ts}.json"
+    write_json_file(out_path, result)
     volume.commit()
     print(f"Analysis saved to {out_path}")
 

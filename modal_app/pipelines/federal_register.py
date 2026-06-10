@@ -6,15 +6,15 @@ Pattern: async + FallbackChain + modal.Retries
 """
 import json
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 
 import httpx
 import modal
 
+from backend.shared_data import get_raw_data_dir
 from modal_app.common import SourceType, build_document, detect_neighborhood, safe_queue_push, safe_volume_commit
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
-from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
+from modal_app.volume import app, volume, base_image
 
 FEDERAL_REGISTER_BASE = "https://www.federalregister.gov/api/v1"
 
@@ -179,8 +179,7 @@ async def federal_register_ingester():
 
     # Save to volume
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    out_dir = Path(RAW_DATA_PATH) / "federal_register" / date_str
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = get_raw_data_dir() / "federal_register" / date_str
     ingested_at = datetime.now(timezone.utc).isoformat()
 
     for doc_data in new_docs:

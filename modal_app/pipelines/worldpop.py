@@ -14,13 +14,13 @@ EE auth: use a service account key stored in Modal secrets.
 """
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 import hashlib
 
 import modal
 
+from backend.shared_data import get_raw_data_dir
 from modal_app.common import SourceType, build_document
-from modal_app.volume import app, volume, VOLUME_MOUNT, RAW_DATA_PATH
+from modal_app.volume import app, volume, VOLUME_MOUNT
 
 # ---------- Image with Earth Engine SDK ----------
 ee_image = modal.Image.debian_slim(python_version="3.11").pip_install(
@@ -222,8 +222,7 @@ def ingest_worldpop_demographics():
     _init_ee()
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    out_dir = Path(RAW_DATA_PATH) / "worldpop" / today
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = get_raw_data_dir() / "worldpop" / today
 
     results = {}
     errors = []

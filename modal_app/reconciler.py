@@ -6,13 +6,13 @@ Tracks compute costs via modal.Dict.
 Modal features: modal.Dict, modal.Period (scheduling)
 """
 import json
-from datetime import datetime, timezone, timedelta
-from pathlib import Path
+from datetime import datetime, timezone
 
 import modal
 
+from backend.shared_data import get_raw_data_dir, iter_files
 from modal_app.costs import cost_dict, track_cost
-from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
+from modal_app.volume import app, volume, base_image
 
 # Expected freshness per source (in minutes)
 FRESHNESS_THRESHOLDS = {
@@ -69,13 +69,8 @@ async def data_reconciler():
     status_report = {}
 
     for source, threshold_minutes in FRESHNESS_THRESHOLDS.items():
-        source_dir = Path(RAW_DATA_PATH) / source
-        if not source_dir.exists():
-            stale_sources.append(source)
-            status_report[source] = {"state": "missing", "last_update": None}
-            continue
-
-        json_files = list(source_dir.rglob("*.json"))
+        source_dir = get_raw_data_dir() / source
+        json_files = iter_files(source_dir, pattern="*.json")
         if not json_files:
             stale_sources.append(source)
             status_report[source] = {"state": "empty", "last_update": None}

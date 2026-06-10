@@ -21,12 +21,12 @@ from urllib.parse import quote_plus
 
 import modal
 
+from backend.shared_data import get_raw_data_dir
 from modal_app.common import SourceType, build_document, detect_neighborhood
 from modal_app.costs import track_cost
 from modal_app.dedup import SeenSet
 from modal_app.volume import (
     VOLUME_MOUNT,
-    RAW_DATA_PATH,
     app,
     tiktok_image,
     transcribe_image,
@@ -897,8 +897,7 @@ def ingest_tiktok(
     # --- Step 3: Dedup, convert to Documents, save, push to queue ---
     seen = SeenSet("tiktok")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    save_dir = f"{RAW_DATA_PATH}/tiktok/{today}"
-    os.makedirs(save_dir, exist_ok=True)
+    save_dir = get_raw_data_dir() / "tiktok" / today
 
     new_docs: list[dict] = []
     skipped = 0
@@ -987,9 +986,8 @@ def ingest_tiktok(
             continue
 
         doc = build_document(doc_data)
-        filepath = f"{save_dir}/{doc_id}.json"
-        with open(filepath, "w") as f:
-            f.write(doc.model_dump_json(indent=2))
+        filepath = save_dir / f"{doc_id}.json"
+        filepath.write_text(doc.model_dump_json(indent=2))
 
         seen.add(doc_id)
         new_docs.append(doc_data)

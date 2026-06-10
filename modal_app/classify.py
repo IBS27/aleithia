@@ -4,15 +4,14 @@ Uses modal.Queue for event bus between pipelines and classifiers.
 Modal features: @modal.batched, modal.Queue, @modal.cls, @modal.enter, gpu=T4
 """
 import asyncio
-import json
 from datetime import datetime, timezone
-from pathlib import Path
 
 import modal
 
+from backend.shared_data import get_processed_data_dir, write_json_file
 from modal_app.costs import track_cost
 from modal_app.runtime import get_impact_queue, get_raw_doc_queue
-from modal_app.volume import app, volume, classify_image, PROCESSED_DATA_PATH
+from modal_app.volume import app, volume, classify_image
 
 # Event bus: pipelines push raw docs, classifier drains and enriches
 doc_queue = get_raw_doc_queue()
@@ -175,8 +174,7 @@ async def process_queue_batch():
         )
 
         # Enrich documents with classifications
-        enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
-        enriched_dir.mkdir(parents=True, exist_ok=True)
+        enriched_dir = get_processed_data_dir() / "enriched"
 
         for i, doc in enumerate(docs):
             cls_result = classifications[i]
@@ -195,7 +193,7 @@ async def process_queue_batch():
                 doc["sentiment"] = sent_result
 
             out_path = enriched_dir / f"{doc.get('id', f'doc-{i}')}.json"
-            out_path.write_text(json.dumps(doc, indent=2, default=str))
+            write_json_file(out_path, doc)
 
         await volume.commit.aio()
         print(f"Classified {len(docs)} documents: saved to {enriched_dir}")

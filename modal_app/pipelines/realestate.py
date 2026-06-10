@@ -8,15 +8,15 @@ import hashlib
 import json
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 import httpx
 import modal
 
+from backend.shared_data import get_raw_data_dir
 from modal_app.common import SourceType, CHICAGO_NEIGHBORHOODS, build_document, detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
-from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
+from modal_app.volume import app, volume, base_image
 
 # LoopNet search parameters
 LOOPNET_PROPERTY_TYPES = ["retail", "restaurant", "office", "industrial"]
@@ -204,8 +204,7 @@ async def realestate_ingester():
 
     # Save to volume
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    out_dir = Path(RAW_DATA_PATH) / "realestate" / date_str
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = get_raw_data_dir() / "realestate" / date_str
     ingested_at = datetime.now(timezone.utc).isoformat()
 
     for doc_data in new_docs:

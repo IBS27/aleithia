@@ -11,10 +11,10 @@ import os
 import re
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 
 import modal
 
+from backend.shared_data import get_processed_data_dir, get_raw_data_dir, iter_files, load_json_file
 from modal_app.common import compute_freshness, neighborhood_to_ca
 from modal_app.costs import track_cost
 from modal_app.pipelines.reddit import (
@@ -25,7 +25,7 @@ from modal_app.pipelines.reddit import (
     search_reddit_fallback_runtime,
 )
 from modal_app.runtime import get_modal_function
-from modal_app.volume import app, volume, base_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
+from modal_app.volume import app, volume, base_image
 
 ADJACENT_NEIGHBORHOODS = {
     "Logan Square": ["Humboldt Park", "Avondale"],
@@ -316,26 +316,23 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
 
         # Read local volume data
         for source in ["public_data", "news", "politics", "federal_register", "demographics", "reddit", "reviews", "realestate", "tiktok", "cctv"]:
-            source_dir = Path(RAW_DATA_PATH) / source
-            if not source_dir.exists() and source != "reddit":
-                continue
+            source_dir = get_raw_data_dir() / source
 
             docs = []
-            if source_dir.exists():
-                for json_file in sorted(source_dir.rglob("*.json"), reverse=True)[:100]:
-                    try:
-                        doc = json.loads(json_file.read_text())
-                        if not isinstance(doc, dict):
-                            continue
-                        geo = doc.get("geo", {})
-                        doc_neighborhood = geo.get("neighborhood", "")
-                        doc_ca = geo.get("community_area", "")
-                        if doc_neighborhood.lower() == neighborhood.lower():
-                            docs.append(doc)
-                        elif nb_community_area and doc_ca == nb_community_area:
-                            docs.append(doc)
-                    except Exception:
+            for json_file in iter_files(source_dir, pattern="*.json")[:100]:
+                try:
+                    doc = load_json_file(json_file, default=None)
+                    if not isinstance(doc, dict):
                         continue
+                    geo = doc.get("geo", {})
+                    doc_neighborhood = geo.get("neighborhood", "")
+                    doc_ca = geo.get("community_area", "")
+                    if doc_neighborhood.lower() == neighborhood.lower():
+                        docs.append(doc)
+                    elif nb_community_area and doc_ca == nb_community_area:
+                        docs.append(doc)
+                except Exception:
+                    continue
 
             if source == "reddit":
                 docs = rank_reddit_docs(
@@ -401,72 +398,72 @@ async def neighborhood_intel_agent(neighborhood: str, business_type: str, focus_
                 report["data_points"] += len(docs)
 
         # Traffic: read from processed path (Documents, not raw API dicts)
-        traffic_dir = Path(RAW_DATA_PATH) / "processed" / "traffic"
-        if traffic_dir.exists():
-            traffic_docs = []
-            for json_file in sorted(traffic_dir.rglob("*.json"), reverse=True)[:50]:
-                try:
-                    doc = json.loads(json_file.read_text())
-                    if not isinstance(doc, dict) or "geo" not in doc:
-                        continue
-                    geo = doc.get("geo", {})
-                    if geo.get("neighborhood", "").lower() == neighborhood.lower():
-                        traffic_docs.append(doc)
-                    elif nb_community_area and geo.get("community_area") == nb_community_area:
-                        traffic_docs.append(doc)
-                except Exception:
+        traffic_dir = get_processed_data_dir() / "traffic"
+        traffic_docs = []
+        for json_file in iter_files(traffic_dir, pattern="*.json")[:50]:
+            try:
+                doc = load_json_file(json_file, default=None)
+                if not isinstance(doc, dict) or "geo" not in doc:
                     continue
-            if traffic_docs:
-                newest_ts = None
-                for d in traffic_docs:
-                    ts = d.get("timestamp")
-                    if ts and (newest_ts is None or ts > newest_ts):
-                        newest_ts = ts
-                traffic_freshness = compute_freshness(timestamp_str=newest_ts) if newest_ts else compute_freshness()
+                geo = doc.get("geo", {})
+                if geo.get("neighborhood", "").lower() == neighborhood.lower():
+                    traffic_docs.append(doc)
+                elif nb_community_area and geo.get("community_area") == nb_community_area:
+                    traffic_docs.append(doc)
+            except Exception:
+                continue
+        if traffic_docs:
+            newest_ts = None
+            for d in traffic_docs:
+                ts = d.get("timestamp")
+                if ts and (newest_ts is None or ts > newest_ts):
+                    newest_ts = ts
+            traffic_freshness = compute_freshness(timestamp_str=newest_ts) if newest_ts else compute_freshness()
 
-                report["findings"]["traffic"] = {
-                    "count": len(traffic_docs),
-                    "samples": [{"title": d.get("title", ""), "content": d.get("content", "")[:200]} for d in traffic_docs[:5]],
-                    "freshness": traffic_freshness,
-                }
-                report["freshness"]["traffic"] = traffic_freshness
-                report["data_points"] += len(traffic_docs)
+            report["findings"]["traffic"] = {
+                "count": len(traffic_docs),
+                "samples": [{"title": d.get("title", ""), "content": d.get("content", "")[:200]} for d in traffic_docs[:5]],
+                "freshness": traffic_freshness,
+            }
+            report["freshness"]["traffic"] = traffic_freshness
+            report["data_points"] += len(traffic_docs)
 
         # Read enriched data (classified)
-        enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
-        if enriched_dir.exists():
-            enriched_docs = []
-            for json_file in sorted(enriched_dir.rglob("*.json"), reverse=True)[:50]:
-                try:
-                    doc = json.loads(json_file.read_text())
-                    doc_neighborhood = doc.get("geo", {}).get("neighborhood", "")
-                    if doc_neighborhood.lower() == neighborhood.lower():
-                        enriched_docs.append(doc)
-                except Exception:
+        enriched_dir = get_processed_data_dir() / "enriched"
+        enriched_docs = []
+        for json_file in iter_files(enriched_dir, pattern="*.json")[:50]:
+            try:
+                doc = load_json_file(json_file, default=None)
+                if not isinstance(doc, dict):
                     continue
+                doc_neighborhood = doc.get("geo", {}).get("neighborhood", "")
+                if doc_neighborhood.lower() == neighborhood.lower():
+                    enriched_docs.append(doc)
+            except Exception:
+                continue
 
-            if enriched_docs:
-                # Aggregate sentiment
-                sentiments = [d.get("sentiment", {}).get("label", "neutral") for d in enriched_docs]
-                positive = sentiments.count("positive")
-                negative = sentiments.count("negative")
-                report["findings"]["sentiment"] = {
-                    "positive": positive,
-                    "negative": negative,
-                    "neutral": len(sentiments) - positive - negative,
-                    "ratio": round(positive / max(len(sentiments), 1), 2),
-                }
+        if enriched_docs:
+            # Aggregate sentiment
+            sentiments = [d.get("sentiment", {}).get("label", "neutral") for d in enriched_docs]
+            positive = sentiments.count("positive")
+            negative = sentiments.count("negative")
+            report["findings"]["sentiment"] = {
+                "positive": positive,
+                "negative": negative,
+                "neutral": len(sentiments) - positive - negative,
+                "ratio": round(positive / max(len(sentiments), 1), 2),
+            }
 
-                # Aggregate classifications
-                all_labels = []
-                for d in enriched_docs:
-                    all_labels.extend(d.get("classification", {}).get("labels", []))
-                label_counts = {}
-                for label in all_labels:
-                    label_counts[label] = label_counts.get(label, 0) + 1
-                report["findings"]["top_categories"] = dict(
-                    sorted(label_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-                )
+            # Aggregate classifications
+            all_labels = []
+            for d in enriched_docs:
+                all_labels.extend(d.get("classification", {}).get("labels", []))
+            label_counts = {}
+            for label in all_labels:
+                label_counts[label] = label_counts.get(label, 0) + 1
+            report["findings"]["top_categories"] = dict(
+                sorted(label_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+            )
 
         # Extract foot traffic metrics from CCTV data
         if "cctv" in report["findings"]:
@@ -665,14 +662,14 @@ async def regulatory_agent(business_type: str, trace_context: dict | None = None
 
         # 2. Read volume data as fallback / supplement (dedup against live)
         for source_name, source_dir_name in [("politics", "politics"), ("federal", "federal_register")]:
-            source_dir = Path(RAW_DATA_PATH) / source_dir_name
-            if not source_dir.exists():
-                continue
+            source_dir = get_raw_data_dir() / source_dir_name
 
             newest_ts = None
-            for json_file in sorted(source_dir.rglob("*.json"), reverse=True)[:50]:
+            for json_file in iter_files(source_dir, pattern="*.json")[:50]:
                 try:
-                    doc = json.loads(json_file.read_text())
+                    doc = load_json_file(json_file, default=None)
+                    if not isinstance(doc, dict):
+                        continue
                     content = f"{doc.get('title', '')} {doc.get('content', '')}".lower()
                     keywords = business_keywords + regulatory_keywords
                     if source_name == "federal":
@@ -703,19 +700,18 @@ async def regulatory_agent(business_type: str, trace_context: dict | None = None
                 report["freshness"][f"{source_name}_cached"] = cached_freshness
 
         # 2b. Scan enriched regulatory/legal docs as a bounded local fallback
-        enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
+        enriched_dir = get_processed_data_dir() / "enriched"
         enriched_matches: list[dict] = []
-        if enriched_dir.exists():
-            for json_file in sorted(enriched_dir.rglob("*.json"), reverse=True)[:ENRICHED_REG_SCAN_LIMIT]:
-                try:
-                    doc = json.loads(json_file.read_text())
-                    if not isinstance(doc, dict):
-                        continue
-                    scored = _score_enriched_regulatory_doc(doc, business_type)
-                    if scored is not None:
-                        enriched_matches.append(scored)
-                except Exception:
+        for json_file in iter_files(enriched_dir, pattern="*.json")[:ENRICHED_REG_SCAN_LIMIT]:
+            try:
+                doc = load_json_file(json_file, default=None)
+                if not isinstance(doc, dict):
                     continue
+                scored = _score_enriched_regulatory_doc(doc, business_type)
+                if scored is not None:
+                    enriched_matches.append(scored)
+            except Exception:
+                continue
 
         enriched_matches.sort(key=lambda item: (item["score"], item["timestamp"]), reverse=True)
         enriched_added = 0
@@ -771,9 +767,8 @@ async def regulatory_agent(business_type: str, trace_context: dict | None = None
                         url="",
                         metadata={"matter_type": item.get("type", ""), "status": item.get("status", ""), "source": "legistar_live"},
                     )
-                    out_dir = Path(RAW_DATA_PATH) / "politics" / today
-                    out_dir.mkdir(parents=True, exist_ok=True)
-                    (out_dir / f"{doc.id}.json").write_text(doc.model_dump_json())
+                    out_path = get_raw_data_dir() / "politics" / today / f"{doc.id}.json"
+                    out_path.write_text(doc.model_dump_json())
 
                 for item in live_federal:
                     doc = Document(
@@ -784,9 +779,8 @@ async def regulatory_agent(business_type: str, trace_context: dict | None = None
                         url=item.get("url", ""),
                         metadata={"agency": item.get("agency", ""), "source": "federal_register_live"},
                     )
-                    out_dir = Path(RAW_DATA_PATH) / "federal_register" / today
-                    out_dir.mkdir(parents=True, exist_ok=True)
-                    (out_dir / f"{doc.id}.json").write_text(doc.model_dump_json())
+                    out_path = get_raw_data_dir() / "federal_register" / today / f"{doc.id}.json"
+                    out_path.write_text(doc.model_dump_json())
 
                 volume.commit()
             except Exception as e:

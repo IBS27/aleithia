@@ -7,19 +7,18 @@ import importlib
 import sys
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 
 import modal
 
-from backend.shared_data import load_json_file
+from backend.shared_data import get_processed_data_dir, get_raw_data_dir, iter_files, load_json_file
 from modal_app.api.cache import cache
 from modal_app.common import NEIGHBORHOOD_CENTROIDS, parse_timestamp
 from modal_app.runtime import ENABLE_CCTV_ANALYSIS, get_modal_function
-from modal_app.volume import PROCESSED_DATA_PATH, RAW_DATA_PATH, volume
+from modal_app.volume import volume
 
-CCTV_LATEST_INDEX_PATH = Path(PROCESSED_DATA_PATH) / "cctv" / "index" / "latest_by_camera.json"
-SYNTHETIC_CCTV_PATH = Path(PROCESSED_DATA_PATH) / "cctv" / "synthetic_analytics.json"
-LEGACY_FAKE_CCTV_PATH = Path(PROCESSED_DATA_PATH) / "cctv" / "fake_analytics.json"
+CCTV_LATEST_INDEX_PATH = None
+RAW_DATA_PATH = None
+PROCESSED_DATA_PATH = None
 CCTV_NEIGHBORHOOD_CAMERA_LIMIT = 24
 CCTV_STALE_AFTER_SECONDS = 6 * 60 * 60
 CCTV_REFRESH_DEBOUNCE_SECONDS = 10 * 60
@@ -27,6 +26,46 @@ CCTV_REFRESH_DICT_KEY = "latest-index"
 
 cctv_refresh_recent_dict = modal.Dict.from_name("alethia-cctv-refresh-recent", create_if_missing=True)
 _cctv_refresh_lock = asyncio.Lock()
+
+
+def _cctv_latest_index_path():
+    if CCTV_LATEST_INDEX_PATH is not None:
+        from pathlib import Path
+
+        return Path(CCTV_LATEST_INDEX_PATH)
+    return get_processed_data_dir() / "cctv" / "index" / "latest_by_camera.json"
+
+
+def _synthetic_cctv_path():
+    if PROCESSED_DATA_PATH is not None:
+        from pathlib import Path
+
+        return Path(PROCESSED_DATA_PATH) / "cctv" / "synthetic_analytics.json"
+    return get_processed_data_dir() / "cctv" / "synthetic_analytics.json"
+
+
+def _legacy_fake_cctv_path():
+    if PROCESSED_DATA_PATH is not None:
+        from pathlib import Path
+
+        return Path(PROCESSED_DATA_PATH) / "cctv" / "fake_analytics.json"
+    return get_processed_data_dir() / "cctv" / "fake_analytics.json"
+
+
+def _raw_data_dir():
+    if RAW_DATA_PATH is not None:
+        from pathlib import Path
+
+        return Path(RAW_DATA_PATH)
+    return get_raw_data_dir()
+
+
+def _processed_data_dir():
+    if PROCESSED_DATA_PATH is not None:
+        from pathlib import Path
+
+        return Path(PROCESSED_DATA_PATH)
+    return get_processed_data_dir()
 
 
 def _generate_synthetic_cctv() -> dict:
@@ -43,11 +82,13 @@ def _generate_synthetic_cctv() -> dict:
 
 def load_synthetic_cctv() -> dict:
     """Load synthetic CCTV analytics, preferring the shared volume copy."""
-    source_path: Path | None = None
-    if SYNTHETIC_CCTV_PATH.exists():
-        source_path = SYNTHETIC_CCTV_PATH
-    elif LEGACY_FAKE_CCTV_PATH.exists():
-        source_path = LEGACY_FAKE_CCTV_PATH
+    source_path = None
+    synthetic_path = _synthetic_cctv_path()
+    legacy_path = _legacy_fake_cctv_path()
+    if synthetic_path.exists():
+        source_path = synthetic_path
+    elif legacy_path.exists():
+        source_path = legacy_path
 
     if source_path is not None:
         cache_key = f"cctv:synthetic:{source_path.name}:{int(source_path.stat().st_mtime)}"
@@ -74,13 +115,11 @@ def analysis_timestamp_epoch(data: dict, fallback_mtime: float) -> float:
 def camera_frame_available(camera_id: str) -> bool:
     """Return whether any recent annotated/raw JPEG exists for the camera."""
     frame_dirs = [
-        Path(PROCESSED_DATA_PATH) / "cctv" / "annotated",
-        Path(RAW_DATA_PATH) / "cctv" / "frames",
+        _processed_data_dir() / "cctv" / "annotated",
+        _raw_data_dir() / "cctv" / "frames",
     ]
     for frame_dir in frame_dirs:
-        if not frame_dir.exists():
-            continue
-        if next(frame_dir.glob(f"{camera_id}_*.jpg"), None) is not None:
+        if iter_files(frame_dir, recursive=False, pattern=f"{camera_id}_*.jpg"):
             return True
     return False
 
@@ -254,17 +293,18 @@ async def load_cctv_latest_index() -> dict[str, dict]:
         print(f"cctv_index_reload_warning: {exc}")
         return {}
 
-    if not CCTV_LATEST_INDEX_PATH.exists():
-        print(f"cctv_index_missing: {CCTV_LATEST_INDEX_PATH}")
+    index_path = _cctv_latest_index_path()
+    if not index_path.exists():
+        print(f"cctv_index_missing: {index_path}")
         return {}
 
-    index_age_seconds = max(0.0, time.time() - CCTV_LATEST_INDEX_PATH.stat().st_mtime)
+    index_age_seconds = max(0.0, time.time() - index_path.stat().st_mtime)
     await maybe_spawn_cctv_refresh(index_age_seconds)
 
-    cache_key = f"cctv:latest_index:{int(CCTV_LATEST_INDEX_PATH.stat().st_mtime)}"
+    cache_key = f"cctv:latest_index:{int(index_path.stat().st_mtime)}"
 
     def _loader() -> dict[str, dict]:
-        parsed = load_json_file(CCTV_LATEST_INDEX_PATH, default=None)
+        parsed = load_json_file(index_path, default=None)
         if parsed is None:
             print("cctv_index_corrupt: failed to parse latest index")
             return {}
@@ -434,9 +474,7 @@ async def aggregate_timeseries_for_neighborhood(name: str, camera_ids: list[str]
     if not camera_ids:
         return {"hours": [], "peak_hour": 0, "peak_pedestrians": 0, "camera_count": 0}
 
-    ts_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "timeseries"
-    if not ts_dir.exists():
-        return {"hours": [], "peak_hour": 0, "peak_pedestrians": 0, "camera_count": len(camera_ids)}
+    ts_dir = _processed_data_dir() / "cctv" / "timeseries"
 
     chicago_tz = ZoneInfo("America/Chicago")
     hourly: dict[int, list[dict]] = {hour: [] for hour in range(24)}
@@ -494,12 +532,9 @@ async def aggregate_timeseries_for_neighborhood(name: str, camera_ids: list[str]
 
 def load_parking_for_neighborhood(name: str) -> dict | None:
     volume.reload()
-    analysis_dir = Path(PROCESSED_DATA_PATH) / "parking" / "analysis"
-    if not analysis_dir.exists():
-        return None
-
     slug = name.lower().replace(" ", "_")
-    candidates = sorted(analysis_dir.glob(f"{slug}_*.json"), reverse=True)
+    analysis_dir = _processed_data_dir() / "parking" / "analysis"
+    candidates = iter_files(analysis_dir, recursive=False, pattern=f"{slug}_*.json")
     if not candidates:
         return None
     return load_json_file(candidates[0], default=None)

@@ -24,7 +24,7 @@ from modal_app.api.services.metrics import (
     logistic as _logistic,
 )
 from modal_app.common import NEIGHBORHOOD_CENTROIDS
-from modal_app.volume import PROCESSED_DATA_PATH, RAW_DATA_PATH, app, volume, web_image
+from modal_app.volume import app, volume, web_image
 
 web_app = FastAPI(title="Aleithia API", version="2.0")
 
@@ -51,6 +51,8 @@ for router in (
 # Legacy module-level compatibility exports for tests and older callers.
 CCTV_LATEST_INDEX_PATH = cctv_service.CCTV_LATEST_INDEX_PATH
 CCTV_NEIGHBORHOOD_CAMERA_LIMIT = cctv_service.CCTV_NEIGHBORHOOD_CAMERA_LIMIT
+RAW_DATA_PATH = None
+PROCESSED_DATA_PATH = None
 
 _analysis_timestamp_epoch = cctv_service.analysis_timestamp_epoch
 _load_docs = neighborhoods_routes.load_docs
@@ -83,6 +85,9 @@ async def _reload_volume_compat() -> None:
 async def _load_cctv_latest_index() -> dict[str, dict]:
     await _reload_volume_compat()
 
+    if CCTV_LATEST_INDEX_PATH is None:
+        return await cctv_service.load_cctv_latest_index()
+
     index_path = Path(CCTV_LATEST_INDEX_PATH)
     if not index_path.exists():
         return {}
@@ -113,7 +118,7 @@ async def _load_cctv_for_neighborhood(name: str) -> dict:
     )
     try:
         cctv_service.volume = volume
-        cctv_service.CCTV_LATEST_INDEX_PATH = Path(CCTV_LATEST_INDEX_PATH)
+        cctv_service.CCTV_LATEST_INDEX_PATH = Path(CCTV_LATEST_INDEX_PATH) if CCTV_LATEST_INDEX_PATH is not None else None
         cctv_service.CCTV_NEIGHBORHOOD_CAMERA_LIMIT = CCTV_NEIGHBORHOOD_CAMERA_LIMIT
         cctv_service.load_cctv_latest_index = _load_cctv_latest_index
         cctv_service.synthetic_cctv_entry = _fake_cctv_entry
@@ -199,8 +204,10 @@ async def vision_assess(neighborhood: str):
     )
     try:
         vision_routes.volume = volume
-        vision_routes.RAW_DATA_PATH = RAW_DATA_PATH
-        vision_routes.PROCESSED_DATA_PATH = PROCESSED_DATA_PATH
+        if RAW_DATA_PATH is not None:
+            vision_routes.RAW_DATA_PATH = RAW_DATA_PATH
+        if PROCESSED_DATA_PATH is not None:
+            vision_routes.PROCESSED_DATA_PATH = PROCESSED_DATA_PATH
         return await vision_routes.vision_assess(neighborhood)
     finally:
         (

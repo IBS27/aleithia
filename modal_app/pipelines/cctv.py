@@ -17,6 +17,15 @@ from pathlib import Path
 import httpx
 import modal
 
+from backend.shared_data import (
+    get_processed_data_dir,
+    get_raw_data_dir,
+    iter_files,
+    load_json_file,
+    read_file_bytes,
+    write_file_bytes,
+    write_json_file,
+)
 from modal_app.common import (
     Document,
     SourceType,
@@ -29,7 +38,7 @@ from modal_app.common import (
 from modal_app.costs import track_cost
 from modal_app.fallback import FallbackChain
 from modal_app.runtime import ENABLE_CCTV_ANALYSIS, get_raw_doc_queue
-from modal_app.volume import app, volume, base_image, yolo_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
+from modal_app.volume import app, volume, base_image, yolo_image
 
 # IDOT Gateway Traffic Cameras — ArcGIS Online (public, no key needed)
 IDOT_ARCGIS_URL = (
@@ -55,8 +64,14 @@ TRUCK_ID = 7
 VEHICLE_IDS = {CAR_ID, MOTORCYCLE_ID, BUS_ID, TRUCK_ID}
 
 CONFIDENCE_THRESHOLD = 0.3
-CCTV_INDEX_DIR = Path(PROCESSED_DATA_PATH) / "cctv" / "index"
-CCTV_LATEST_INDEX_PATH = CCTV_INDEX_DIR / "latest_by_camera.json"
+CCTV_INDEX_DIR = None
+CCTV_LATEST_INDEX_PATH = None
+
+
+def _cctv_latest_index_path():
+    if CCTV_LATEST_INDEX_PATH is not None:
+        return Path(CCTV_LATEST_INDEX_PATH)
+    return get_processed_data_dir() / "cctv" / "index" / "latest_by_camera.json"
 
 
 def _classify_density(person_count: int) -> str:
@@ -107,18 +122,18 @@ def _safe_float(value: object, default: float = 0.0) -> float:
         return default
 
 
-def _atomic_write_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f"{path.name}.tmp")
-    tmp_path.write_text(json.dumps(payload, indent=2, default=str))
-    tmp_path.replace(path)
+def _atomic_write_json(path, payload: dict) -> None:
+    if isinstance(path, Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f"{path.name}.tmp")
+        tmp_path.write_text(json.dumps(payload, indent=2, default=str))
+        tmp_path.replace(path)
+        return
+    write_json_file(path, payload)
 
 
-def _iter_cctv_meta_dirs(max_meta_days: int | None = None) -> list[Path]:
-    root = Path(RAW_DATA_PATH) / "cctv"
-    if not root.exists():
-        return []
-
+def _iter_cctv_meta_dirs(max_meta_days: int | None = None) -> list:
+    root = get_raw_data_dir() / "cctv"
     dirs = [d for d in root.iterdir() if d.is_dir() and d.name != "frames"]
     dirs.sort(key=lambda d: d.name, reverse=True)
 
@@ -151,7 +166,7 @@ def _build_latest_camera_metadata_map(
 
     meta_by_camera: dict[str, dict] = {}
     for date_dir in _iter_cctv_meta_dirs(max_meta_days=max_meta_days):
-        for mf in date_dir.glob("*.json"):
+        for mf in iter_files(date_dir, recursive=False, pattern="*.json"):
             cam_id = mf.stem.split("_", 1)[0].strip()
             if not cam_id:
                 continue
@@ -160,7 +175,9 @@ def _build_latest_camera_metadata_map(
             if cam_id in meta_by_camera:
                 continue
             try:
-                parsed = json.loads(mf.read_text())
+                parsed = load_json_file(mf, default=None)
+                if not isinstance(parsed, dict):
+                    continue
             except Exception:
                 continue
             meta_by_camera[cam_id] = {
@@ -176,12 +193,7 @@ def _build_latest_camera_metadata_map(
 
 
 def _load_latest_index_file() -> dict[str, dict]:
-    if not CCTV_LATEST_INDEX_PATH.exists():
-        return {}
-    try:
-        parsed = json.loads(CCTV_LATEST_INDEX_PATH.read_text())
-    except Exception:
-        return {}
+    parsed = load_json_file(_cctv_latest_index_path(), default=None)
     if not isinstance(parsed, dict):
         return {}
 
@@ -231,7 +243,7 @@ def _update_cctv_latest_index(results: list[dict], meta_by_camera: dict[str, dic
         }
         updated += 1
 
-    _atomic_write_json(CCTV_LATEST_INDEX_PATH, latest_index)
+    _atomic_write_json(_cctv_latest_index_path(), latest_index)
     return {"updated": updated, "total": len(latest_index)}
 
 
@@ -279,7 +291,7 @@ async def _fetch_idot_cameras() -> list[dict]:
 
 
 async def _download_snapshot(
-    client: httpx.AsyncClient, camera: dict, out_dir: Path
+    client: httpx.AsyncClient, camera: dict, out_dir
 ) -> str | None:
     """Download a single camera JPEG. Returns local path or None."""
     url = camera["snapshot_url"]
@@ -296,7 +308,7 @@ async def _download_snapshot(
         content = resp.content
         if len(content) < 1000 or not content[:2] == b"\xff\xd8":
             return None
-        out_path.write_bytes(content)
+        write_file_bytes(out_path, content, content_type="image/jpeg")
         return str(out_path)
     except Exception as e:
         print(f"CCTV snapshot download [{cam_id}]: {e}")
@@ -313,8 +325,7 @@ async def _fetch_camera_snapshots() -> list[dict]:
     print(f"CCTV: Found {len(cameras)} active cameras")
 
     # Prepare frame output directory
-    frame_dir = Path(RAW_DATA_PATH) / "cctv" / "frames"
-    frame_dir.mkdir(parents=True, exist_ok=True)
+    frame_dir = get_raw_data_dir() / "cctv" / "frames"
 
     # Download snapshots in parallel (limit 5 concurrent)
     async with httpx.AsyncClient() as client:
@@ -336,6 +347,8 @@ async def _fetch_camera_snapshots() -> list[dict]:
 
 def _trim_old_frames(frame_dir: Path, max_age_hours: int = 24) -> int:
     """Remove frames older than max_age_hours. Returns count removed."""
+    if not isinstance(frame_dir, Path):
+        return 0
     cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
     removed = 0
     if not frame_dir.exists():
@@ -372,16 +385,15 @@ async def cctv_ingester():
     # Save metadata
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     hour_str = datetime.now(timezone.utc).strftime("%H")
-    meta_dir = Path(RAW_DATA_PATH) / "cctv" / date_str
-    meta_dir.mkdir(parents=True, exist_ok=True)
+    meta_dir = get_raw_data_dir() / "cctv" / date_str
 
     for cam in cameras:
         cam_id = cam["camera_id"]
         meta_path = meta_dir / f"{cam_id}_{hour_str}.json"
-        meta_path.write_text(json.dumps(cam, indent=2, default=str))
+        write_json_file(meta_path, cam)
 
     # Trim old frames
-    frame_dir = Path(RAW_DATA_PATH) / "cctv" / "frames"
+    frame_dir = get_raw_data_dir() / "cctv" / "frames"
     removed = _trim_old_frames(frame_dir)
     if removed:
         print(f"CCTV: trimmed {removed} old frames")
@@ -457,15 +469,20 @@ class TrafficAnalyzer:
 
     @modal.method()
     @track_cost("TrafficAnalyzer.analyze_frame", "T4")
-    def analyze_frame(self, snapshot_path: str, camera_id: str) -> dict:
+    def analyze_frame(self, snapshot_path: str, camera_id: str, snapshot_bytes: bytes | None = None) -> dict:
         """Run YOLOv8n on a single frame, annotate, and return counts."""
         import cv2
+        import numpy as np
         from pathlib import Path
 
-        path = Path(snapshot_path)
-        if not path.exists():
-            return {"camera_id": camera_id, "error": "file not found"}
-        img = cv2.imread(str(path))
+        if snapshot_bytes is not None:
+            img_array = np.frombuffer(snapshot_bytes, dtype=np.uint8)
+            img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        else:
+            path = Path(snapshot_path)
+            if not path.exists():
+                return {"camera_id": camera_id, "error": "file not found"}
+            img = cv2.imread(str(path))
         if img is None:
             return {"camera_id": camera_id, "error": "cannot read image"}
 
@@ -526,11 +543,11 @@ class TrafficAnalyzer:
         )
 
         # Save annotated frame
-        ann_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "annotated"
-        ann_dir.mkdir(parents=True, exist_ok=True)
         ts_file = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
-        ann_path = ann_dir / f"{camera_id}_{ts_file}.jpg"
-        cv2.imwrite(str(ann_path), img)
+        ann_path = get_processed_data_dir() / "cctv" / "annotated" / f"{camera_id}_{ts_file}.jpg"
+        ok, encoded = cv2.imencode(".jpg", img)
+        if ok:
+            write_file_bytes(ann_path, encoded.tobytes(), content_type="image/jpeg")
 
         density = _classify_density(persons)
 
@@ -558,22 +575,17 @@ class TrafficAnalyzer:
 @track_cost("analyze_cctv_batch", "CPU")
 async def analyze_cctv_batch():
     """Analyze all unprocessed CCTV frames via TrafficAnalyzer (GPU dispatched via .remote)."""
-    frame_dir = Path(RAW_DATA_PATH) / "cctv" / "frames"
-    if not frame_dir.exists():
-        print("CCTV batch: no frames directory")
-        return 0
+    frame_dir = get_raw_data_dir() / "cctv" / "frames"
 
     # Find unprocessed frames
-    analysis_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "analysis"
-    analysis_dir.mkdir(parents=True, exist_ok=True)
+    analysis_dir = get_processed_data_dir() / "cctv" / "analysis"
 
     # Get set of already-analyzed frame stems
     analyzed = set()
-    if analysis_dir.exists():
-        for f in analysis_dir.glob("*.json"):
-            analyzed.add(f.stem)
+    for f in iter_files(analysis_dir, recursive=False, pattern="*.json"):
+        analyzed.add(f.stem)
 
-    frames = sorted(frame_dir.glob("*.jpg"))
+    frames = iter_files(frame_dir, recursive=False, pattern="*.jpg", reverse=False)
     unprocessed = [f for f in frames if f.stem not in analyzed]
 
     if not unprocessed:
@@ -594,7 +606,10 @@ async def analyze_cctv_batch():
 
     async def _analyze_one(fpath, cam_id):
         try:
-            return await analyzer.analyze_frame.remote.aio(str(fpath), cam_id)
+            frame_bytes = read_file_bytes(fpath, default=None)
+            if frame_bytes is None:
+                return {"camera_id": cam_id, "error": "cannot read frame"}
+            return await analyzer.analyze_frame.remote.aio(str(fpath), cam_id, frame_bytes)
         except Exception as e:
             print(f"CCTV batch: error analyzing {fpath.name}: {e}")
             return None
@@ -609,11 +624,10 @@ async def analyze_cctv_batch():
         if result and "error" not in result:
             results.append(result)
             out_path = analysis_dir / f"{frame_path.stem}.json"
-            out_path.write_text(json.dumps(result, indent=2, default=str))
+            write_json_file(out_path, result)
 
     # Update rolling timeseries per camera (24h window)
-    ts_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "timeseries"
-    ts_dir.mkdir(parents=True, exist_ok=True)
+    ts_dir = get_processed_data_dir() / "cctv" / "timeseries"
 
     camera_groups: dict[str, list[dict]] = {}
     for r in results:
@@ -622,12 +636,9 @@ async def analyze_cctv_batch():
 
     for cid, entries in camera_groups.items():
         ts_path = ts_dir / f"{cid}.json"
-        existing = []
-        if ts_path.exists():
-            try:
-                existing = json.loads(ts_path.read_text())
-            except Exception:
-                existing = []
+        existing = load_json_file(ts_path, default=[])
+        if not isinstance(existing, list):
+            existing = []
 
         existing.extend(entries)
 
@@ -635,7 +646,7 @@ async def analyze_cctv_batch():
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
         existing = [e for e in existing if e.get("timestamp", "") > cutoff]
 
-        ts_path.write_text(json.dumps(existing, indent=2, default=str))
+        write_json_file(ts_path, existing)
 
     camera_ids = {str(r.get("camera_id", "") or "").strip() for r in results if str(r.get("camera_id", "") or "").strip()}
     meta_by_camera = _build_latest_camera_metadata_map(camera_ids=camera_ids)
@@ -707,26 +718,20 @@ async def analyze_cctv_batch():
 @track_cost("rebuild_cctv_latest_index", "CPU")
 def rebuild_cctv_latest_index(max_analysis_files: int = 50000, max_meta_days: int = 14) -> dict:
     """One-off rebuild of latest CCTV index from historical analysis files."""
-    analysis_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "analysis"
-    if not analysis_dir.exists():
-        return {"processed_files": 0, "cameras_found": 0, "updated": 0, "total": 0}
+    analysis_dir = get_processed_data_dir() / "cctv" / "analysis"
 
-    def _mtime(path: Path) -> float:
+    def _mtime(path) -> float:
         try:
             return path.stat().st_mtime
         except Exception:
             return 0.0
 
-    files = sorted(
-        analysis_dir.glob("*.json"),
-        key=_mtime,
-        reverse=True,
-    )[:max(0, max_analysis_files)]
+    files = iter_files(analysis_dir, recursive=False, pattern="*.json")[:max(0, max_analysis_files)]
 
     latest_by_camera: dict[str, tuple[float, dict]] = {}
     for jf in files:
         try:
-            data = json.loads(jf.read_text())
+            data = load_json_file(jf, default=None)
         except Exception:
             continue
         if not isinstance(data, dict):

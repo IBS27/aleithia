@@ -9,11 +9,11 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 import httpx
 import modal
 
+from backend.shared_data import get_processed_data_dir, get_raw_data_dir, write_json_file
 from modal_app.common import (
     Document,
     SourceType,
@@ -25,7 +25,7 @@ from modal_app.common import (
 from modal_app.costs import track_cost
 from modal_app.fallback import FallbackChain
 from modal_app.runtime import get_raw_doc_queue
-from modal_app.volume import app, volume, base_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
+from modal_app.volume import app, volume, base_image
 
 
 def _traffic_probe_points(lat: float, lng: float) -> list[tuple[float, float]]:
@@ -264,20 +264,18 @@ async def traffic_ingester():
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     hour_str = datetime.now(timezone.utc).strftime("%H")
     
-    raw_dir = Path(RAW_DATA_PATH) / "traffic" / date_str
-    raw_dir.mkdir(parents=True, exist_ok=True)
+    raw_dir = get_raw_data_dir() / "traffic" / date_str
     
     # Save each neighborhood's traffic snapshot
     for data in all_raw_data:
         neighborhood = data.get("neighborhood", "unknown").lower().replace(" ", "_")
         fpath = raw_dir / f"{neighborhood}_{hour_str}.json"
-        fpath.write_text(json.dumps(data, indent=2))
+        write_json_file(fpath, data)
     
     # Convert to documents and save processed version
     documents = _convert_to_documents(all_raw_data)
     
-    processed_dir = Path(PROCESSED_DATA_PATH) / "traffic" / date_str
-    processed_dir.mkdir(parents=True, exist_ok=True)
+    processed_dir = get_processed_data_dir() / "traffic" / date_str
     
     anomalies = []
     for doc in documents:
@@ -295,7 +293,7 @@ async def traffic_ingester():
     # Save anomaly summary
     if anomalies:
         anomaly_path = processed_dir / "anomalies.json"
-        anomaly_path.write_text(json.dumps(anomalies, indent=2))
+        write_json_file(anomaly_path, anomalies)
         print(f"Traffic anomalies detected: {len(anomalies)}")
 
     # Push new traffic docs to classification queue for downstream enrichment.

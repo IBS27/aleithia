@@ -4,12 +4,10 @@ Cache stored on Modal Volume at /data/cache/{source}/{key}.json.
 """
 from __future__ import annotations
 
-import json
 import time
-from pathlib import Path
 from typing import Any, Callable, Coroutine
 
-from modal_app.volume import CACHE_PATH
+from backend.shared_data import get_cache_data_dir, load_json_file, write_json_file
 
 
 class FallbackChain:
@@ -27,7 +25,7 @@ class FallbackChain:
     def __init__(self, source: str, key: str, cache_ttl_hours: int = 168):
         self.source = source
         self.key = key
-        self.cache_dir = Path(CACHE_PATH) / source
+        self.cache_dir = get_cache_data_dir() / source
         self.cache_file = self.cache_dir / f"{key}.json"
         self.cache_ttl_seconds = cache_ttl_hours * 3600
         self.last_tier: int = -1   # -1 = cache, 0+ = fetcher index
@@ -41,7 +39,7 @@ class FallbackChain:
                 if age > self.cache_ttl_seconds:
                     print(f"FallbackChain [{self.source}/{self.key}]: cache expired ({age/3600:.1f}h > {self.cache_ttl_seconds/3600:.0f}h)")
                     return None
-                data = json.loads(self.cache_file.read_text())
+                data = load_json_file(self.cache_file, default=None)
                 print(f"FallbackChain [{self.source}/{self.key}]: using cached data ({age/3600:.1f}h old)")
                 return data
         except Exception as e:
@@ -51,8 +49,7 @@ class FallbackChain:
     def _write_cache(self, data: Any) -> None:
         """Cache successful fetch result."""
         try:
-            self.cache_dir.mkdir(parents=True, exist_ok=True)
-            self.cache_file.write_text(json.dumps(data, default=str))
+            write_json_file(self.cache_file, data, indent=None)
         except Exception as e:
             print(f"FallbackChain [{self.source}/{self.key}]: cache write error: {e}")
 

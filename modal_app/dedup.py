@@ -8,13 +8,12 @@ from losing dedup entries.
 from __future__ import annotations
 
 import fcntl
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from modal_app.volume import VOLUME_MOUNT
+from backend.shared_data import get_dedup_data_dir, load_json_file, write_json_file
 
-DEDUP_PATH = f"{VOLUME_MOUNT}/dedup"
+DEDUP_PATH = None
 MAX_IDS = 10_000
 
 
@@ -31,7 +30,7 @@ class SeenSet:
 
     def __init__(self, source: str):
         self.source = source
-        self.dir = Path(DEDUP_PATH)
+        self.dir = Path(DEDUP_PATH) if DEDUP_PATH is not None else get_dedup_data_dir()
         self.file = self.dir / f"{source}.json"
         self._lock_file = self.dir / f"{source}.lock"
         self._list: list[str] = []
@@ -44,7 +43,7 @@ class SeenSet:
         """Load existing IDs from Volume."""
         try:
             if self.file.exists():
-                data = json.loads(self.file.read_text())
+                data = load_json_file(self.file, default=None)
                 if isinstance(data, list):
                     self._list = data
                     self._set = set(data)
@@ -69,6 +68,9 @@ class SeenSet:
 
     def _acquire_lock(self) -> None:
         """Acquire exclusive file lock for save operations."""
+        if not isinstance(self._lock_file, Path):
+            self._lock_fd = None
+            return
         self.dir.mkdir(parents=True, exist_ok=True)
         self._lock_fd = open(self._lock_file, "w")
         fcntl.flock(self._lock_fd, fcntl.LOCK_EX)
@@ -129,7 +131,7 @@ class SeenSet:
                 disk_ids: list[str] = []
                 disk_seen_at: dict[str, str] = {}
                 if self.file.exists():
-                    data = json.loads(self.file.read_text())
+                    data = load_json_file(self.file, default=None)
                     if isinstance(data, list):
                         disk_ids = data
                     elif isinstance(data, dict):
@@ -154,9 +156,8 @@ class SeenSet:
                     merged_set = set(merged_list)
                 merged_seen_at = {k: merged_seen_at.get(k, "") for k in merged_list}
 
-                self.dir.mkdir(parents=True, exist_ok=True)
                 payload = {"ids": merged_list, "seen_at": merged_seen_at}
-                self.file.write_text(json.dumps(payload))
+                write_json_file(self.file, payload, indent=None)
 
                 # Update in-memory state to match
                 self._list = merged_list

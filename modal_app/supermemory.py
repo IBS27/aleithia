@@ -8,12 +8,12 @@ import asyncio
 import json
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 import httpx
 import modal
 
-from modal_app.volume import app, volume, base_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
+from backend.shared_data import get_processed_data_dir, get_raw_data_dir, iter_files, load_json_file, read_file_bytes
+from modal_app.volume import app, volume, base_image
 
 SUPERMEMORY_BASE = "https://api.supermemory.ai/v3"
 
@@ -138,44 +138,43 @@ async def push_pipeline_data_to_supermemory():
     errors = 0
 
     # Sync enriched documents (classified + sentiment-analyzed)
-    enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
-    if enriched_dir.exists():
-        enriched_files = list(enriched_dir.rglob("*.json"))[:100]
-        print(f"Syncing {len(enriched_files)} enriched docs...")
-        for i, json_file in enumerate(enriched_files):
-            try:
-                doc = json.loads(json_file.read_text())
-                content = f"{doc.get('title', '')}\n\n{doc.get('content', '')}"
-                metadata = {
-                    "source": doc.get("source", ""),
-                    "neighborhood": doc.get("geo", {}).get("neighborhood", ""),
-                    "timestamp": doc.get("timestamp", ""),
-                    "doc_id": doc.get("id", ""),
-                }
-                await client.add_memory(content, metadata, container_tag="chicago_data")
-                synced += 1
-                if synced % 10 == 0:
-                    print(f"  synced {synced} docs so far...")
-                await asyncio.sleep(0.3)
-            except Exception as e:
-                errors += 1
-                if errors <= 3:
-                    print(f"Supermemory sync error for {json_file.name}: {e}")
-                if "429" in str(e):
-                    print("Rate limited, backing off 10s...")
-                    await asyncio.sleep(10)
+    enriched_files = iter_files(get_processed_data_dir() / "enriched", pattern="*.json")[:100]
+    print(f"Syncing {len(enriched_files)} enriched docs...")
+    for i, json_file in enumerate(enriched_files):
+        try:
+            doc = load_json_file(json_file, default=None)
+            if not isinstance(doc, dict):
+                continue
+            content = f"{doc.get('title', '')}\n\n{doc.get('content', '')}"
+            metadata = {
+                "source": doc.get("source", ""),
+                "neighborhood": doc.get("geo", {}).get("neighborhood", ""),
+                "timestamp": doc.get("timestamp", ""),
+                "doc_id": doc.get("id", ""),
+            }
+            await client.add_memory(content, metadata, container_tag="chicago_data")
+            synced += 1
+            if synced % 10 == 0:
+                print(f"  synced {synced} docs so far...")
+            await asyncio.sleep(0.3)
+        except Exception as e:
+            errors += 1
+            if errors <= 3:
+                print(f"Supermemory sync error for {json_file.name}: {e}")
+            if "429" in str(e):
+                print("Rate limited, backing off 10s...")
+                await asyncio.sleep(10)
 
     # Sync raw data from each pipeline source
     for source in ["news", "politics", "federal_register", "public_data", "demographics", "reddit", "reviews", "realestate", "tiktok", "traffic"]:
-        raw_dir = Path(RAW_DATA_PATH) / source
-        if not raw_dir.exists():
-            continue
-
-        json_files = sorted(raw_dir.rglob("*.json"), reverse=True)[:25]
+        raw_dir = get_raw_data_dir() / source
+        json_files = iter_files(raw_dir, pattern="*.json")[:25]
         print(f"Syncing {len(json_files)} raw docs from {source}...")
         for json_file in json_files:
             try:
-                doc = json.loads(json_file.read_text())
+                doc = load_json_file(json_file, default=None)
+                if not isinstance(doc, dict):
+                    continue
                 content = f"{doc.get('title', '')}\n\n{doc.get('content', '')}"
                 metadata = {
                     "source": source,
@@ -220,40 +219,40 @@ async def push_vision_to_supermemory():
     synced = 0
 
     # 1. Upload annotated CCTV frames via multi-modal file API
-    cctv_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "annotated"
-    if cctv_dir.exists():
-        jpg_files = sorted(cctv_dir.glob("*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True)[:10]
-        print(f"Uploading {len(jpg_files)} CCTV frames to Supermemory (multi-modal)...")
-        for jpg_file in jpg_files:
-            try:
-                file_bytes = jpg_file.read_bytes()
-                await client.add_file(file_bytes, jpg_file.name, container_tag="chicago_vision")
-                synced += 1
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                print(f"Multi-modal upload error for {jpg_file.name}: {e}")
+    jpg_files = iter_files(get_processed_data_dir() / "cctv" / "annotated", recursive=False, pattern="*.jpg")[:10]
+    print(f"Uploading {len(jpg_files)} CCTV frames to Supermemory (multi-modal)...")
+    for jpg_file in jpg_files:
+        try:
+            file_bytes = read_file_bytes(jpg_file, default=None)
+            if file_bytes is None:
+                continue
+            await client.add_file(file_bytes, jpg_file.name, container_tag="chicago_vision")
+            synced += 1
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            print(f"Multi-modal upload error for {jpg_file.name}: {e}")
 
     # 2. Push vision analysis text summaries
-    analysis_dir = Path(PROCESSED_DATA_PATH) / "vision" / "analysis"
-    if analysis_dir.exists():
-        json_files = sorted(analysis_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:20]
-        print(f"Pushing {len(json_files)} vision analysis docs to Supermemory...")
-        for json_file in json_files:
-            try:
-                analysis = json.loads(json_file.read_text())
-                neighborhood = analysis.get("neighborhood", json_file.stem)
-                summary = analysis.get("summary", "")
-                detections = analysis.get("detections", {})
-                content = f"Streetscape analysis for {neighborhood}: {summary}\nDetections: {json.dumps(detections)}"
-                await client.add_memory(
-                    content=content,
-                    metadata={"type": "vision_analysis", "neighborhood": neighborhood},
-                    container_tag="chicago_vision",
-                )
-                synced += 1
-                await asyncio.sleep(0.3)
-            except Exception as e:
-                print(f"Vision analysis sync error for {json_file.name}: {e}")
+    json_files = iter_files(get_processed_data_dir() / "vision" / "analysis", recursive=False, pattern="*.json")[:20]
+    print(f"Pushing {len(json_files)} vision analysis docs to Supermemory...")
+    for json_file in json_files:
+        try:
+            analysis = load_json_file(json_file, default=None)
+            if not isinstance(analysis, dict):
+                continue
+            neighborhood = analysis.get("neighborhood", json_file.stem)
+            summary = analysis.get("summary", "")
+            detections = analysis.get("detections", {})
+            content = f"Streetscape analysis for {neighborhood}: {summary}\nDetections: {json.dumps(detections)}"
+            await client.add_memory(
+                content=content,
+                metadata={"type": "vision_analysis", "neighborhood": neighborhood},
+                container_tag="chicago_vision",
+            )
+            synced += 1
+            await asyncio.sleep(0.3)
+        except Exception as e:
+            print(f"Vision analysis sync error for {json_file.name}: {e}")
 
     print(f"Vision sync complete: {synced} items pushed")
     return synced

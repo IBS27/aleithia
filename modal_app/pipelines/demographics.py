@@ -7,15 +7,20 @@ Pattern: async + FallbackChain (with key → without key → cache)
 import json
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 import httpx
 import modal
 
+from backend.shared_data import (
+    get_processed_data_dir,
+    get_raw_data_dir,
+    load_json_docs_from_directory,
+    write_json_file,
+)
 from modal_app.common import SourceType, build_document, detect_neighborhood, parse_timestamp, safe_volume_commit, tract_to_neighborhood
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
-from modal_app.volume import app, volume, data_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
+from modal_app.volume import app, volume, data_image
 
 # Chicago FIPS: State=17 (IL), County=031 (Cook)
 CHICAGO_STATE_FIPS = "17"
@@ -261,22 +266,10 @@ def _dedupe_latest_demographics_docs(docs: list[dict]) -> list[dict]:
 
 
 def _write_demographics_summary() -> None:
-    raw_dir = Path(RAW_DATA_PATH) / "demographics"
-    docs = []
-    if raw_dir.exists():
-        for jf in raw_dir.rglob("*.json"):
-            try:
-                parsed = json.loads(jf.read_text())
-                if isinstance(parsed, dict):
-                    docs.append(parsed)
-            except Exception:
-                continue
-
+    docs = load_json_docs_from_directory(get_raw_data_dir() / "demographics")
     summary_docs = _dedupe_latest_demographics_docs(docs)
     summary = _build_demographics_summary(summary_docs)
-    out_path = Path(PROCESSED_DATA_PATH) / "demographics_summary.json"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(summary, indent=2))
+    write_json_file(get_processed_data_dir() / "demographics_summary.json", summary)
 
 
 @app.function(
@@ -314,8 +307,7 @@ async def demographics_ingester():
 
     # Save to volume
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    out_dir = Path(RAW_DATA_PATH) / "demographics" / date_str
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = get_raw_data_dir() / "demographics" / date_str
     ingested_at = datetime.now(timezone.utc).isoformat()
 
     for doc_data in new_docs:

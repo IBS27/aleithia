@@ -5,11 +5,11 @@ import json
 import re
 import time
 import asyncio
-from pathlib import Path
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from backend.shared_data import get_processed_data_dir, get_raw_data_dir, iter_files, load_json_file
 from modal_app.api.services.cctv import aggregate_timeseries_for_neighborhood, load_cctv_for_neighborhood, load_parking_for_neighborhood
 from modal_app.api.services.documents import (
     BUSINESS_TYPE_KEYWORDS,
@@ -38,7 +38,7 @@ from modal_app.api.services.tiktok import (
 )
 from modal_app.common import CHICAGO_NEIGHBORHOODS, COMMUNITY_AREA_MAP
 from modal_app.runtime import get_modal_function
-from modal_app.volume import PROCESSED_DATA_PATH, RAW_DATA_PATH, volume
+from modal_app.volume import volume
 from modal_app.pipelines.reddit import (
     rank_reddit_docs,
     reddit_docs_are_weak,
@@ -85,24 +85,25 @@ async def alerts(business_type: str = "Restaurant"):
     del business_type
 
     alert_list = []
-    enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
-    if enriched_dir.exists():
-        for json_file in sorted(enriched_dir.rglob("*.json"), reverse=True)[:50]:
-            try:
-                doc = json.loads(json_file.read_text())
-                sentiment = doc.get("sentiment", {})
-                if sentiment.get("label") == "negative" and sentiment.get("score", 0) > 0.8:
-                    alert_list.append(
-                        {
-                            "type": "negative_sentiment",
-                            "title": doc.get("title", ""),
-                            "source": doc.get("source", ""),
-                            "neighborhood": doc.get("geo", {}).get("neighborhood", ""),
-                            "severity": "high",
-                        }
-                    )
-            except Exception:
+    enriched_dir = get_processed_data_dir() / "enriched"
+    for json_file in iter_files(enriched_dir, pattern="*.json")[:50]:
+        try:
+            doc = load_json_file(json_file, default=None)
+            if not isinstance(doc, dict):
                 continue
+            sentiment = doc.get("sentiment", {})
+            if sentiment.get("label") == "negative" and sentiment.get("score", 0) > 0.8:
+                alert_list.append(
+                    {
+                        "type": "negative_sentiment",
+                        "title": doc.get("title", ""),
+                        "source": doc.get("source", ""),
+                        "neighborhood": doc.get("geo", {}).get("neighborhood", ""),
+                        "severity": "high",
+                    }
+                )
+        except Exception:
+            continue
 
     return {"alerts": alert_list[:20], "count": len(alert_list)}
 
@@ -754,10 +755,9 @@ async def get_trends(neighborhood: str):
     import hashlib
 
     volume.reload()
-    baseline_path = Path(PROCESSED_DATA_PATH) / "trends" / "baselines" / f"{neighborhood}.json"
-    if baseline_path.exists():
-        baseline = json.loads(baseline_path.read_text())
-    else:
+    baseline_path = get_processed_data_dir() / "trends" / "baselines" / f"{neighborhood}.json"
+    baseline = load_json_file(baseline_path, default=None)
+    if not isinstance(baseline, dict):
         seed = int(hashlib.md5(neighborhood.encode()).hexdigest()[:8], 16)
         rng_base = (seed % 10) + 5
         baseline = {
@@ -787,39 +787,39 @@ async def get_trends(neighborhood: str):
     prior_cong = avg_field(prior, "congestion")
     cong_change = round(((recent_cong - prior_cong) / max(prior_cong, 0.01)) * 100)
 
-    news_dir = Path(RAW_DATA_PATH) / "news"
+    news_dir = get_raw_data_dir() / "news"
     news_count = 0
-    if news_dir.exists():
-        for file_path in list(news_dir.rglob("*.json"))[:200]:
-            try:
-                doc = json.loads(file_path.read_text())
-                geo = doc.get("geo", {})
-                if geo.get("neighborhood", "").lower() == neighborhood.lower():
-                    news_count += 1
-            except Exception:
+    for file_path in iter_files(news_dir, pattern="*.json")[:200]:
+        try:
+            doc = load_json_file(file_path, default=None)
+            if not isinstance(doc, dict):
                 continue
+            geo = doc.get("geo", {})
+            if geo.get("neighborhood", "").lower() == neighborhood.lower():
+                news_count += 1
+        except Exception:
+            continue
     news_trend = "up" if news_count > 5 else ("stable" if news_count > 2 else "down")
 
     anomalies = []
-    traffic_dir = Path(RAW_DATA_PATH) / "traffic"
-    if traffic_dir.exists():
-        for date_dir in sorted(traffic_dir.iterdir(), reverse=True)[:1]:
-            if not date_dir.is_dir():
-                continue
-            for file_path in date_dir.glob("*.json"):
-                try:
-                    doc = json.loads(file_path.read_text())
-                    meta = doc.get("metadata", {})
-                    if meta.get("is_anomaly") and doc.get("geo", {}).get("neighborhood", "").lower() == neighborhood.lower():
-                        anomalies.append(
-                            {
-                                "type": meta.get("severity", "info"),
-                                "description": meta.get("congestion_level", "anomaly detected"),
-                                "road": doc.get("title", "Unknown road"),
-                            }
-                        )
-                except Exception:
+    traffic_dir = get_raw_data_dir() / "traffic"
+    for date_dir in sorted((path for path in traffic_dir.iterdir() if path.is_dir()), reverse=True)[:1]:
+        for file_path in iter_files(date_dir, recursive=False, pattern="*.json"):
+            try:
+                doc = load_json_file(file_path, default=None)
+                if not isinstance(doc, dict):
                     continue
+                meta = doc.get("metadata", {})
+                if meta.get("is_anomaly") and doc.get("geo", {}).get("neighborhood", "").lower() == neighborhood.lower():
+                    anomalies.append(
+                        {
+                            "type": meta.get("severity", "info"),
+                            "description": meta.get("congestion_level", "anomaly detected"),
+                            "road": doc.get("title", "Unknown road"),
+                        }
+                    )
+            except Exception:
+                continue
 
     def trend_dir(change_pct):
         if change_pct > 5:

@@ -15,10 +15,13 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from backend.shared_data import count_files, get_processed_data_dir, get_raw_data_dir, iter_files, load_json_file
 from modal_app.runtime import ENABLE_CCTV_ANALYSIS, get_modal_cls, get_modal_function
-from modal_app.volume import PROCESSED_DATA_PATH, RAW_DATA_PATH, app, sandbox_image, volume
+from modal_app.volume import app, sandbox_image, volume
 
 router = APIRouter()
+
+PROCESSED_DATA_PATH = None
 
 ANALYSIS_EXEC_TIMEOUT_SECONDS = 90
 ANALYSIS_SANDBOX_LIFETIME_SECONDS = ANALYSIS_EXEC_TIMEOUT_SECONDS + 60
@@ -58,46 +61,49 @@ Rules:
 def discover_data_files(neighborhood: str | None = None) -> dict:
     del neighborhood
     sources = {}
-    raw = Path(RAW_DATA_PATH)
-    if not raw.exists():
-        return sources
+    raw = get_raw_data_dir()
 
     for source_dir in sorted(raw.iterdir()):
         if not source_dir.is_dir():
             continue
-        json_files = list(source_dir.rglob("*.json"))[:20]
+        json_files = iter_files(source_dir, recursive=True, pattern="*.json")[:20]
         if not json_files:
             continue
         schema_keys = []
         try:
-            sample = json.loads(json_files[0].read_text())
+            sample = load_json_file(json_files[0], default=None)
             if isinstance(sample, dict):
                 schema_keys = list(sample.keys())[:10]
         except Exception:
             pass
         sources[source_dir.name] = {
-            "count": len(list(source_dir.rglob("*.json"))),
+            "count": count_files(source_dir, pattern="*.json"),
             "sample_path": str(json_files[0]),
             "schema_keys": schema_keys,
         }
 
-    enriched = Path(PROCESSED_DATA_PATH) / "enriched"
-    if enriched.exists():
-        json_files = list(enriched.rglob("*.json"))[:20]
-        if json_files:
-            schema_keys = []
-            try:
-                sample = json.loads(json_files[0].read_text())
-                if isinstance(sample, dict):
-                    schema_keys = list(sample.keys())[:10]
-            except Exception:
-                pass
-            sources["enriched"] = {
-                "count": len(list(enriched.rglob("*.json"))),
-                "sample_path": str(json_files[0]),
-                "schema_keys": schema_keys,
-            }
+    enriched = _processed_data_dir() / "enriched"
+    json_files = iter_files(enriched, recursive=True, pattern="*.json")[:20]
+    if json_files:
+        schema_keys = []
+        try:
+            sample = load_json_file(json_files[0], default=None)
+            if isinstance(sample, dict):
+                schema_keys = list(sample.keys())[:10]
+        except Exception:
+            pass
+        sources["enriched"] = {
+            "count": count_files(enriched, pattern="*.json"),
+            "sample_path": str(json_files[0]),
+            "schema_keys": schema_keys,
+        }
     return sources
+
+
+def _processed_data_dir():
+    if PROCESSED_DATA_PATH is not None:
+        return Path(PROCESSED_DATA_PATH)
+    return get_processed_data_dir()
 
 
 def build_codegen_prompt(question: str, brief: str, neighborhood: str, business_type: str, available_sources: dict) -> str:
@@ -288,25 +294,19 @@ async def gpu_metrics(probe_h100: bool = False):
     await asyncio.gather(*[_fetch(name, key) for name, key in gpu_classes], return_exceptions=True)
 
     try:
-        enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
-        if enriched_dir.exists():
-            enriched_files = list(enriched_dir.rglob("*.json"))
-            enriched_count = len(enriched_files)
-            if enriched_files:
-                latest = max(enriched_files, key=lambda path: path.stat().st_mtime)
-                age_seconds = time.time() - latest.stat().st_mtime
-                if age_seconds < 240:
-                    warm_status = {"status": "active", "gpu_name": "NVIDIA T4", "inferred": True, "enriched_count": enriched_count}
-                    results["t4_classifier"] = warm_status
-                    results["t4_sentiment"] = warm_status
-                else:
-                    idle_status = {"status": "cold", "reason": "idle", "enriched_count": enriched_count, "last_run_ago_s": round(age_seconds)}
-                    results["t4_classifier"] = idle_status
-                    results["t4_sentiment"] = idle_status
+        enriched_files = iter_files(_processed_data_dir() / "enriched", pattern="*.json")
+        enriched_count = len(enriched_files)
+        if enriched_files:
+            latest = max(enriched_files, key=lambda path: path.stat().st_mtime)
+            age_seconds = time.time() - latest.stat().st_mtime
+            if age_seconds < 240:
+                warm_status = {"status": "active", "gpu_name": "NVIDIA T4", "inferred": True, "enriched_count": enriched_count}
+                results["t4_classifier"] = warm_status
+                results["t4_sentiment"] = warm_status
             else:
-                no_data = {"status": "cold", "reason": "no_data", "enriched_count": 0}
-                results["t4_classifier"] = no_data
-                results["t4_sentiment"] = no_data
+                idle_status = {"status": "cold", "reason": "idle", "enriched_count": enriched_count, "last_run_ago_s": round(age_seconds)}
+                results["t4_classifier"] = idle_status
+                results["t4_sentiment"] = idle_status
         else:
             no_data = {"status": "cold", "reason": "no_data", "enriched_count": 0}
             results["t4_classifier"] = no_data
@@ -431,14 +431,14 @@ async def analyze(payload: AnalyzePayload):
 @router.get("/impact-briefs")
 async def list_impact_briefs(limit: int = 20, min_score: float = 0.0):
     volume.reload()
-    briefs_dir = Path(PROCESSED_DATA_PATH) / "impact_briefs"
-    if not briefs_dir.exists():
-        return {"briefs": [], "count": 0}
+    briefs_dir = _processed_data_dir() / "impact_briefs"
 
     briefs = []
-    for json_file in sorted(briefs_dir.rglob("*.json"), reverse=True)[:limit]:
+    for json_file in iter_files(briefs_dir, pattern="*.json")[:limit]:
         try:
-            brief = json.loads(json_file.read_text())
+            brief = load_json_file(json_file, default=None)
+            if not isinstance(brief, dict):
+                continue
             if brief.get("impact_score", 0) >= min_score:
                 briefs.append(brief)
         except Exception:
@@ -449,13 +449,13 @@ async def list_impact_briefs(limit: int = 20, min_score: float = 0.0):
 @router.get("/impact-briefs/{brief_id}")
 async def get_impact_brief(brief_id: str):
     volume.reload()
-    briefs_dir = Path(PROCESSED_DATA_PATH) / "impact_briefs"
-    if not briefs_dir.exists():
-        return JSONResponse({"error": "No impact briefs found"}, status_code=404)
+    briefs_dir = _processed_data_dir() / "impact_briefs"
 
-    for json_file in briefs_dir.rglob("*.json"):
+    for json_file in iter_files(briefs_dir, pattern="*.json"):
         try:
-            brief = json.loads(json_file.read_text())
+            brief = load_json_file(json_file, default=None)
+            if not isinstance(brief, dict):
+                continue
             if brief.get("id") == brief_id:
                 return brief
         except Exception:

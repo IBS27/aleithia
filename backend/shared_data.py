@@ -709,6 +709,18 @@ def get_processed_data_dir() -> SharedDataPath:
     return get_shared_data_paths().processed_dir
 
 
+def get_shared_data_dir(*parts: str) -> SharedDataPath:
+    return SharedDataPath(_get_accessor(), "/".join(part.strip("/") for part in parts if part))
+
+
+def get_cache_data_dir() -> SharedDataPath:
+    return get_shared_data_dir("cache")
+
+
+def get_dedup_data_dir() -> SharedDataPath:
+    return get_shared_data_dir("dedup")
+
+
 def _relative_entry_path(directory: SharedDataPath, entry_path: str) -> PurePosixPath | None:
     candidate = PurePosixPath(entry_path)
     if directory.relative_path:
@@ -777,6 +789,15 @@ def read_file_bytes(path: Path | SharedDataPath, default: bytes | None = None) -
         return default
 
 
+def write_file_bytes(path: Path | SharedDataPath, data: bytes, *, content_type: str | None = None) -> None:
+    if isinstance(path, SharedDataPath):
+        path.write_bytes(data, content_type=content_type)
+        return
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+
+
 def load_json_file(path: Path | SharedDataPath, default: Any = None) -> Any:
     raw_bytes = read_file_bytes(path, default=None)
     if raw_bytes is None:
@@ -785,6 +806,11 @@ def load_json_file(path: Path | SharedDataPath, default: Any = None) -> Any:
         return json.loads(raw_bytes.decode("utf-8"))
     except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return default
+
+
+def write_json_file(path: Path | SharedDataPath, data: Any, *, indent: int | None = 2) -> None:
+    raw = json.dumps(data, indent=indent, default=str).encode("utf-8")
+    write_file_bytes(path, raw, content_type="application/json")
 
 
 def load_processed_json(*parts: str, default: Any = None) -> Any:

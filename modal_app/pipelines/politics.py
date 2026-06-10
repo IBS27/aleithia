@@ -7,15 +7,15 @@ Pattern: async + FallbackChain + gather_with_limit + detect_neighborhood
 import json
 import os
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 
 import httpx
 import modal
 
+from backend.shared_data import get_raw_data_dir
 from modal_app.common import SourceType, build_document, detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
-from modal_app.volume import app, volume, politics_image, RAW_DATA_PATH
+from modal_app.volume import app, volume, politics_image
 
 # Chicago Legistar API base URLs
 LEGISTAR_REST = "https://webapi.legistar.com/v1/chicago"
@@ -267,8 +267,7 @@ async def politics_ingester():
 
     # Save to volume
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    out_dir = Path(RAW_DATA_PATH) / "politics" / date_str
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = get_raw_data_dir() / "politics" / date_str
     ingested_at = datetime.now(timezone.utc).isoformat()
 
     for doc_data in new_docs:

@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 import copy
-from pathlib import Path
 
 from backend.read_helpers import transform_doc_for_graph
-from backend.shared_data import load_first_matching_json, load_json_file
+from backend.shared_data import get_processed_data_dir, load_first_matching_json, load_json_file
 from modal_app.api.cache import cache
 from modal_app.api.services.documents import load_docs
 from modal_app.common import CHICAGO_NEIGHBORHOODS, NEIGHBORHOOD_CENTROIDS, detect_neighborhood
-from modal_app.volume import PROCESSED_DATA_PATH, volume
+from modal_app.volume import volume
 
 
 def build_city_graph_fallback() -> dict:
@@ -49,10 +48,11 @@ def build_city_graph_fallback() -> dict:
 
 async def load_full_graph() -> dict:
     await volume.reload.aio()
+    processed_dir = get_processed_data_dir()
     candidate_paths = [
-        Path(PROCESSED_DATA_PATH) / "city_graph.json",
-        Path(PROCESSED_DATA_PATH) / "graph" / "city_graph.json",
-        Path(PROCESSED_DATA_PATH) / "graph.json",
+        processed_dir / "city_graph.json",
+        processed_dir / "graph" / "city_graph.json",
+        processed_dir / "graph.json",
     ]
     existing = next((path for path in candidate_paths if path.exists()), None)
     if not existing:
@@ -75,7 +75,7 @@ async def load_full_graph() -> dict:
 
 def load_city_graph() -> dict:
     volume.reload()
-    graph_path = Path(PROCESSED_DATA_PATH) / "graph" / "city_graph.json"
+    graph_path = get_processed_data_dir() / "graph" / "city_graph.json"
     if not graph_path.exists():
         return {"nodes": [], "edges": [], "stats": {}}
 

@@ -121,7 +121,7 @@ parking_image = (
         "opencv-python-headless==4.9.0.80", "Pillow>=10.4.0",
         "httpx==0.27.0", "pydantic==2.9.0",
     )
-    .add_local_python_source("modal_app", copy=True)
+    .add_local_python_source("backend", "modal_app", copy=True)
 )
 
 # TikTok scraper: Playwright + Kernel cloud browser

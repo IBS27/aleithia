@@ -3,20 +3,19 @@ neighborhood-level summaries (~32:1 ratio).
 
 Produces GeoJSON at /data/processed/geo/neighborhood_metrics.json for frontend Mapbox GL.
 """
-import json
 from collections import defaultdict
 from datetime import datetime, timezone
-from pathlib import Path
 
 import modal
 
+from backend.shared_data import get_processed_data_dir, get_raw_data_dir, iter_files, load_json_file, write_json_file
 from modal_app.common import (
     CHICAGO_NEIGHBORHOODS,
     COMMUNITY_AREA_MAP,
     NEIGHBORHOOD_CENTROIDS,
     NeighborhoodGeoMetrics,
 )
-from modal_app.volume import app, volume, data_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
+from modal_app.volume import app, volume, data_image
 
 
 class DatasetSummary:
@@ -153,48 +152,49 @@ def _build_geo_metrics(summaries: dict[str, DatasetSummary]) -> dict:
     safety_counts: dict[str, int] = defaultdict(int)
     enriched_count = 0
 
-    enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
-    if enriched_dir.exists():
-        for jf in enriched_dir.rglob("*.json"):
-            try:
-                doc = json.loads(jf.read_text())
-            except Exception:
+    enriched_dir = get_processed_data_dir() / "enriched"
+    for jf in iter_files(enriched_dir, pattern="*.json"):
+        try:
+            doc = load_json_file(jf, default=None)
+            if not isinstance(doc, dict):
                 continue
+        except Exception:
+            continue
 
-            hood = doc.get("geo", {}).get("neighborhood", "")
-            if not hood:
-                continue
-            # Normalize community area numbers to names
-            try:
-                area_num = int(hood)
-                hood = COMMUNITY_AREA_MAP.get(area_num, str(area_num))
-            except (ValueError, TypeError):
-                pass
+        hood = doc.get("geo", {}).get("neighborhood", "")
+        if not hood:
+            continue
+        # Normalize community area numbers to names
+        try:
+            area_num = int(hood)
+            hood = COMMUNITY_AREA_MAP.get(area_num, str(area_num))
+        except (ValueError, TypeError):
+            pass
 
-            enriched_count += 1
+        enriched_count += 1
 
-            # Classification — count by top label
-            classification = doc.get("classification", {})
-            labels = classification.get("labels", [])
-            if labels:
-                top_label = labels[0].lower()
-                if top_label == "regulatory":
-                    regulatory_counts[hood] += 1
-                elif top_label in ("economic", "business"):
-                    business_counts[hood] += 1
-                elif top_label == "safety":
-                    safety_counts[hood] += 1
+        # Classification — count by top label
+        classification = doc.get("classification", {})
+        labels = classification.get("labels", [])
+        if labels:
+            top_label = labels[0].lower()
+            if top_label == "regulatory":
+                regulatory_counts[hood] += 1
+            elif top_label in ("economic", "business"):
+                business_counts[hood] += 1
+            elif top_label == "safety":
+                safety_counts[hood] += 1
 
-            # Sentiment — accumulate for averaging
-            sentiment = doc.get("sentiment", {})
-            slabel = sentiment.get("label", "").lower()
-            sscore = sentiment.get("score", 0.0)
-            if slabel == "positive":
-                sentiment_totals[hood].append(sscore)
-            elif slabel == "negative":
-                sentiment_totals[hood].append(-sscore)
-            elif slabel == "neutral":
-                sentiment_totals[hood].append(0.0)
+        # Sentiment — accumulate for averaging
+        sentiment = doc.get("sentiment", {})
+        slabel = sentiment.get("label", "").lower()
+        sscore = sentiment.get("score", 0.0)
+        if slabel == "positive":
+            sentiment_totals[hood].append(sscore)
+        elif slabel == "negative":
+            sentiment_totals[hood].append(-sscore)
+        elif slabel == "neutral":
+            sentiment_totals[hood].append(0.0)
 
     # Fallback: if no enriched docs, classify raw docs via keyword heuristics
     if enriched_count == 0:
@@ -206,12 +206,12 @@ def _build_geo_metrics(summaries: dict[str, DatasetSummary]) -> dict:
         _NEGATIVE_KW = {"terrible", "worst", "awful", "horrible", "disgusting", "avoid", "bad", "poor", "dirty", "rude", "complaint", "fail"}
 
         for source in ["public_data", "news", "reddit", "reviews", "politics", "federal_register"]:
-            raw_dir = Path(RAW_DATA_PATH) / source
-            if not raw_dir.exists():
-                continue
-            for jf in raw_dir.rglob("*.json"):
+            raw_dir = get_raw_data_dir() / source
+            for jf in iter_files(raw_dir, pattern="*.json"):
                 try:
-                    doc = json.loads(jf.read_text())
+                    doc = load_json_file(jf, default=None)
+                    if not isinstance(doc, dict):
+                        continue
                 except Exception:
                     continue
                 hood = doc.get("geo", {}).get("neighborhood", "")
@@ -338,17 +338,18 @@ def compress_raw_data(days: int = 7):
 
     for source in sources:
         summary = DatasetSummary(source)
-        raw_dir = Path(RAW_DATA_PATH) / source
-
-        if not raw_dir.exists():
-            print(f"Compress [{source}]: no raw data directory")
-            continue
+        raw_dir = get_raw_data_dir() / source
 
         # Read all JSON files in date subdirectories
-        json_files = list(raw_dir.rglob("*.json"))
+        json_files = iter_files(raw_dir, pattern="*.json")
+        if not json_files:
+            print(f"Compress [{source}]: no raw data directory")
+            continue
         for jf in json_files:
             try:
-                record = json.loads(jf.read_text())
+                record = load_json_file(jf, default=None)
+                if not isinstance(record, dict):
+                    continue
                 summary.add_record(record)
             except Exception as e:
                 print(f"Compress [{source}]: error reading {jf.name}: {e}")
@@ -357,19 +358,16 @@ def compress_raw_data(days: int = 7):
         print(f"Compress [{source}]: {summary.total_records} records → 1 summary ({summary.to_dict()['compression_ratio']})")
 
     # Write summaries
-    summary_dir = Path(PROCESSED_DATA_PATH) / "summaries"
-    summary_dir.mkdir(parents=True, exist_ok=True)
+    summary_dir = get_processed_data_dir() / "summaries"
 
     for source, summary in summaries.items():
         out_path = summary_dir / f"{source}_summary.json"
-        out_path.write_text(json.dumps(summary.to_dict(), indent=2, default=str))
+        write_json_file(out_path, summary.to_dict())
 
     # Write GeoJSON
-    geo_dir = Path(PROCESSED_DATA_PATH) / "geo"
-    geo_dir.mkdir(parents=True, exist_ok=True)
-    geo_path = geo_dir / "neighborhood_metrics.json"
+    geo_path = get_processed_data_dir() / "geo" / "neighborhood_metrics.json"
     geojson = _build_geo_metrics(summaries)
-    geo_path.write_text(json.dumps(geojson, indent=2))
+    write_json_file(geo_path, geojson)
 
     volume.commit()
 

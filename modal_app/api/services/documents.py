@@ -14,6 +14,7 @@ from backend.shared_data import (
     load_json_file,
     load_json_docs_from_directory,
     scan_source_directories,
+    write_json_file,
 )
 from modal_app.api.cache import cache
 from modal_app.common import (
@@ -291,7 +292,7 @@ def load_cta_stations() -> list[dict]:
                     deduped.append(station)
 
             try:
-                cache_path.write_text(json.dumps(deduped, indent=2))
+                write_json_file(cache_path, deduped)
             except Exception as exc:
                 print(f"_load_cta_stations: cache write failed: {exc}")
             return deduped
