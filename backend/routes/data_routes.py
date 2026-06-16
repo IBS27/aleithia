@@ -1,5 +1,6 @@
 """Routes that serve Aleithia data from shared raw/processed JSON files."""
 
+import asyncio
 import copy
 from datetime import datetime, timezone
 import os
@@ -791,7 +792,11 @@ async def get_cctv_timeseries(neighborhood: str):
 @router.get("/neighborhood/{name}")
 async def get_neighborhood(name: str):
     """Return all data for a specific neighborhood."""
-    all_public = _load_all("public_data")
+    all_public, all_news, all_politics = await asyncio.gather(
+        asyncio.to_thread(_load_source_docs, "public_data", 500),
+        asyncio.to_thread(_load_source_docs, "news", 100),
+        asyncio.to_thread(_load_source_docs, "politics", 100),
+    )
 
     all_inspections = filter_public_data_by_dataset(all_public, "food_inspections")
     inspections = filter_docs_by_neighborhood(all_inspections, name)
@@ -809,12 +814,10 @@ async def get_neighborhood(name: str):
     if not licenses:
         licenses = all_licenses
 
-    all_news = _load_all("news")
     news = filter_docs_by_neighborhood(all_news, name)
     if not news:
         news = all_news
 
-    all_politics = _load_all("politics")
     politics = filter_docs_by_neighborhood(all_politics, name)
     if not politics:
         politics = all_politics

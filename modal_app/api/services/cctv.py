@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 import modal
 
-from backend.shared_data import get_processed_data_dir, get_raw_data_dir, iter_files, load_json_file
+from backend.shared_data import get_processed_data_dir, get_raw_data_dir, iter_files, load_json_file, shared_data_backend
 from modal_app.api.cache import cache
 from modal_app.common import NEIGHBORHOOD_CENTROIDS, parse_timestamp
 from modal_app.runtime import ENABLE_CCTV_ANALYSIS, get_modal_function
@@ -26,6 +26,10 @@ CCTV_REFRESH_DICT_KEY = "latest-index"
 
 cctv_refresh_recent_dict = modal.Dict.from_name("alethia-cctv-refresh-recent", create_if_missing=True)
 _cctv_refresh_lock = asyncio.Lock()
+
+
+def _uses_modal_volume_backend() -> bool:
+    return shared_data_backend() in {"modal", "mounted"}
 
 
 def _cctv_latest_index_path():
@@ -281,17 +285,19 @@ def _flatten_synthetic_cctv() -> dict[str, dict]:
 async def load_cctv_latest_index() -> dict[str, dict]:
     start = time.perf_counter()
     if not ENABLE_CCTV_ANALYSIS:
+        if _uses_modal_volume_backend():
+            try:
+                await volume.reload.aio()
+            except Exception as exc:
+                print(f"cctv_disabled_reload_warning: {exc}")
+        return _flatten_synthetic_cctv()
+
+    if _uses_modal_volume_backend():
         try:
             await volume.reload.aio()
         except Exception as exc:
-            print(f"cctv_disabled_reload_warning: {exc}")
-        return _flatten_synthetic_cctv()
-
-    try:
-        await volume.reload.aio()
-    except Exception as exc:
-        print(f"cctv_index_reload_warning: {exc}")
-        return {}
+            print(f"cctv_index_reload_warning: {exc}")
+            return {}
 
     index_path = _cctv_latest_index_path()
     if not index_path.exists():
@@ -337,10 +343,11 @@ async def load_cctv_latest_index() -> dict[str, dict]:
 
 async def load_cctv_for_neighborhood(name: str) -> dict:
     if not ENABLE_CCTV_ANALYSIS:
-        try:
-            await volume.reload.aio()
-        except Exception as exc:
-            print(f"cctv_disabled_reload_warning: {exc}")
+        if _uses_modal_volume_backend():
+            try:
+                await volume.reload.aio()
+            except Exception as exc:
+                print(f"cctv_disabled_reload_warning: {exc}")
         synthetic_entry = synthetic_cctv_entry(name)
         if synthetic_entry is None:
             return empty_cctv_payload()
@@ -468,7 +475,8 @@ async def aggregate_timeseries_for_neighborhood(name: str, camera_ids: list[str]
         return fake[name]["timeseries"]
 
     if camera_ids is None:
-        volume.reload()
+        if _uses_modal_volume_backend():
+            await volume.reload.aio()
         cctv_data = await load_cctv_for_neighborhood(name)
         camera_ids = [camera["camera_id"] for camera in cctv_data.get("cameras", [])]
     if not camera_ids:
@@ -531,7 +539,8 @@ async def aggregate_timeseries_for_neighborhood(name: str, camera_ids: list[str]
 
 
 def load_parking_for_neighborhood(name: str) -> dict | None:
-    volume.reload()
+    if _uses_modal_volume_backend():
+        volume.reload()
     slug = name.lower().replace(" ", "_")
     analysis_dir = _processed_data_dir() / "parking" / "analysis"
     candidates = iter_files(analysis_dir, recursive=False, pattern=f"{slug}_*.json")

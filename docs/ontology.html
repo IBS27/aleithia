@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Making Aleithia an Ontology — What It Requires and What Changes</title>
+<style>
+  :root {
+    --ink: #1a1a1a;
+    --muted: #595959;
+    --rule: #d8d4cc;
+    --bg: #faf9f6;
+    --code-bg: #f0eee8;
+    --accent: #8b3a2e;
+    --panel-bg: #ffffff;
+    --warn: #a35c00;
+    --ok: #2e6b3a;
+    --nb-color: #5b7a99;
+    --ent-color: #6b8f5e;
+    --reg-color: #8b3a2e;
+    --biz-color: #9a7b4f;
+    --hub-color: #3d3d3d;
+    --sans: -apple-system, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 17px;
+    line-height: 1.55;
+  }
+  .tabs {
+    max-width: 62rem;
+    margin: 0 auto;
+    padding: 1.5rem 1.25rem 0;
+    display: flex;
+    gap: 0.5rem;
+    border-bottom: 1px solid var(--rule);
+    font-family: var(--sans);
+  }
+  .tabs button {
+    font-family: var(--sans);
+    font-size: 0.85rem;
+    background: none;
+    border: 1px solid var(--rule);
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    color: var(--muted);
+  }
+  .tabs button.active {
+    background: var(--panel-bg);
+    color: var(--ink);
+    font-weight: 600;
+    position: relative;
+    top: 1px;
+  }
+  main {
+    max-width: 46rem;
+    margin: 0 auto;
+    padding: 2rem 1.25rem 6rem;
+  }
+  main.wide { max-width: 62rem; }
+  h1 {
+    font-size: 1.9rem;
+    line-height: 1.2;
+    margin: 0 0 0.5rem;
+    font-weight: normal;
+  }
+  .subtitle {
+    color: var(--muted);
+    margin: 0 0 2.5rem;
+    font-style: italic;
+  }
+  h2 {
+    font-size: 1.3rem;
+    font-weight: normal;
+    margin: 3rem 0 0.75rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--rule);
+  }
+  h3 {
+    font-size: 1.05rem;
+    margin: 2rem 0 0.5rem;
+  }
+  p { margin: 0 0 1rem; }
+  ul, ol { margin: 0 0 1rem; padding-left: 1.4rem; }
+  li { margin-bottom: 0.4rem; }
+  code, pre {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.82em;
+  }
+  code {
+    background: var(--code-bg);
+    padding: 0.1em 0.3em;
+    border-radius: 2px;
+  }
+  pre {
+    background: var(--code-bg);
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    border-radius: 3px;
+    line-height: 1.5;
+    margin: 0 0 1rem;
+  }
+  pre code { background: none; padding: 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 0 0 1.25rem;
+    font-size: 0.92em;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.45rem 0.7rem;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  th {
+    font-weight: 600;
+    font-family: var(--sans);
+    font-size: 0.82em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  .toc {
+    border: 1px solid var(--rule);
+    padding: 1rem 1.25rem;
+    margin: 0 0 1rem;
+    font-size: 0.92em;
+  }
+  .toc ol { margin: 0.4rem 0 0; }
+  .toc a { color: var(--ink); }
+  a { color: var(--accent); }
+  .aside {
+    border-left: 3px solid var(--rule);
+    padding: 0.1rem 0 0.1rem 1rem;
+    color: var(--muted);
+    margin: 0 0 1rem;
+    font-size: 0.95em;
+  }
+  .qa { margin: 0 0 1.25rem; }
+  .qa .q {
+    font-family: var(--sans);
+    font-size: 0.88em;
+    font-weight: 600;
+    margin-bottom: 0.2rem;
+  }
+  .qa .a { color: var(--muted); }
+  .file { color: var(--muted); font-size: 0.85em; }
+
+  /* ---------- Interactive lab ---------- */
+  .lab { font-family: var(--sans); font-size: 0.92rem; }
+  .lab h2 { font-family: Georgia, serif; }
+  .lab .prose { font-family: Georgia, serif; font-size: 1rem; }
+  .lab-controls {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin: 0 0 1rem;
+  }
+  .lab button {
+    font-family: var(--sans);
+    font-size: 0.82rem;
+    border: 1px solid #b8b2a6;
+    background: var(--panel-bg);
+    border-radius: 3px;
+    padding: 0.35rem 0.8rem;
+    cursor: pointer;
+  }
+  .lab button:hover { border-color: var(--ink); }
+  .lab button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .lab button:disabled { opacity: 0.4; cursor: default; }
+
+  .doc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 0.7rem;
+    margin: 0 0 1.5rem;
+  }
+  .doc-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 0.7rem 0.8rem;
+    font-size: 0.8rem;
+    transition: box-shadow 0.2s, border-color 0.2s;
+  }
+  .doc-card.ingested { border-left: 3px solid var(--ok); }
+  .doc-card.flash {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(139, 58, 46, 0.18);
+  }
+  .doc-card .doc-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.4rem;
+    margin-bottom: 0.3rem;
+  }
+  .doc-card .doc-title { font-weight: 600; }
+  .badge {
+    display: inline-block;
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.1rem 0.4rem;
+    border-radius: 2px;
+    background: var(--code-bg);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .badge.ok { background: #e4eee6; color: var(--ok); }
+  .doc-card .doc-sub { color: var(--muted); font-size: 0.7rem; margin-bottom: 0.4rem; }
+  .doc-card details { margin: 0.3rem 0; }
+  .doc-card summary { cursor: pointer; color: var(--muted); font-size: 0.72rem; }
+  .doc-card .fields { margin: 0.3rem 0 0; font-family: "SF Mono", Menlo, monospace; font-size: 0.68rem; line-height: 1.6; color: #3a3a3a; word-break: break-word; }
+  .doc-card .fields b { color: var(--muted); font-weight: normal; }
+  .doc-card .edit-row { margin: 0.45rem 0 0.2rem; }
+  .doc-card .edit-row label { font-size: 0.72rem; color: var(--muted); display: block; margin-bottom: 0.15rem; }
+  .doc-card input[type=text], .doc-card select {
+    font-family: var(--sans);
+    font-size: 0.78rem;
+    width: 100%;
+    padding: 0.25rem 0.4rem;
+    border: 1px solid #c5bfb3;
+    border-radius: 3px;
+    background: #fff;
+  }
+  .doc-card .presets { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.3rem; }
+  .doc-card .presets button { font-size: 0.66rem; padding: 0.15rem 0.4rem; }
+  .doc-card .chk { font-size: 0.72rem; color: var(--muted); display: flex; align-items: center; gap: 0.3rem; margin-top: 0.4rem; }
+  .doc-card .ingest-btn { margin-top: 0.5rem; width: 100%; }
+
+  .model-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    align-items: start;
+    margin: 0 0 1.5rem;
+  }
+  @media (max-width: 760px) { .model-grid { grid-template-columns: 1fr; } }
+  .model-panel {
+    background: var(--panel-bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 0.9rem 1rem 1rem;
+  }
+  .model-panel h4 {
+    margin: 0 0 0.1rem;
+    font-size: 0.95rem;
+  }
+  .model-panel .panel-sub { color: var(--muted); font-size: 0.72rem; margin: 0 0 0.6rem; }
+  .model-panel svg { width: 100%; height: auto; display: block; background: #fcfbf9; border: 1px solid #eceae4; border-radius: 3px; }
+  .model-panel .stats { font-size: 0.72rem; color: var(--muted); margin: 0.4rem 0 0.2rem; }
+  .inspector {
+    margin-top: 0.6rem;
+    border-top: 1px dashed var(--rule);
+    padding-top: 0.6rem;
+    font-size: 0.78rem;
+    min-height: 4.5rem;
+  }
+  .inspector .hint { color: #9a958b; font-style: italic; }
+  .inspector .kv { font-family: "SF Mono", Menlo, monospace; font-size: 0.7rem; line-height: 1.7; }
+  .inspector .kv b { color: var(--muted); font-weight: normal; }
+  .inspector h5 { margin: 0 0 0.3rem; font-size: 0.82rem; }
+  .rel-line { margin: 0.25rem 0; padding-left: 0.6rem; border-left: 2px solid #e0dcd2; }
+  .rel-line .rel-name { font-family: "SF Mono", Menlo, monospace; font-size: 0.72rem; color: var(--accent); }
+  .chip {
+    display: inline-block;
+    font-size: 0.64rem;
+    font-family: "SF Mono", Menlo, monospace;
+    background: var(--code-bg);
+    border: 1px solid #ddd8cc;
+    border-radius: 2px;
+    padding: 0 0.3rem;
+    margin-left: 0.25rem;
+    cursor: pointer;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .method { font-size: 0.64rem; color: var(--muted); }
+  .warn-text { color: var(--warn); }
+  .ok-text { color: var(--ok); }
+
+  .note-list { font-size: 0.78rem; margin: 0.4rem 0 0; padding-left: 1.1rem; color: var(--muted); }
+  .note-list li { margin-bottom: 0.25rem; }
+
+  .res-log {
+    background: var(--panel-bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 0.8rem 1rem;
+    margin: 0 0 1.5rem;
+    font-size: 0.76rem;
+  }
+  .res-log h4 { margin: 0 0 0.4rem; font-size: 0.9rem; }
+  .res-log .log-line { margin: 0.3rem 0; padding-left: 0.6rem; border-left: 2px solid #e0dcd2; line-height: 1.5; }
+  .res-log .log-line code { font-size: 0.85em; }
+  .res-log .empty { color: #9a958b; font-style: italic; }
+
+  .query-box {
+    background: var(--panel-bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 1rem 1.1rem;
+    margin: 0 0 1rem;
+  }
+  .query-box .q-text { font-family: Georgia, serif; font-size: 1.02rem; font-style: italic; margin: 0 0 0.7rem; }
+  .query-results { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.8rem; }
+  @media (max-width: 760px) { .query-results { grid-template-columns: 1fr; } }
+  .query-results .qr {
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 0.7rem 0.8rem;
+    font-size: 0.78rem;
+    background: #fcfbf9;
+  }
+  .query-results .qr h5 { margin: 0 0 0.4rem; font-size: 0.8rem; }
+  .query-results .qr ul { padding-left: 1.1rem; margin: 0.3rem 0; }
+  .query-results .qr li { margin-bottom: 0.3rem; }
+  .answer-card {
+    border: 1px solid #cfd9cd;
+    background: #f3f7f2;
+    border-radius: 3px;
+    padding: 0.6rem 0.7rem;
+    margin-top: 0.4rem;
+  }
+  .answer-card .chain { font-family: "SF Mono", Menlo, monospace; font-size: 0.66rem; line-height: 1.8; }
+  .legend { display: flex; flex-wrap: wrap; gap: 0.8rem; font-size: 0.7rem; color: var(--muted); margin: 0.4rem 0 0; }
+  .legend span { display: inline-flex; align-items: center; gap: 0.3rem; }
+  .legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+  /* SVG node styling */
+  .gnode { cursor: pointer; }
+  .gnode circle { stroke: #fff; stroke-width: 1.5; }
+  .gnode.selected circle { stroke: var(--ink); stroke-width: 2; }
+  .gnode.dup circle { stroke: var(--accent); stroke-dasharray: 3 2; stroke-width: 2; }
+  .gnode.flagged circle { stroke: var(--warn); stroke-dasharray: 3 2; stroke-width: 2; }
+  .gnode text { font-family: var(--sans); font-size: 8.5px; fill: #3a3a3a; }
+  .gnode .nid { font-family: "SF Mono", Menlo, monospace; font-size: 6.5px; fill: #999; }
+  .gedge line { stroke: #b9b2a4; stroke-width: 1; }
+  .gedge.faint line { stroke-dasharray: 2 3; }
+  .gedge text { font-family: "SF Mono", Menlo, monospace; font-size: 6.5px; fill: #8a8478; }
+  .ghost circle { fill: none; stroke: #b9b2a4; stroke-dasharray: 3 3; }
+  .ghost text { font-size: 7px; fill: #9a958b; font-family: var(--sans); }
+
+  @media (max-width: 600px) {
+    body { font-size: 16px; }
+    main { padding-top: 1.5rem; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="tabs">
+  <button id="tab-essay" class="active" onclick="showTab('essay')">The essay</button>
+  <button id="tab-lab" onclick="showTab('lab')">Interactive: current model vs. ontology</button>
+</nav>
+
+<!-- ============================================================ -->
+<!-- TAB 1: ESSAY                                                  -->
+<!-- ============================================================ -->
+<main id="panel-essay">
+
+<h1>Making Aleithia an Ontology</h1>
+<p class="subtitle">What the project is today, what an ontology would actually require, and how it would change the product.</p>
+
+<nav class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#status">Where the project stands today</a></li>
+    <li><a href="#diagnosis">The core problem: documents, not entities</a></li>
+    <li><a href="#changes">The five changes that would make it an ontology</a></li>
+    <li><a href="#product">How the product changes</a></li>
+    <li><a href="#work">The actual work, in order</a></li>
+    <li><a href="#avoid">What to avoid</a></li>
+    <li><a href="#worth">Is it worth it?</a></li>
+  </ol>
+</nav>
+
+<p class="aside">For a hands-on version of sections 2 and 3, switch to the <a href="#" onclick="showTab('lab'); return false;">interactive tab</a> — it ingests the same records into both models and lets you change values to see what breaks.</p>
+
+<h2 id="status">1. Where the project stands today</h2>
+
+<p>Aleithia is a data aggregation and analytics platform. Sixteen pipelines (news, Legistar, Federal Register, Reddit, Yelp, Socrata permits/licenses/inspections, CCTV, vision, parking, and so on) all normalize into one shape, the <code>Document</code> model in <span class="file">modal_app/common.py</span>:</p>
+
+<pre><code>class Document(BaseModel):
+    id: str
+    source: SourceType        # news, politics, yelp, public_data, ...
+    title: str
+    content: str
+    metadata: dict            # flexible, source-specific
+    geo: dict                 # neighborhood, ward, lat/lng
+    status: str               # "raw" → "enriched" → "graphed"</code></pre>
+
+<p>On top of those documents, <span class="file">modal_app/graph.py</span> builds a "city knowledge graph": 4 node types (neighborhood, regulation, entity, business_type) and 3 edge types (regulates, sentiment, competes_in). It is served by <code>/graph/full</code> and <code>/graph/neighborhood/*</code> and rendered in the frontend.</p>
+
+<p>This graph looks like a knowledge graph but does not behave like one. Look at how a node gets its identity:</p>
+
+<pre><code># graph.py — a "regulation" is just a slugified title
+reg_id = f"reg:{title[:50].replace(' ', '-').lower()}"
+
+# an "entity" is just a slugified business name
+ent_id = f"ent:{entity_name[:40].replace(' ', '-').lower()}"</code></pre>
+
+<p>The node ID <em>is</em> a string mangling of display text. Two news articles about "Lou Mitchell's" and a Yelp record for "Lou Mitchells Restaurant" produce different nodes. A regulation whose title is truncated differently on re-ingest produces a duplicate node. There is no notion of "the same thing" anywhere in the system. Edge weights are heuristics (age decay, sentiment magnitude, count caps) chosen for visual layout, not for meaning — city-wide regulations are even linked to ten hard-coded "representative neighborhoods" so the picture doesn't look empty.</p>
+
+<p>None of this is a criticism of the code. It does its job, which is to produce a visualization. The point is that the graph is an <em>output for the eye</em>, not a <em>substrate for queries or reasoning</em>. Everything that involves actual meaning — risk categories, sentiment, synthesis — is done by ML models (BART, RoBERTa) and LLM agents over raw document text, with Supermemory doing embedding search on the side.</p>
+
+<h2 id="diagnosis">2. The core problem: documents, not entities</h2>
+
+<p>One sentence captures the whole gap:</p>
+
+<p class="aside">Aleithia models <strong>documents about things</strong>. An ontology models <strong>the things</strong>, and treats documents as evidence about them.</p>
+
+<p>Every shortcoming traces back to this. Consider one real restaurant in Pilsen. Today it exists in the system as scattered, unconnected documents:</p>
+
+<table>
+  <tr><th>Source</th><th>What exists today</th><th>Knows about the others?</th></tr>
+  <tr><td>Business license (Socrata)</td><td>A <code>public_data</code> document with <code>legal_name</code>, <code>license_description</code> in <code>metadata.raw_record</code></td><td>No</td></tr>
+  <tr><td>Food inspection (Socrata)</td><td>A separate document with <code>dba_name</code>, <code>risk</code>, <code>violations</code></td><td>No</td></tr>
+  <tr><td>Yelp reviews</td><td>Documents with <code>business_name</code>, <code>rating</code> in metadata</td><td>No</td></tr>
+  <tr><td>News mention</td><td>A document whose content happens to contain the name</td><td>No</td></tr>
+  <tr><td>Building permit</td><td>A document with an address, no name link</td><td>No</td></tr>
+</table>
+
+<p>A human reading all five would immediately say "that's one business, and it's in trouble: failed inspection, declining reviews, and a renovation permit suggesting an ownership change." The system cannot say that, because nothing in it represents <em>the business</em>. The LLM agents can sometimes stitch this together from retrieved text, but the result is non-deterministic, unverifiable, and recomputed from scratch every time.</p>
+
+<p>An ontology is the fix for exactly this: a layer of <strong>entities with stable identity</strong>, <strong>explicit types</strong>, and <strong>typed relationships</strong>, where each fact points back to the documents that support it.</p>
+
+<h2 id="changes">3. The five changes that would make it an ontology</h2>
+
+<h3>3.1 An entity layer with real identity</h3>
+
+<p>This is the foundation; nothing else matters without it. Introduce entity records that live alongside documents — not derived on the fly inside <code>build_city_graph()</code>, but persisted, with stable IDs:</p>
+
+<pre><code>class Business(BaseModel):
+    id: str                        # stable, e.g. "biz:lou-mitchells-0042"
+    canonical_name: str
+    aliases: list[str]             # "Lou Mitchell's", "LOU MITCHELLS INC"
+    license_numbers: list[str]
+    address: str | None
+    neighborhood: str              # FK to Neighborhood entity
+    naics_code: str | None
+    source_document_ids: list[str] # provenance: every doc that mentions it</code></pre>
+
+<p>Creating these requires an <strong>entity resolution</strong> step in the enrichment pipeline: when a new document arrives, decide whether the business it mentions is one we already know. The Chicago data makes this tractable — license records carry license numbers and addresses, inspections carry <code>dba_name</code> + address, permits carry addresses. Address + fuzzy name matching resolves most of the public-data records deterministically; an LLM call can adjudicate the ambiguous tail (it's a good use of a model: a narrow yes/no with evidence, not open-ended synthesis).</p>
+
+<p>The same treatment applies to regulations: a Legistar ordinance should be one entity keyed by its record number, no matter how many documents mention it — not a slug of its truncated title.</p>
+
+<h3>3.2 An explicit schema: classes and typed relations</h3>
+
+<p>Today the four node types and three edge types exist only as string literals inside <code>graph.py</code>. An ontology makes the schema a first-class, documented artifact: which entity classes exist, which relations are allowed between which classes, and what each relation means.</p>
+
+<p>A realistic starting schema for this domain — small on purpose:</p>
+
+<table>
+  <tr><th>Class</th><th>Identity comes from</th></tr>
+  <tr><td>Neighborhood</td><td>The fixed list of 77 community areas (already exists)</td></tr>
+  <tr><td>Business</td><td>Entity resolution over licenses, inspections, reviews, news</td></tr>
+  <tr><td>BusinessType</td><td>Controlled vocabulary (see 3.3)</td></tr>
+  <tr><td>Regulation</td><td>Legistar record number / Federal Register document number</td></tr>
+  <tr><td>Permit / Inspection / License</td><td>Their Socrata record IDs (these are <em>events</em>, not just documents)</td></tr>
+</table>
+
+<table>
+  <tr><th>Relation</th><th>Domain → Range</th><th>Replaces</th></tr>
+  <tr><td><code>located_in</code></td><td>Business → Neighborhood</td><td rowspan="2">the generic <code>sentiment</code> edge</td></tr>
+  <tr><td><code>has_type</code></td><td>Business → BusinessType</td></tr>
+  <tr><td><code>licensed_as</code></td><td>Business → License</td><td rowspan="3">nothing — these don't exist today</td></tr>
+  <tr><td><code>inspected_in</code></td><td>Inspection → Business</td></tr>
+  <tr><td><code>permitted_at</code></td><td>Permit → Business / address</td></tr>
+  <tr><td><code>applies_to</code></td><td>Regulation → BusinessType | Neighborhood</td><td>the <code>regulates</code> edge with its fake city-wide links</td></tr>
+</table>
+
+<p>Note what disappears: the current <code>regulates</code> edge guesses geography from text mentions and pads with hard-coded neighborhoods. <code>applies_to</code> would assert what a regulation actually governs — which is a harder extraction problem, but it's the difference between a picture and a claim.</p>
+
+<h3>3.3 Controlled vocabularies instead of free strings</h3>
+
+<p>Today <code>business_type</code> nodes come from raw <code>license_description</code> strings, title-cased and truncated to 30 characters. "Retail Food Establishment" and "Retail Food Establishm" can coexist; categories from Yelp never align with categories from licenses. Risk categories ("zoning", "competition", "sentiment" in <code>RiskFactor.category</code>) are likewise free strings.</p>
+
+<p>The fix is small but high-leverage: a fixed mapping table from raw license descriptions and Yelp categories onto one canonical taxonomy (NAICS codes are the obvious choice — Chicago license data is finite, so the mapping is a few hundred rows you write once), and an enum for risk categories. This is the cheapest item on the list and it immediately makes cross-source comparison meaningful: "restaurants" from licenses, inspections, and Yelp finally refer to the same set.</p>
+
+<h3>3.4 Provenance: every fact traces to its evidence</h3>
+
+<p>The skeleton already exists — <code>RiskFactor</code> has <code>evidence_ids</code>, and <code>Document.status</code> tracks a lifecycle. The ontology version generalizes it: every entity attribute and every relation carries the document IDs (and extraction method) it was derived from.</p>
+
+<pre><code>{ "subject": "biz:lou-mitchells-0042",
+  "relation": "inspected_in",
+  "object": "insp:2026-04-12-1187",
+  "evidence": ["doc:public_data:abc123"],
+  "extracted_by": "socrata-direct",      # vs "llm" — trust differs
+  "asserted_at": "2026-04-13T..." }</code></pre>
+
+<p>This is what turns "the model says risk is 7.2" into "risk is 7.2 because of these three inspections and this pending ordinance — click to see them." For a product whose pitch is democratizing business intelligence for small operators, inspectable claims are the difference between a toy and a tool.</p>
+
+<h3>3.5 A queryable store, with rules where rules beat models</h3>
+
+<p>Once entities and typed relations exist, the graph stops being a JSON file regenerated for display and becomes something you query. This does <em>not</em> require a triple store or SPARQL — SQLite/Postgres tables for entities and relations, or even structured JSON on the existing Modal volume with indexed lookups, is enough at this data size.</p>
+
+<p>It also lets some intelligence move from LLM inference to deterministic rules where determinism is better:</p>
+
+<pre><code># Today: an LLM reads retrieved text and may or may not notice this.
+# With an ontology, it's a query that always returns the same answer:
+
+failed_inspections(b) AND b.has_type = "restaurant"
+  AND pending_regulation applies_to b.neighborhood
+  → risk_factor(b, category="regulatory", severity="high",
+                evidence=[...])</code></pre>
+
+<p>The LLM agents don't go away — they get better inputs. Instead of feeding an agent a pile of retrieved document text, you feed it the resolved entity neighborhood: "here is this business, its inspection history, its license status, the three regulations that apply to its type, and the recent sentiment trend — synthesize." Less hallucination room, smaller prompts, reproducible grounding.</p>
+
+<h2 id="product">4. How the product changes</h2>
+
+<p>The clearest way to see the difference is in what a user can ask.</p>
+
+<div class="qa">
+  <div class="q">"Show me food businesses in Pilsen with failed inspections that are affected by pending ordinances."</div>
+  <div class="a">Today: impossible as a query. An agent might approximate it from retrieval, differently each run. After: a deterministic join across <code>has_type</code>, <code>located_in</code>, <code>inspected_in</code>, <code>applies_to</code>, with every row linking to its source documents.</div>
+</div>
+
+<div class="qa">
+  <div class="q">"Why is the risk score for coffee shops in Logan Square 6.8?"</div>
+  <div class="a">Today: <code>RiskFactor</code> descriptions written by a classifier, evidence lists best-effort. After: each factor decomposes into named entities and relations — <em>this</em> ordinance, <em>these four</em> recent closures, <em>this</em> permit cluster — each clickable to its evidence.</div>
+</div>
+
+<div class="qa">
+  <div class="q">"What's happening with this specific business?"</div>
+  <div class="a">Today: there is no page for a business; there are search results that mention a name. After: an entity page is almost free — license status, inspection history, review trend, news mentions, nearby permits, all attached to one stable ID. This is a new product surface that the current architecture structurally cannot offer.</div>
+</div>
+
+<div class="qa">
+  <div class="q">The graph view itself.</div>
+  <div class="a">Today: decorative — duplicate nodes, padded edges, weights tuned for layout. After: clicking an edge shows a claim and its evidence. The visualization becomes a window onto the data instead of an artifact generated from it.</div>
+</div>
+
+<div class="qa">
+  <div class="q">Agent output quality (synthesis, impact briefs, lead analyst).</div>
+  <div class="a">Today: agents reason over retrieved text; quality depends on what retrieval surfaced. After: agents receive resolved, structured context. Impact briefs cite entities and relations rather than paraphrasing documents, so two runs over the same data agree with each other.</div>
+</div>
+
+<p>And one honest non-change: dashboards that are pure document feeds — news lists, Reddit, TikTok trends, CCTV counts — look the same. The ontology pays off where sources <em>intersect</em>, not where one source is displayed.</p>
+
+<h2 id="work">5. The actual work, in order</h2>
+
+<p>Sequenced so each phase is independently useful and nothing depends on a later phase:</p>
+
+<table>
+  <tr><th>Phase</th><th>Work</th><th>Touches</th><th>Rough size</th></tr>
+  <tr>
+    <td>1. Vocabularies</td>
+    <td>NAICS mapping for license descriptions and Yelp categories; enum for risk categories. Pure data + a lookup function.</td>
+    <td><code>modal_app/common.py</code>, enrichment pipeline</td>
+    <td>Days</td>
+  </tr>
+  <tr>
+    <td>2. Schema + entity store</td>
+    <td>Pydantic classes for Business, Regulation, Permit, Inspection, License; relation records with provenance; storage on the existing volume or in Postgres.</td>
+    <td>New <code>modal_app/ontology/</code> (or similar), <code>backend/shared_data.py</code> accessors</td>
+    <td>~1 week</td>
+  </tr>
+  <tr>
+    <td>3. Entity resolution</td>
+    <td>Deterministic pass first (license numbers, Socrata IDs, address + name fuzzy match), LLM adjudication for the ambiguous tail. Runs as a new enrichment stage; <code>Document.status</code> gains a "resolved" step.</td>
+    <td>Enrichment pipeline, new resolution module</td>
+    <td>2–3 weeks; this is the hard part, and match-quality evaluation is most of it</td>
+  </tr>
+  <tr>
+    <td>4. Rebuild the graph on entities</td>
+    <td><code>build_city_graph()</code> reads the entity store instead of re-scanning documents. Same JSON contract to the frontend (per repo rules, keys preserved), but node IDs become stable entity IDs and edges become typed relations.</td>
+    <td><code>modal_app/graph.py</code>, graph routes</td>
+    <td>~1 week</td>
+  </tr>
+  <tr>
+    <td>5. Query layer + rules</td>
+    <td>Internal query functions over entities/relations; port the most valuable risk heuristics to deterministic rules; feed structured entity context to agents.</td>
+    <td><code>modal_app/agents.py</code>, risk scoring, new query module</td>
+    <td>1–2 weeks</td>
+  </tr>
+  <tr>
+    <td>6. Product surface</td>
+    <td>Business entity pages, evidence links on risk factors, claim popovers on graph edges.</td>
+    <td>Frontend, new API routes</td>
+    <td>Ongoing</td>
+  </tr>
+</table>
+
+<p>Total: roughly 6–8 focused weeks to reach "the graph is real and queries work," with phases 1–2 delivering visible cleanup almost immediately. The ongoing cost is real too: entity resolution needs monitoring (bad merges are worse than no merges), and the schema needs an owner — every new pipeline must now answer "which entities and relations does this produce?" instead of just "which documents?"</p>
+
+<h2 id="avoid">6. What to avoid</h2>
+
+<ul>
+  <li><strong>OWL, RDF, triple stores, SPARQL.</strong> The value here is identity + typed relations + provenance, not description-logic inference. Semantic-web tooling would add operational weight (a new store to run inside Modal's volume-based architecture) for machinery this domain doesn't need. Plain tables and Pydantic get all the benefit.</li>
+  <li><strong>Ontologizing everything.</strong> TikTok audio, CCTV frames, traffic counts are signals, not entities. Leave them as documents/timeseries. Five entity classes that are correct beat twenty that are half-maintained.</li>
+  <li><strong>LLM-first entity resolution.</strong> The Socrata data has license numbers and addresses; use them. Models adjudicate the residue, deterministic keys do the bulk. The reverse ordering is slow, expensive, and silently wrong.</li>
+  <li><strong>A big-bang migration.</strong> The document pipeline stays exactly as it is; the entity layer is built <em>from</em> documents as an additional enrichment stage. If resolution breaks, the current product keeps working.</li>
+</ul>
+
+<h2 id="worth">7. Is it worth it?</h2>
+
+<p>Depends on what Aleithia is supposed to become.</p>
+
+<p>If the product is a <strong>monitoring dashboard</strong> — feeds, trends, sensor analytics, an LLM summary on top — the current architecture is honestly fine, and an ontology is a quarter of engineering spent on internals the user never sees. Skip it; maybe do phase 1 (vocabularies) anyway because it's days of work and fixes visible inconsistencies.</p>
+
+<p>If the product is what the README claims — <strong>data-driven business intelligence a small operator can act on</strong> — then the ontology isn't an optional upgrade, it's the missing core. Intelligence a user will bet a lease on must be specific ("this business, this ordinance, these inspections"), reproducible (the same question gets the same answer tomorrow), and inspectable (every claim traces to a public record). Documents plus embeddings plus LLM synthesis can't deliver those three properties. Entities, typed relations, and provenance are precisely the machinery that does — and the cross-source data Aleithia already ingests is unusually well-suited to it, because Chicago's public records carry the join keys.</p>
+
+<p class="aside">One-line version: Aleithia today knows what was <em>said</em>. An ontology would make it know what <em>is</em> — and for this product, that's the difference that matters.</p>
+
+</main>
+
+<!-- ============================================================ -->
+<!-- TAB 2: INTERACTIVE LAB                                        -->
+<!-- ============================================================ -->
+<main id="panel-lab" class="wide lab" hidden>
+
+<h1>Current model vs. ontology, hands-on</h1>
+<p class="subtitle prose">The same six source records, fed into both models. One fictional Pilsen restaurant, one city ordinance.</p>
+
+<p class="prose">Ingest the records below one at a time (or all at once) and watch what each model builds. The <strong>left panel reproduces the exact node-ID and edge rules from <code>modal_app/graph.py</code></strong> — slugged-title IDs, the hard-coded city-wide neighborhood list, inspections and permits producing nothing. The right panel implements the entity/relation schema proposed in the essay. Then try the experiments: change the Yelp business name, remove its address, flip the inspection result — and re-run the question at the bottom.</p>
+
+<h2>1 · Source records</h2>
+<div class="lab-controls">
+  <button class="primary" id="btn-ingest-all">Ingest all, in order</button>
+  <button id="btn-reset">Reset</button>
+</div>
+<div class="doc-grid" id="doc-grid"></div>
+
+<h2>2 · What each model builds</h2>
+<div class="model-grid">
+  <div class="model-panel">
+    <h4>Current model</h4>
+    <p class="panel-sub">documents + the graph that <code>build_city_graph()</code> derives from them</p>
+    <svg id="svg-current" viewBox="0 0 380 280"></svg>
+    <div class="legend">
+      <span><i style="background:var(--nb-color)"></i> neighborhood</span>
+      <span><i style="background:var(--ent-color)"></i> entity</span>
+      <span><i style="background:var(--reg-color)"></i> regulation</span>
+      <span><i style="background:var(--biz-color)"></i> business_type</span>
+      <span><i style="background:#fff;border:1.5px dashed var(--accent)"></i> duplicate</span>
+    </div>
+    <div class="stats" id="stats-current"></div>
+    <ul class="note-list" id="notes-current"></ul>
+    <div class="inspector" id="inspect-current"><span class="hint">Click a node to inspect it.</span></div>
+  </div>
+  <div class="model-panel">
+    <h4>Ontology model</h4>
+    <p class="panel-sub">resolved entities + typed relations, each fact carrying provenance</p>
+    <svg id="svg-onto" viewBox="0 0 380 280"></svg>
+    <div class="legend">
+      <span><i style="background:var(--hub-color)"></i> Business</span>
+      <span><i style="background:var(--nb-color)"></i> Neighborhood</span>
+      <span><i style="background:var(--biz-color)"></i> BusinessType</span>
+      <span><i style="background:var(--reg-color)"></i> Regulation</span>
+      <span><i style="background:#8a8478"></i> License / Inspection / Permit</span>
+      <span><i style="background:#fff;border:1.5px dashed var(--warn)"></i> unresolved</span>
+    </div>
+    <div class="stats" id="stats-onto"></div>
+    <ul class="note-list" id="notes-onto"></ul>
+    <div class="inspector" id="inspect-onto"><span class="hint">Click a node to inspect it. Evidence chips jump to the source record.</span></div>
+  </div>
+</div>
+
+<div class="res-log">
+  <h4>Entity-resolution log <span class="badge">ontology side only — the current model has no such step</span></h4>
+  <div id="res-log-body"><div class="empty">Nothing ingested yet.</div></div>
+</div>
+
+<h2>3 · Ask both models the same question</h2>
+<div class="query-box">
+  <p class="q-text">"Which food businesses in Pilsen have a failed inspection <em>and</em> a pending ordinance that applies to them?"</p>
+  <button class="primary" id="btn-run-query">Run against both models</button>
+  <div class="query-results" id="query-results" hidden>
+    <div class="qr" id="qr-current"></div>
+    <div class="qr" id="qr-onto"></div>
+  </div>
+</div>
+
+<h2>4 · Experiments worth trying</h2>
+<ol class="prose">
+  <li><strong>Duplicate identity.</strong> Set the Yelp business name to "Taqueria La Ribera Mexican Grill" (a preset) and ingest everything. The current model mints a second, unconnected <code>ent:</code> node — the dashed red circle. The ontology side merges it and records the new spelling as an alias.</li>
+  <li><strong>Even an accent splits identity.</strong> The default Yelp name carries an accent ("Taquería"); the preset "Taqueria La Ribera" doesn't. In the current model that single character produces two different node IDs for the same business.</li>
+  <li><strong>Resolution isn't magic.</strong> Uncheck "record includes address" on the Yelp card and set the name to "Ribera Grill 18th St". With no address and a name too dissimilar, the ontology side <em>refuses to merge</em> — it creates a flagged entity queued for adjudication instead of silently guessing. Re-check the address and watch it resolve.</li>
+  <li><strong>Data flows into answers.</strong> Flip the inspection result between Fail and Pass, then re-run the question. The ontology answer changes deterministically, with the evidence chain shown. The current model's answer never changes, because it never had one.</li>
+  <li><strong>Order doesn't matter.</strong> Reset and ingest the permit <em>first</em>. The ontology side creates an unnamed business stub from the bare address, then upgrades it when the license arrives. The current model ignores the permit entirely, in any order.</li>
+</ol>
+
+</main>
+
+<script>
+'use strict';
+
+/* ---------- tabs ---------- */
+function showTab(which) {
+  document.getElementById('panel-essay').hidden = (which !== 'essay');
+  document.getElementById('panel-lab').hidden = (which !== 'lab');
+  document.getElementById('tab-essay').classList.toggle('active', which === 'essay');
+  document.getElementById('tab-lab').classList.toggle('active', which === 'lab');
+  window.scrollTo(0, 0);
+}
+
+/* ---------- fixture: six source records (fictional business) ---------- */
+const ADDRESS = '1818 W 18th St';
+
+const DOCS = [
+  {
+    id: 'd-license', label: 'Business license', source: 'public_data',
+    sub: 'Socrata · Chicago Business Licenses',
+    fields: {
+      legal_name: 'LA RIBERA FOODS INC',
+      doing_business_as: 'TAQUERIA LA RIBERA',
+      license_number: '2718281',
+      address: ADDRESS,
+      license_description: 'Retail Food Establishment',
+      neighborhood: 'Pilsen'
+    }
+  },
+  {
+    id: 'd-inspection', label: 'Food inspection', source: 'public_data',
+    sub: 'Socrata · Food Inspections',
+    fields: {
+      inspection_id: '2599301',
+      dba_name: 'TAQUERIA LA RIBERA',
+      address: '1818 W 18TH ST',
+      risk: 'Risk 1 (High)',
+      violations: '3. FOOD TEMP CONTROL — CRITICAL'
+    },
+    editResult: true   // result: Pass | Fail
+  },
+  {
+    id: 'd-yelp', label: 'Yelp record', source: 'yelp',
+    sub: 'Yelp Fusion API',
+    fields: {
+      rating: '3.0 ★ (down from 4.2)',
+      review_count: '212',
+      sentiment_score: '-0.4'
+    },
+    editName: true,    // business_name editable
+    editAddress: true  // address present? checkbox
+  },
+  {
+    id: 'd-news', label: 'News article', source: 'news',
+    sub: 'RSS / NewsAPI',
+    title: 'Pilsen staple Taquería La Ribera may close as costs rise',
+    fields: {
+      business_name: 'Taquería La Ribera',
+      sentiment_score: '-0.6',
+      neighborhood: 'Pilsen'
+    }
+  },
+  {
+    id: 'd-permit', label: 'Building permit', source: 'public_data',
+    sub: 'Socrata · Building Permits',
+    fields: {
+      permit_type: 'PERMIT - RENOVATION/ALTERATION',
+      work_description: 'INTERIOR ALTERATIONS FOR RESTAURANT',
+      address: '1818 W 18TH ST'
+    }
+  },
+  {
+    id: 'd-ord', label: 'City ordinance', source: 'politics',
+    sub: 'Legistar',
+    title: 'Amendment of Municipal Code regarding licensing of retail food establishments',
+    fields: {
+      record_number: 'O2026-417',
+      status: 'Pending',
+      body: 'Committee on License and Consumer Protection'
+    }
+  }
+];
+
+const YELP_PRESETS = [
+  'Taquería La Ribera',
+  'Taqueria La Ribera Mexican Grill',
+  'Ribera Grill 18th St'
+];
+
+const NAICS_MAP = { 'Retail Food Establishment': '722513 — Limited-Service Restaurants' };
+
+/* ---------- mutable state ---------- */
+let state;
+function freshState() {
+  return {
+    ingested: [],                       // doc ids in ingestion order
+    yelpName: 'Taquería La Ribera',
+    yelpHasAddress: true,
+    inspectionResult: 'Fail',
+    selectedCurrent: null,
+    selectedOnto: null
+  };
+}
+state = freshState();
+
+/* ---------- helpers ---------- */
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const deburr = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+const normAddr = s => deburr(s).toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+const tokens = s => new Set(deburr(s).toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean));
+function nameSim(a, b) {            // Dice coefficient over word tokens
+  const A = tokens(a), B = tokens(b);
+  if (!A.size || !B.size) return 0;
+  let inter = 0;
+  A.forEach(t => { if (B.has(t)) inter++; });
+  return 2 * inter / (A.size + B.size);
+}
+const titleCase = s => s.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+// graph.py slug rules, reproduced exactly: slice, replace spaces, lowercase
+const entSlug = name => 'ent:' + name.slice(0, 40).replace(/ /g, '-').toLowerCase();
+const regSlug = title => 'reg:' + title.slice(0, 50).replace(/ /g, '-').toLowerCase();
+
+/* ============================================================
+   CURRENT MODEL — mirrors build_city_graph() in modal_app/graph.py
+   ============================================================ */
+function computeCurrent() {
+  const nodes = [];   // {key,id,type,label,attrs,dup}
+  const edges = [];   // {from,to,type,weight,faint}
+  const notes = [];
+  const seen = {};
+
+  function addNode(key, n) { if (!seen[key]) { seen[key] = n; nodes.push(n); } return seen[key]; }
+
+  // neighborhood node always present (from CHICAGO_NEIGHBORHOODS)
+  addNode('nb', { key: 'nb', id: 'nb:Pilsen', type: 'neighborhood', label: 'Pilsen',
+    attrs: { id: 'nb:Pilsen', type: 'neighborhood', label: 'Pilsen', lat: 41.8554, lng: -87.6610, size: 40 } });
+
+  const entNodes = [];
+
+  for (const docId of state.ingested) {
+    const d = DOCS.find(x => x.id === docId);
+
+    if (d.id === 'd-news' || d.id === 'd-yelp') {
+      const name = d.id === 'd-yelp' ? state.yelpName : d.fields.business_name;
+      if (!name || name.trim().length <= 2) continue;
+      const id = entSlug(name.trim());
+      const sentiment = d.id === 'd-yelp' ? -0.4 : -0.6;
+      let node = seen['ent|' + id];
+      if (!node) {
+        node = addNode('ent|' + id, { key: 'ent|' + id, id, type: 'entity', label: name.trim().slice(0, 40),
+          attrs: { id, type: 'entity', label: name.trim().slice(0, 40), sentiment, size: 10 }, from: [d.id] });
+        entNodes.push(node);
+        edges.push({ from: 'ent|' + id, to: 'nb', type: 'sentiment', weight: Math.abs(sentiment).toFixed(2) });
+      } else {
+        node.from.push(d.id);
+      }
+    }
+
+    if (d.id === 'd-license') {
+      const bt = titleCase(d.fields.license_description).slice(0, 30);
+      const id = 'biz:' + bt.replace(/ /g, '-').toLowerCase();
+      addNode('biz', { key: 'biz', id, type: 'business_type', label: bt,
+        attrs: { id, type: 'business_type', label: bt, size: 8 }, from: [d.id] });
+      edges.push({ from: 'biz', to: 'nb', type: 'competes_in', weight: '0.10' });
+    }
+
+    if (d.id === 'd-inspection') {
+      notes.push('<b>Food inspection:</b> stored as a document, but <code>build_city_graph()</code> creates <i>no node</i> for it (only <code>license_description</code> records become nodes). The ' + state.inspectionResult.toLowerCase() + ' result is invisible to the graph.');
+    }
+    if (d.id === 'd-permit') {
+      notes.push('<b>Building permit:</b> same — no node, no edge. Searchable as text only.');
+    }
+
+    if (d.id === 'd-ord') {
+      const id = regSlug(d.title);
+      addNode('reg', { key: 'reg', id, type: 'regulation', label: d.title.slice(0, 60),
+        attrs: { id, type: 'regulation', label: d.title.slice(0, 60), size: 13 }, from: [d.id] });
+      // no neighborhood detected in title/content → "city-wide": linked to 10 hard-coded nbs
+      edges.push({ from: 'reg', to: 'nb', type: 'regulates', weight: '0.05', faint: true });
+      addNode('ghost', { key: 'ghost', ghost: true, label: '+9 more neighborhoods',
+        attrs: { note: 'graph.py links city-wide regulations to a hard-coded list of 10 "representative" neighborhoods (Loop, Lakeview, Pilsen, …) at weight ≤ 0.3, purely so the visualization is not empty.' } });
+      edges.push({ from: 'reg', to: 'ghost', type: 'regulates ×9', weight: '', faint: true });
+      notes.push('<b>Ordinance:</b> node ID is the title cut at 50 chars — <code>' + esc(id) + '</code> (truncated mid-word). No neighborhood appears in the text, so it is wired to 10 hard-coded neighborhoods.');
+    }
+  }
+
+  // duplicate detection: >1 entity node ⇒ same real-world business split
+  if (entNodes.length > 1) {
+    entNodes.forEach(n => { n.dup = true; });
+    notes.push('<b class="warn-text">Duplicate identity:</b> ' + entNodes.length + ' separate <code>entity</code> nodes exist for the same restaurant, because the node ID is a slug of whatever string each source used. Nothing in the system can tell they are one business.');
+  }
+
+  return { nodes, edges, notes, seen };
+}
+
+/* ============================================================
+   ONTOLOGY MODEL — the schema proposed in the essay (§3)
+   ============================================================ */
+function computeOntology() {
+  const businesses = [];   // {id,canonical,aliases[],address,licenseNumber,naics,neighborhood,relations[],observations[],flagged,stub,docs[]}
+  const others = {};       // regulation/license/inspection/permit/bt/nb entities by key
+  const log = [];
+  let bizCounter = 0;
+
+  function logLine(docId, html) {
+    log.push('<span class="chip" data-doc="' + docId + '">' + docId + '</span> ' + html);
+  }
+
+  function resolveBusiness(docId, name, address, seedFields) {
+    const addrN = address ? normAddr(address) : null;
+    // pass 1: address key
+    if (addrN) {
+      const hit = businesses.find(b => b.addrN === addrN);
+      if (hit) {
+        let extra = '';
+        if (name && hit.aliases.length) {
+          const sim = Math.max(...hit.aliases.map(a => nameSim(name, a)));
+          extra = ', name similarity ' + sim.toFixed(2) + ' corroborates';
+          if (!hit.aliases.some(a => deburr(a).toLowerCase() === deburr(name).toLowerCase())) {
+            hit.aliases.push(name);
+            extra += ' — new alias recorded';
+          }
+        }
+        logLine(docId, 'address <code>' + esc(address) + '</code> normalizes to existing key → <b>matched ' + hit.id + '</b> (deterministic' + esc(extra) + ').');
+        hit.docs.push(docId);
+        return hit;
+      }
+    }
+    // pass 2: fuzzy name vs aliases
+    if (name) {
+      let best = null, bestSim = 0;
+      for (const b of businesses) {
+        const s = Math.max(...b.aliases.map(a => nameSim(name, a)));
+        if (s > bestSim) { bestSim = s; best = b; }
+      }
+      if (best && bestSim >= 0.55) {
+        if (!best.aliases.some(a => deburr(a).toLowerCase() === deburr(name).toLowerCase())) best.aliases.push(name);
+        if (addrN && !best.addrN) { best.address = address; best.addrN = addrN; }
+        logLine(docId, (addrN ? 'no existing entity at this address' : 'no address key') + '; best name match <code>' + esc(name) + '</code> vs aliases of ' + best.id + ' scores <b>' + bestSim.toFixed(2) + '</b> ≥ 0.55 → <b>merged</b>' + (addrN ? ' — address now attached to the entity' : ' (confidence: medium — name-only)') + '. Alias recorded.');
+        best.docs.push(docId);
+        return best;
+      }
+      if (best) {
+        logLine(docId, 'no address key; best name match <code>' + esc(name) + '</code> scores only <b class="warn-text">' + bestSim.toFixed(2) + '</b> &lt; 0.55 → <b class="warn-text">not merged</b>. New entity created and queued for adjudication (LLM yes/no with evidence) rather than guessed.');
+      }
+    }
+    // pass 3: create
+    bizCounter++;
+    const b = {
+      id: 'biz:' + String(bizCounter).padStart(4, '0'),
+      canonical: name ? titleCase(name) : 'Business at ' + (address || 'unknown address'),
+      aliases: name ? [name] : [],
+      address: address || null,
+      addrN: addrN,
+      licenseNumber: null, naics: null, neighborhood: null,
+      relations: [], observations: [], docs: [docId],
+      flagged: !addrN && !!name && businesses.length > 0,
+      stub: !name,
+      ...seedFields
+    };
+    businesses.push(b);
+    if (!b.flagged) {
+      logLine(docId, 'no existing entity matches → <b>created ' + b.id + '</b>' + (b.stub ? ' as an unnamed stub from the bare address (will upgrade if a named record matches it later)' : '') + '.');
+    }
+    return b;
+  }
+
+  for (const docId of state.ingested) {
+    const d = DOCS.find(x => x.id === docId);
+
+    if (d.id === 'd-license') {
+      const b = resolveBusiness(docId, titleCase(d.fields.doing_business_as), d.fields.address);
+      if (b.stub) {
+        b.canonical = titleCase(d.fields.doing_business_as);
+        b.aliases.push(titleCase(d.fields.doing_business_as));
+        b.stub = false;
+        logLine(docId, 'stub ' + b.id + ' upgraded with name <code>' + esc(b.canonical) + '</code> from license record.');
+      }
+      if (!b.aliases.includes(d.fields.legal_name)) b.aliases.push(d.fields.legal_name);
+      b.licenseNumber = d.fields.license_number;
+      b.naics = NAICS_MAP[d.fields.license_description];
+      b.neighborhood = 'Pilsen';
+      others['nb'] = { key: 'nb', cls: 'Neighborhood', label: 'Pilsen', id: 'nbhd:pilsen' };
+      others['bt'] = { key: 'bt', cls: 'BusinessType', label: 'NAICS 722513', id: 'type:naics-722513',
+        detail: NAICS_MAP[d.fields.license_description] };
+      others['lic'] = { key: 'lic', cls: 'License', label: 'License 2718281', id: 'lic:2718281',
+        detail: 'Retail Food Establishment · active' };
+      b.relations.push(
+        { rel: 'located_in', obj: 'Pilsen', objKey: 'nb', evidence: ['d-license'], method: 'address geocode — deterministic' },
+        { rel: 'has_type', obj: 'NAICS 722513', objKey: 'bt', evidence: ['d-license'], method: 'vocabulary mapping ("Retail Food Establishment" → 722513) — deterministic' },
+        { rel: 'licensed_as', obj: 'License 2718281', objKey: 'lic', evidence: ['d-license'], method: 'socrata-direct' }
+      );
+      logLine(docId, 'vocabulary: <code>Retail Food Establishment</code> → <code>' + esc(NAICS_MAP[d.fields.license_description]) + '</code>.');
+    }
+
+    if (d.id === 'd-inspection') {
+      const b = resolveBusiness(docId, titleCase(d.fields.dba_name), d.fields.address);
+      others['insp'] = { key: 'insp', cls: 'Inspection', label: 'Inspection · ' + state.inspectionResult, id: 'insp:2599301',
+        detail: 'Result: ' + state.inspectionResult + ' · Risk 1 (High) · violations: food temp control (critical)' };
+      b.relations.push({ rel: 'inspected_in', obj: 'Inspection 2599301 (' + state.inspectionResult + ')', objKey: 'insp',
+        evidence: ['d-inspection'], method: 'socrata-direct' });
+    }
+
+    if (d.id === 'd-yelp') {
+      const name = state.yelpName.trim();
+      if (name.length > 2) {
+        const b = resolveBusiness(docId, name, state.yelpHasAddress ? ADDRESS : null);
+        b.observations.push({ text: 'sentiment −0.4, rating 3.0★ trending down', evidence: ['d-yelp'] });
+      }
+    }
+
+    if (d.id === 'd-news') {
+      const b = resolveBusiness(docId, d.fields.business_name, null);
+      b.observations.push({ text: 'negative news coverage (sentiment −0.6): possible closure', evidence: ['d-news'] });
+    }
+
+    if (d.id === 'd-permit') {
+      const b = resolveBusiness(docId, null, d.fields.address);
+      others['perm'] = { key: 'perm', cls: 'Permit', label: 'Permit · renovation', id: 'perm:100934112',
+        detail: 'RENOVATION/ALTERATION — interior alterations for restaurant' };
+      b.relations.push({ rel: 'permitted_at', obj: 'Permit (renovation)', objKey: 'perm',
+        evidence: ['d-permit'], method: 'address match — deterministic' });
+    }
+
+    if (d.id === 'd-ord') {
+      others['reg'] = { key: 'reg', cls: 'Regulation', label: 'O2026-417 · Pending', id: 'reg:O2026-417',
+        detail: d.title + ' · status: Pending', appliesToFood: true };
+      others['bt-target'] = null; // applies_to points at the BusinessType class
+      logLine(docId, 'Regulation keyed by Legistar record number → <b>reg:O2026-417</b> (stable across re-ingests; the title is display text, not identity). <code>applies_to</code> extracted from "retail food establishments" → NAICS 7225* <span class="method">(method: llm extraction — lower trust, flagged as such)</span>. Scope: citywide — asserted explicitly, not faked with hard-coded neighborhood links.');
+      if (!others['bt']) {
+        others['bt'] = { key: 'bt', cls: 'BusinessType', label: 'NAICS 7225*', id: 'type:naics-7225',
+          detail: 'Food services — asserted by ordinance before any business of this type is known' };
+      }
+    }
+  }
+
+  return { businesses, others, log };
+}
+
+/* ============================================================
+   RENDER: source record cards
+   ============================================================ */
+function renderDocs() {
+  const grid = document.getElementById('doc-grid');
+  grid.innerHTML = DOCS.map(d => {
+    const ingested = state.ingested.includes(d.id);
+    let fieldsHtml = '';
+    if (d.title) fieldsHtml += '<b>title:</b> ' + esc(d.title) + '<br>';
+    for (const [k, v] of Object.entries(d.fields)) fieldsHtml += '<b>' + esc(k) + ':</b> ' + esc(v) + '<br>';
+    if (d.editResult) fieldsHtml += '<b>result:</b> ' + esc(state.inspectionResult) + '<br>';
+    if (d.editName) fieldsHtml += '<b>business_name:</b> ' + esc(state.yelpName) + '<br>';
+    if (d.editAddress) fieldsHtml += '<b>address:</b> ' + (state.yelpHasAddress ? esc(ADDRESS) : '<i>(absent)</i>') + '<br>';
+
+    let editors = '';
+    if (d.editName) {
+      editors += '<div class="edit-row"><label>business_name (editable)</label>' +
+        '<input type="text" id="yelp-name" value="' + esc(state.yelpName) + '">' +
+        '<div class="presets">' + YELP_PRESETS.map(p =>
+          '<button data-preset="' + esc(p) + '">' + esc(p) + '</button>').join('') + '</div></div>';
+    }
+    if (d.editAddress) {
+      editors += '<label class="chk"><input type="checkbox" id="yelp-addr"' + (state.yelpHasAddress ? ' checked' : '') + '> record includes address</label>';
+    }
+    if (d.editResult) {
+      editors += '<div class="edit-row"><label>result (editable)</label><select id="insp-result">' +
+        ['Fail', 'Pass'].map(r => '<option' + (state.inspectionResult === r ? ' selected' : '') + '>' + r + '</option>').join('') +
+        '</select></div>';
+    }
+
+    return '<div class="doc-card' + (ingested ? ' ingested' : '') + '" id="card-' + d.id + '">' +
+      '<div class="doc-head"><span class="doc-title">' + esc(d.label) + '</span>' +
+      '<span class="badge' + (ingested ? ' ok' : '') + '">' + (ingested ? 'ingested' : esc(d.source)) + '</span></div>' +
+      '<div class="doc-sub">' + esc(d.sub) + ' · <code style="font-size:0.85em">' + d.id + '</code></div>' +
+      '<details><summary>raw fields</summary><div class="fields">' + fieldsHtml + '</div></details>' +
+      editors +
+      '<button class="ingest-btn" data-ingest="' + d.id + '"' + (ingested ? ' disabled' : '') + '>' +
+      (ingested ? 'Ingested ✓' : 'Ingest') + '</button></div>';
+  }).join('');
+
+  // wire editors — recompute everything on change (the whole sim is deterministic)
+  const nameInput = document.getElementById('yelp-name');
+  if (nameInput) nameInput.addEventListener('input', e => { state.yelpName = e.target.value; renderModels(); });
+  grid.querySelectorAll('[data-preset]').forEach(btn =>
+    btn.addEventListener('click', () => { state.yelpName = btn.dataset.preset; renderAll(); }));
+  const addrChk = document.getElementById('yelp-addr');
+  if (addrChk) addrChk.addEventListener('change', e => { state.yelpHasAddress = e.target.checked; renderModels(); });
+  const inspSel = document.getElementById('insp-result');
+  if (inspSel) inspSel.addEventListener('change', e => { state.inspectionResult = e.target.value; renderModels(); });
+  grid.querySelectorAll('[data-ingest]').forEach(btn =>
+    btn.addEventListener('click', () => { state.ingested.push(btn.dataset.ingest); renderAll(); }));
+}
+
+/* ============================================================
+   RENDER: SVG graphs
+   ============================================================ */
+function svgNode(x, y, r, color, label, sub, key, cls) {
+  let lines = [label];
+  if (label.length > 22) {
+    const cut = label.lastIndexOf(' ', 22);
+    const at = cut > 8 ? cut : 22;
+    lines = [label.slice(0, at), label.slice(at).trim().slice(0, 22)];
+  }
+  let t = lines.map((ln, i) => '<text x="' + x + '" y="' + (y + r + 9 + i * 9) + '" text-anchor="middle">' + esc(ln) + '</text>').join('');
+  if (sub) t += '<text class="nid" x="' + x + '" y="' + (y + r + 9 + lines.length * 9) + '" text-anchor="middle">' + esc(sub.length > 34 ? sub.slice(0, 33) + '…' : sub) + '</text>';
+  return '<g class="gnode ' + (cls || '') + '" data-key="' + esc(key) + '"><circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="' + color + '"></circle>' + t + '</g>';
+}
+function svgEdge(x1, y1, x2, y2, label, faint) {
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2 - 3;
+  return '<g class="gedge' + (faint ? ' faint' : '') + '"><line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"></line>' +
+    (label ? '<text x="' + mx + '" y="' + my + '" text-anchor="middle">' + esc(label) + '</text>' : '') + '</g>';
+}
+
+const CUR_POS = { nb: [190, 60], ghost: [320, 52], reg: [310, 140], biz: [70, 140] };
+const CUR_ENT_SLOTS = [[80, 222], [190, 235], [300, 222]];
+
+function renderCurrentSvg(model) {
+  const pos = {};
+  let entIdx = 0;
+  for (const n of model.nodes) {
+    if (n.key === 'nb') pos[n.key] = CUR_POS.nb;
+    else if (n.key === 'ghost') pos[n.key] = CUR_POS.ghost;
+    else if (n.key === 'reg') pos[n.key] = CUR_POS.reg;
+    else if (n.key === 'biz') pos[n.key] = CUR_POS.biz;
+    else pos[n.key] = CUR_ENT_SLOTS[Math.min(entIdx++, 2)];
+  }
+  let out = '';
+  for (const e of model.edges) {
+    if (pos[e.from] && pos[e.to]) out += svgEdge(pos[e.from][0], pos[e.from][1], pos[e.to][0], pos[e.to][1],
+      e.type + (e.weight ? ' ' + e.weight : ''), e.faint);
+  }
+  const colors = { neighborhood: 'var(--nb-color)', entity: 'var(--ent-color)', regulation: 'var(--reg-color)', business_type: 'var(--biz-color)' };
+  for (const n of model.nodes) {
+    const [x, y] = pos[n.key];
+    if (n.ghost) {
+      out += '<g class="gnode ghost" data-key="' + n.key + '"><circle cx="' + x + '" cy="' + y + '" r="13" fill="none"></circle>' +
+        '<text x="' + x + '" y="' + (y + 24) + '" text-anchor="middle">' + esc(n.label) + '</text></g>';
+      continue;
+    }
+    const r = n.type === 'neighborhood' ? 16 : n.type === 'regulation' ? 12 : 10;
+    let cls = n.dup ? 'dup' : '';
+    if (state.selectedCurrent === n.key) cls += ' selected';
+    out += svgNode(x, y, r, colors[n.type], n.label, n.id, n.key, cls);
+  }
+  if (!model.nodes.some(n => !n.ghost && n.key !== 'nb')) {
+    out += '<text x="190" y="160" text-anchor="middle" style="font-family:var(--sans);font-size:10px;fill:#9a958b;font-style:italic">ingest records to populate the graph</text>';
+  }
+  document.getElementById('svg-current').innerHTML = out;
+}
+
+const ONTO_POS = {
+  hub: [165, 150], nb: [60, 60], bt: [165, 42], lic: [55, 165],
+  reg: [310, 55], insp: [110, 245], perm: [255, 245], biz2: [310, 165]
+};
+
+function renderOntoSvg(model) {
+  let out = '';
+  const main = model.businesses.find(b => !b.flagged);
+  const flagged = model.businesses.filter(b => b.flagged);
+  const O = model.others;
+  const P = ONTO_POS;
+
+  if (main) {
+    for (const rel of main.relations) {
+      const p = P[rel.objKey];
+      if (!p) continue;
+      const inward = (rel.rel === 'inspected_in' || rel.rel === 'permitted_at'); // domain is the event
+      out += svgEdge(inward ? p[0] : P.hub[0], inward ? p[1] : P.hub[1],
+                     inward ? P.hub[0] : p[0], inward ? P.hub[1] : p[1], rel.rel);
+    }
+  }
+  if (O.reg && O.bt) out += svgEdge(P.reg[0], P.reg[1], P.bt[0], P.bt[1], 'applies_to');
+
+  if (O.nb) out += svgNode(P.nb[0], P.nb[1], 13, 'var(--nb-color)', O.nb.label, O.nb.id, 'o-nb', sel('o-nb'));
+  if (O.bt) out += svgNode(P.bt[0], P.bt[1], 11, 'var(--biz-color)', O.bt.label, O.bt.id, 'o-bt', sel('o-bt'));
+  if (O.lic) out += svgNode(P.lic[0], P.lic[1], 9, '#8a8478', O.lic.label, O.lic.id, 'o-lic', sel('o-lic'));
+  if (O.reg) out += svgNode(P.reg[0], P.reg[1], 12, 'var(--reg-color)', O.reg.label, O.reg.id, 'o-reg', sel('o-reg'));
+  if (O.insp) out += svgNode(P.insp[0], P.insp[1], 9, '#8a8478', O.insp.label, O.insp.id, 'o-insp', sel('o-insp'));
+  if (O.perm) out += svgNode(P.perm[0], P.perm[1], 9, '#8a8478', O.perm.label, O.perm.id, 'o-perm', sel('o-perm'));
+  if (main) out += svgNode(P.hub[0], P.hub[1], 15, 'var(--hub-color)', main.canonical, main.id, 'o-hub', sel('o-hub'));
+  flagged.forEach((b, i) => {
+    out += svgNode(P.biz2[0], P.biz2[1] + i * 55, 11, '#fff', b.canonical, b.id + ' · unresolved', 'o-flag-' + b.id, 'flagged ' + sel('o-flag-' + b.id));
+  });
+
+  if (!main && !flagged.length && !O.reg) {
+    out += '<text x="190" y="160" text-anchor="middle" style="font-family:var(--sans);font-size:10px;fill:#9a958b;font-style:italic">ingest records to populate the entity store</text>';
+  }
+  document.getElementById('svg-onto').innerHTML = out;
+
+  function sel(k) { return state.selectedOnto === k ? 'selected' : ''; }
+}
+
+/* ============================================================
+   RENDER: inspectors, notes, log
+   ============================================================ */
+function evidenceChips(ids) {
+  return ids.map(id => '<span class="chip" data-doc="' + id + '">' + id + '</span>').join('');
+}
+
+function renderCurrentInspector(model) {
+  const el = document.getElementById('inspect-current');
+  const n = model.nodes.find(x => x.key === state.selectedCurrent);
+  if (!n) { el.innerHTML = '<span class="hint">Click a node to inspect it.</span>'; return; }
+  if (n.ghost) { el.innerHTML = '<h5>Hard-coded neighborhood links</h5><div>' + esc(n.attrs.note) + '</div>'; return; }
+  let kv = Object.entries(n.attrs).map(([k, v]) => '<b>' + esc(k) + ':</b> ' + esc(v)).join('<br>');
+  el.innerHTML = '<h5>' + esc(n.id) + '</h5><div class="kv">' + kv + '</div>' +
+    '<div style="margin-top:0.4rem;color:var(--muted)">That flat dict is the node\'s entire knowledge. No provenance, no link to source records' +
+    (n.from ? ' (it happens to have been derived from ' + evidenceChips(n.from) + ', but the graph does not record that)' : '') + '.</div>';
+}
+
+function renderOntoInspector(model) {
+  const el = document.getElementById('inspect-onto');
+  const k = state.selectedOnto;
+  if (!k) { el.innerHTML = '<span class="hint">Click a node to inspect it. Evidence chips jump to the source record.</span>'; return; }
+
+  let b = null;
+  if (k === 'o-hub') b = model.businesses.find(x => !x.flagged);
+  if (k.startsWith('o-flag-')) b = model.businesses.find(x => x.id === k.slice(7));
+
+  if (b) {
+    let html = '<h5>' + esc(b.id) + ' — Business' + (b.flagged ? ' <span class="warn-text">(unresolved — adjudication queue)</span>' : '') + '</h5>';
+    html += '<div class="kv">' +
+      '<b>canonical_name:</b> ' + esc(b.canonical) + '<br>' +
+      '<b>aliases:</b> ' + (b.aliases.length ? esc(b.aliases.join(' · ')) : '—') + '<br>' +
+      '<b>address:</b> ' + esc(b.address || '—') + '<br>' +
+      '<b>license_number:</b> ' + esc(b.licenseNumber || '—') + '<br>' +
+      '<b>naics_code:</b> ' + esc(b.naics || '—') + '<br>' +
+      '<b>source_documents:</b> </div>' + evidenceChips(b.docs);
+    if (b.relations.length) {
+      html += '<div style="margin-top:0.5rem"><b style="font-size:0.72rem;color:var(--muted)">RELATIONS</b>' +
+        b.relations.map(r => '<div class="rel-line"><span class="rel-name">' + esc(r.rel) + '</span> → ' + esc(r.obj) +
+          ' ' + evidenceChips(r.evidence) + '<br><span class="method">extracted_by: ' + esc(r.method) + '</span></div>').join('') + '</div>';
+    }
+    if (b.observations.length) {
+      html += '<div style="margin-top:0.5rem"><b style="font-size:0.72rem;color:var(--muted)">OBSERVATIONS</b>' +
+        b.observations.map(o => '<div class="rel-line">' + esc(o.text) + ' ' + evidenceChips(o.evidence) + '</div>').join('') + '</div>';
+    }
+    el.innerHTML = html;
+    return;
+  }
+  const map = { 'o-nb': 'nb', 'o-bt': 'bt', 'o-lic': 'lic', 'o-reg': 'reg', 'o-insp': 'insp', 'o-perm': 'perm' };
+  const o = model.others[map[k]];
+  if (o) {
+    el.innerHTML = '<h5>' + esc(o.id) + ' — ' + esc(o.cls) + '</h5><div class="kv"><b>label:</b> ' + esc(o.label) +
+      (o.detail ? '<br><b>detail:</b> ' + esc(o.detail) : '') + '</div>' +
+      '<div style="margin-top:0.4rem;color:var(--muted)">A first-class entity with a stable ID' +
+      (o.cls === 'Regulation' ? ' (the Legistar record number — re-ingesting the same ordinance can never create a duplicate)' : '') + '.</div>';
+  }
+}
+
+function renderNotesAndStats(cur, onto) {
+  document.getElementById('notes-current').innerHTML = cur.notes.map(n => '<li>' + n + '</li>').join('');
+  const realNodes = cur.nodes.filter(n => !n.ghost);
+  document.getElementById('stats-current').textContent =
+    realNodes.length + ' nodes · ' + cur.edges.length + ' edges · ' + state.ingested.length + ' documents stored (all searchable as text via Supermemory)';
+
+  const relCount = onto.businesses.reduce((s, b) => s + b.relations.length, 0) + (onto.others.reg && onto.others.bt ? 1 : 0);
+  const entCount = onto.businesses.length + Object.values(onto.others).filter(Boolean).length;
+  document.getElementById('stats-onto').textContent =
+    entCount + ' entities · ' + relCount + ' typed relations · every relation carries evidence + extraction method';
+
+  const ontoNotes = [];
+  const main = onto.businesses.find(b => !b.flagged);
+  if (main && main.docs.length > 1) {
+    ontoNotes.push('<b class="ok-text">One identity:</b> ' + main.docs.length + ' records from ' +
+      '<span style="white-space:nowrap">' + main.docs.length + ' source(s)</span> resolved to a single <code>' + main.id + '</code>. The documents are evidence; the business is the thing.');
+  }
+  onto.businesses.filter(b => b.flagged).forEach(b => {
+    ontoNotes.push('<b class="warn-text">Honest uncertainty:</b> <code>' + b.id + '</code> could not be confidently merged (no address, low name similarity), so it is held separate and flagged — not silently merged, not silently duplicated.');
+  });
+  document.getElementById('notes-onto').innerHTML = ontoNotes.map(n => '<li>' + n + '</li>').join('');
+}
+
+function renderLog(onto) {
+  const body = document.getElementById('res-log-body');
+  body.innerHTML = onto.log.length
+    ? onto.log.map(l => '<div class="log-line">' + l + '</div>').join('')
+    : '<div class="empty">Nothing ingested yet.</div>';
+}
+
+/* ============================================================
+   QUERY DEMO
+   ============================================================ */
+function runQuery() {
+  const cur = computeCurrent();
+  const onto = computeOntology();
+  document.getElementById('query-results').hidden = false;
+
+  // --- current model ---
+  let bullets = [];
+  bullets.push('The graph has <b>no join path</b> for this question: there are no inspection nodes, no business→type links, and the <code>regulates</code> edges are guessed from text mentions.');
+  if (state.ingested.includes('d-inspection')) {
+    bullets.push('The ' + state.inspectionResult.toLowerCase() + 'ed inspection exists as a document, but its record never mentions the word "Pilsen" (only a street address) — so even keyword/semantic search over documents is likely to miss it for this query.');
+  }
+  const keywordHits = state.ingested.filter(id => {
+    const d = DOCS.find(x => x.id === id);
+    const blob = JSON.stringify(d.fields) + (d.title || '');
+    return /pilsen/i.test(blob);
+  });
+  bullets.push('Retrieval for "Pilsen food business inspection ordinance" returns <b>documents, not an answer</b>: ' +
+    (keywordHits.length ? keywordHits.map(id => '<span class="chip" data-doc="' + id + '">' + id + '</span>').join(' ') : '<i>nothing ingested matches</i>') +
+    '. An LLM agent must then re-derive the connections from text — differently, potentially, on every run.');
+  document.getElementById('qr-current').innerHTML =
+    '<h5>Current model</h5><div style="color:var(--warn);font-weight:600;margin-bottom:0.3rem">Cannot answer this as a query.</div><ul>' +
+    bullets.map(b => '<li>' + b + '</li>').join('') + '</ul>';
+
+  // --- ontology model ---
+  const el = document.getElementById('qr-onto');
+  const missing = [];
+  const main = onto.businesses.find(b => !b.flagged);
+  const inFood = main && main.naics && main.naics.startsWith('7225');
+  const inPilsen = main && main.relations.some(r => r.rel === 'located_in' && r.obj === 'Pilsen');
+  const failRel = main && main.relations.find(r => r.rel === 'inspected_in');
+  const failed = failRel && state.inspectionResult === 'Fail';
+  const reg = onto.others.reg;
+  const regApplies = reg && reg.appliesToFood && inFood;
+
+  if (!main) missing.push('no Business entity exists yet — ingest the license (or any named record)');
+  else {
+    if (!inFood) missing.push('no <code>has_type</code> fact (food NAICS) — ingest the license');
+    if (!inPilsen) missing.push('no <code>located_in</code> Pilsen fact — ingest the license');
+    if (!failRel) missing.push('no <code>inspected_in</code> fact — ingest the inspection');
+    else if (!failed) missing.push('the inspection result is <b>Pass</b>, so the failed-inspection condition is not met');
+    if (!reg) missing.push('no pending Regulation entity — ingest the ordinance');
+    else if (!regApplies) missing.push('the ordinance\'s <code>applies_to</code> cannot be joined without the business\'s NAICS type');
+  }
+
+  if (!missing.length) {
+    el.innerHTML = '<h5>Ontology model</h5><div class="ok-text" style="font-weight:600;margin-bottom:0.3rem">1 result — deterministic, same answer every run.</div>' +
+      '<div class="answer-card"><b>' + esc(main.canonical) + '</b> <code style="font-size:0.85em">' + main.id + '</code>' +
+      '<div class="chain">' +
+      main.id + ' —has_type→ NAICS 722513 <span class="chip" data-doc="d-license">d-license</span><br>' +
+      main.id + ' —located_in→ Pilsen <span class="chip" data-doc="d-license">d-license</span><br>' +
+      'insp:2599301 (Fail) —inspected_in→ ' + main.id + ' <span class="chip" data-doc="d-inspection">d-inspection</span><br>' +
+      'reg:O2026-417 (Pending) —applies_to→ NAICS 7225* <span class="chip" data-doc="d-ord">d-ord</span>' +
+      '</div></div>' +
+      '<div style="margin-top:0.5rem;color:var(--muted)">Every hop in the chain is a stored, typed fact with evidence. Flip the inspection to Pass above and re-run: the result disappears, for a stated reason.</div>';
+  } else {
+    el.innerHTML = '<h5>Ontology model</h5><div style="font-weight:600;margin-bottom:0.3rem">0 results — <span style="font-weight:400">and it can say exactly why:</span></div>' +
+      '<ul>' + missing.map(m => '<li>' + m + '</li>').join('') + '</ul>' +
+      '<div style="margin-top:0.4rem;color:var(--muted)">An empty answer with stated missing links is still an answer. The current model can\'t even produce that.</div>';
+  }
+  wireChips();
+}
+
+/* ============================================================
+   wiring + render cycle
+   ============================================================ */
+function wireChips() {
+  document.querySelectorAll('.chip[data-doc]').forEach(chip => {
+    chip.onclick = () => {
+      const card = document.getElementById('card-' + chip.dataset.doc);
+      if (!card) return;
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card.classList.add('flash');
+      setTimeout(() => card.classList.remove('flash'), 1600);
+    };
+  });
+}
+
+function renderModels() {
+  const cur = computeCurrent();
+  const onto = computeOntology();
+  // drop stale selections
+  if (state.selectedCurrent && !cur.nodes.some(n => n.key === state.selectedCurrent)) state.selectedCurrent = null;
+  renderCurrentSvg(cur);
+  renderOntoSvg(onto);
+  renderCurrentInspector(cur);
+  renderOntoInspector(onto);
+  renderNotesAndStats(cur, onto);
+  renderLog(onto);
+  document.getElementById('query-results').hidden = true;
+
+  document.querySelectorAll('#svg-current .gnode').forEach(g =>
+    g.addEventListener('click', () => { state.selectedCurrent = g.dataset.key; renderModels(); }));
+  document.querySelectorAll('#svg-onto .gnode').forEach(g =>
+    g.addEventListener('click', () => { state.selectedOnto = g.dataset.key; renderModels(); }));
+  wireChips();
+}
+
+function renderAll() { renderDocs(); renderModels(); }
+
+document.getElementById('btn-ingest-all').addEventListener('click', () => {
+  DOCS.forEach(d => { if (!state.ingested.includes(d.id)) state.ingested.push(d.id); });
+  renderAll();
+});
+document.getElementById('btn-reset').addEventListener('click', () => { state = freshState(); renderAll(); });
+document.getElementById('btn-run-query').addEventListener('click', runQuery);
+
+renderAll();
+</script>
+</body>
+</html>

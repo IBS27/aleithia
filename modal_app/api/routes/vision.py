@@ -129,7 +129,7 @@ async def vision_streetscape(neighborhood: str):
             continue
 
     if analysis_count == 0:
-        return {"counts": None, "indicators": None, "analysis_count": 0}
+        return {"neighborhood": neighborhood, "counts": None, "indicators": None, "analysis_count": 0}
 
     total_storefronts = totals["storefront_open"] + totals["storefront_closed"] + totals["for_lease_sign"]
     if total_storefronts > 0:
@@ -143,6 +143,7 @@ async def vision_streetscape(neighborhood: str):
     growth_signal = "active" if totals["construction"] > 0 else "stable"
 
     return {
+        "neighborhood": neighborhood,
         "counts": totals,
         "indicators": {
             "vacancy_signal": vacancy_signal,

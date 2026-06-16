@@ -16,6 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -33,6 +34,7 @@ DEFAULT_RAW_PREFIX = "raw"
 DEFAULT_PROCESSED_PREFIX = "processed"
 DEFAULT_OBJECT_STORAGE_REGION = "us-east-1"
 DEFAULT_MOUNTED_VOLUME_ROOT = "/data"
+DEFAULT_SHARED_DATA_READ_CONCURRENCY = 8
 
 _LAST_LOGGED_LAYOUT: tuple[str, str] | None = None
 _VOLUME: modal.Volume | None = None
@@ -229,6 +231,25 @@ class ModalVolumeAccessor:
         parsed_entries = [self._entry_from_modal(entry) for entry in entries]
         return [entry for entry in parsed_entries if entry is not None]
 
+    def list_entries_with_name_prefix(
+        self,
+        relative_path: str,
+        *,
+        name_prefix: str,
+        recursive: bool = False,
+        max_entries: int | None = None,
+    ) -> list[SharedFileEntry]:
+        safe_prefix = PurePosixPath(str(name_prefix or "").lstrip("/")).name
+        entries = self.list_entries(relative_path, recursive=recursive)
+        matched: list[SharedFileEntry] = []
+        for entry in entries:
+            if safe_prefix and not PurePosixPath(entry.path).name.startswith(safe_prefix):
+                continue
+            matched.append(entry)
+            if max_entries is not None and len(matched) >= max_entries:
+                break
+        return matched
+
     def read_bytes(self, relative_path: str) -> bytes:
         normalized = _normalize_relative_path(relative_path)
         chunks = []
@@ -286,6 +307,30 @@ class MountedVolumeAccessor:
         iterator = directory.rglob("*") if recursive else directory.iterdir()
         entries = [self._entry_from_path(path) for path in iterator]
         return [entry for entry in entries if entry is not None]
+
+    def list_entries_with_name_prefix(
+        self,
+        relative_path: str,
+        *,
+        name_prefix: str,
+        recursive: bool = False,
+        max_entries: int | None = None,
+    ) -> list[SharedFileEntry]:
+        directory = self._full_path(relative_path)
+        if not directory.exists() or not directory.is_dir():
+            return []
+        safe_prefix = PurePosixPath(str(name_prefix or "").lstrip("/")).name
+        pattern = f"{safe_prefix}*" if safe_prefix else "*"
+        iterator = directory.rglob(pattern) if recursive else directory.glob(pattern)
+        entries: list[SharedFileEntry] = []
+        for path in iterator:
+            entry = self._entry_from_path(path)
+            if entry is None:
+                continue
+            entries.append(entry)
+            if max_entries is not None and len(entries) >= max_entries:
+                break
+        return entries
 
     def read_bytes(self, relative_path: str) -> bytes:
         return self._full_path(relative_path).read_bytes()
@@ -548,10 +593,49 @@ class S3ObjectStorageAccessor:
         return SharedFileEntry(path=normalized, is_file=False, is_dir=True, mtime=0.0, size=0) if entries else None
 
     def list_entries(self, relative_path: str, *, recursive: bool = False) -> list[SharedFileEntry]:
+        return self._list_entries(
+            relative_path,
+            name_prefix="",
+            recursive=recursive,
+            max_entries=None,
+        )
+
+    def list_entries_with_name_prefix(
+        self,
+        relative_path: str,
+        *,
+        name_prefix: str,
+        recursive: bool = False,
+        max_entries: int | None = None,
+    ) -> list[SharedFileEntry]:
+        """List entries whose object names start with a literal prefix.
+
+        Public-data request paths need dataset-specific files such as
+        ``public-food_inspections-*``. On object storage, pushing that literal
+        prefix into ListObjectsV2 avoids listing every public-data object first.
+        """
+        return self._list_entries(
+            relative_path,
+            name_prefix=name_prefix,
+            recursive=recursive,
+            max_entries=max_entries,
+        )
+
+    def _list_entries(
+        self,
+        relative_path: str,
+        *,
+        name_prefix: str,
+        recursive: bool,
+        max_entries: int | None,
+    ) -> list[SharedFileEntry]:
         normalized = _normalize_relative_path(relative_path)
         prefix_key = self._object_key(normalized)
         if prefix_key:
             prefix_key = f"{prefix_key.rstrip('/')}/"
+        name_prefix = str(name_prefix or "").lstrip("/")
+        if name_prefix:
+            prefix_key = f"{prefix_key}{name_prefix}"
 
         entries: list[SharedFileEntry] = []
         token = ""
@@ -559,6 +643,11 @@ class S3ObjectStorageAccessor:
             query = {"list-type": "2", "prefix": prefix_key}
             if not recursive:
                 query["delimiter"] = "/"
+            if max_entries is not None:
+                remaining = max_entries - len(entries)
+                if remaining <= 0:
+                    break
+                query["max-keys"] = str(max(1, min(1000, remaining)))
             if token:
                 query["continuation-token"] = token
             try:
@@ -716,16 +805,27 @@ def _get_volume() -> modal.Volume:
     return _VOLUME
 
 
-def _get_accessor() -> SharedDataAccessor:
+def shared_data_backend() -> str:
     backend = os.getenv("ALEITHIA_SHARED_DATA_BACKEND", "modal").strip().lower()
     if backend in {"", "modal", "modal-volume", "volume"}:
+        return "modal"
+    if backend in {"mounted", "mount", "filesystem", "fs"}:
+        return "mounted"
+    if backend in {"s3", "r2", "gcs", "object", "object-storage"}:
+        return "s3"
+    return backend
+
+
+def _get_accessor() -> SharedDataAccessor:
+    backend = shared_data_backend()
+    if backend == "modal":
         mounted_root = Path(os.getenv("ALEITHIA_MOUNTED_VOLUME_ROOT", DEFAULT_MOUNTED_VOLUME_ROOT))
         if (mounted_root / DEFAULT_RAW_PREFIX).exists() and (mounted_root / DEFAULT_PROCESSED_PREFIX).exists():
             return MountedVolumeAccessor(mounted_root)
         return ModalVolumeAccessor(_get_volume())
-    if backend in {"mounted", "mount", "filesystem", "fs"}:
+    if backend == "mounted":
         return MountedVolumeAccessor(os.getenv("ALEITHIA_MOUNTED_VOLUME_ROOT", DEFAULT_MOUNTED_VOLUME_ROOT))
-    if backend in {"s3", "r2", "gcs", "object", "object-storage"}:
+    if backend == "s3":
         return S3ObjectStorageAccessor.from_env()
     raise ValueError(
         "Unsupported ALEITHIA_SHARED_DATA_BACKEND="
@@ -1099,18 +1199,45 @@ def load_json_docs_from_paths(
     limit: int | None = None,
     on_error: Callable[[Path | SharedDataPath, Exception], None] | None = None,
 ) -> list[dict]:
-    docs: list[dict] = []
-    for json_file in paths:
+    path_list = list(paths)
+
+    def _load_one(json_file: Path | SharedDataPath) -> dict | None:
         try:
             raw_bytes = read_file_bytes(json_file, default=None)
             if raw_bytes is None:
-                continue
+                return None
             parsed = json.loads(raw_bytes.decode("utf-8"))
         except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
             if on_error is not None:
                 on_error(json_file, exc)
-            continue
-        if not isinstance(parsed, dict):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    if any(isinstance(path, SharedDataPath) for path in path_list):
+        try:
+            max_workers = max(
+                1,
+                int(os.getenv(
+                    "ALEITHIA_SHARED_DATA_READ_CONCURRENCY",
+                    str(DEFAULT_SHARED_DATA_READ_CONCURRENCY),
+                )),
+            )
+        except ValueError:
+            max_workers = DEFAULT_SHARED_DATA_READ_CONCURRENCY
+        docs: list[dict] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for parsed in executor.map(_load_one, path_list):
+                if parsed is None:
+                    continue
+                docs.append(parsed)
+                if limit is not None and len(docs) >= limit:
+                    break
+        return docs
+
+    docs: list[dict] = []
+    for json_file in path_list:
+        parsed = _load_one(json_file)
+        if parsed is None:
             continue
         docs.append(parsed)
         if limit is not None and len(docs) >= limit:

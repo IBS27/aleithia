@@ -183,7 +183,7 @@ function scoreMarket(data: NeighborhoodData, profile: UserProfile, streetscape?:
     subs.push({ name: 'Review Activity', value: avg(velocities), raw: `${velocities.length} businesses tracked` })
   }
 
-  // Competitor saturation
+  // Competitor saturation from actual license records.
   const keywords = LICENSE_MAP[profile.business_type] || []
   const matchingLicenses = keywords.length > 0
     ? data.licenses.filter(l => {
@@ -191,8 +191,13 @@ function scoreMarket(data: NeighborhoodData, profile: UserProfile, streetscape?:
         return keywords.some(kw => desc.includes(kw))
       }).length
     : data.licenses.length
-  const saturation = clamp(100 - matchingLicenses * 8)
-  subs.push({ name: 'Competition Level', value: saturation, raw: `${matchingLicenses} direct competitors` })
+  if (data.licenses.length > 0) {
+    const saturation = matchingLicenses > 0 ? clamp(100 - matchingLicenses * 8) : 70
+    const raw = matchingLicenses > 0
+      ? `${matchingLicenses} direct competitors`
+      : `No direct competitors found among ${data.licenses.length} active licenses`
+    subs.push({ name: 'Competition Level', value: saturation, raw })
+  }
 
   // Review volume
   const reviewCount = (data.metrics?.review_count || reviews.length)
@@ -216,10 +221,18 @@ function scoreMarket(data: NeighborhoodData, profile: UserProfile, streetscape?:
   const score = Math.round(avg(subs.map(s => s.value)))
   const { signal: sig, signalLabel } = signal(score)
   const avgRating = ratings.length > 0 ? avg(ratings).toFixed(1) : '—'
+  const reviewClaim = ratings.length > 0
+    ? `Avg ${avgRating}/5 stars across ${ratings.length} businesses`
+    : reviews.length > 0
+      ? `${reviews.length} review listings without ratings`
+      : 'reviews not indexed'
+  const competitorClaim = data.licenses.length > 0
+    ? `${matchingLicenses} direct competitors among ${data.licenses.length} active licenses`
+    : 'license competition not indexed'
 
   return {
     id: 'market', name: 'Market', score, subMetrics: subs,
-    claim: `Avg ${avgRating}/5 stars across ${ratings.length} businesses, ${matchingLicenses} direct competitors — ${signalLabel} market conditions`,
+    claim: `${reviewClaim}, ${competitorClaim} — ${signalLabel} market conditions`,
     signal: sig, signalLabel,
     sources: ['reviews', 'business_licenses'],
     dataPoints: reviews.length + data.licenses.length,

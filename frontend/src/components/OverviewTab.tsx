@@ -324,9 +324,13 @@ function extractAllAdvantages(data: NeighborhoodData, profile: UserProfile): Sig
   }
 
   if (data.transit && data.transit.stations_nearby >= 2) {
+    const stationList = data.transit.station_names.slice(0, 3).join(', ')
+    const riderDetail = data.transit.total_daily_riders > 0
+      ? `~${Math.round(data.transit.total_daily_riders / 1000)}K daily riders`
+      : `${data.transit.stations_nearby} stations nearby`
     signals.push({
       title: 'Strong transit access',
-      detail: `${data.transit.stations_nearby} CTA stations (${data.transit.station_names.slice(0, 3).join(', ')}), ~${Math.round(data.transit.total_daily_riders / 1000)}K daily riders.`,
+      detail: `${data.transit.stations_nearby} CTA stations (${stationList}), ${riderDetail}.`,
     })
   }
 

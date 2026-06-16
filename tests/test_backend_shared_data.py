@@ -52,6 +52,47 @@ def test_modal_backend_uses_mounted_volume_accessor_when_data_root_exists(tmp_pa
     assert shared_data.load_json_file(paths.processed_dir / "summary.json") == {"ok": True}
 
 
+def test_mounted_accessor_lists_with_name_prefix(tmp_path) -> None:
+    write_json(tmp_path / "raw" / "public_data" / "2026-06-10" / "public-food_inspections-1.json", '{"id":"insp"}')
+    write_json(tmp_path / "raw" / "public_data" / "2026-06-10" / "public-building_permits-1.json", '{"id":"permit"}')
+
+    accessor = shared_data.MountedVolumeAccessor(tmp_path)
+
+    entries = accessor.list_entries_with_name_prefix(
+        "raw/public_data/2026-06-10",
+        name_prefix="public-food_inspections-",
+    )
+
+    assert [entry.name for entry in entries] == ["public-food_inspections-1.json"]
+
+
+def test_modal_volume_accessor_lists_with_name_prefix() -> None:
+    class FakeModalEntry:
+        def __init__(self, path: str, entry_type) -> None:
+            self.path = path
+            self.type = entry_type
+            self.mtime = 1
+            self.size = 10
+
+    class FakeVolume:
+        def listdir(self, relative_path: str, recursive: bool = False):
+            assert relative_path == "raw/public_data/2026-06-10"
+            assert recursive is False
+            return [
+                FakeModalEntry("raw/public_data/2026-06-10/public-food_inspections-1.json", shared_data.FileEntryType.FILE),
+                FakeModalEntry("raw/public_data/2026-06-10/public-building_permits-1.json", shared_data.FileEntryType.FILE),
+            ]
+
+    accessor = shared_data.ModalVolumeAccessor(FakeVolume())
+
+    entries = accessor.list_entries_with_name_prefix(
+        "raw/public_data/2026-06-10",
+        name_prefix="public-food_inspections-",
+    )
+
+    assert [entry.name for entry in entries] == ["public-food_inspections-1.json"]
+
+
 class _FakeObjectStorageResponse:
     def __init__(self, body: bytes = b"", *, status: int = 200, headers: dict[str, str] | None = None):
         self._body = body
@@ -164,6 +205,57 @@ def test_s3_object_storage_accessor_lists_reads_and_writes(monkeypatch) -> None:
     assert accessor.try_write_bytes_if_absent("locks/test.lock", b"other") is False
     accessor.delete_entry("locks/test.lock")
     assert "runtime/locks/test.lock" not in uploads
+
+
+def test_s3_object_storage_accessor_lists_with_name_prefix(monkeypatch) -> None:
+    observed_queries: list[dict[str, list[str]]] = []
+
+    def fake_urlopen(request, timeout=0):
+        del timeout
+        parsed = urllib.parse.urlparse(request.full_url)
+        query = urllib.parse.parse_qs(parsed.query)
+        observed_queries.append(query)
+        assert request.get_method() == "GET"
+        assert query.get("list-type") == ["2"]
+        assert query.get("prefix") == ["runtime/raw/public_data/2026-06-10/public-food_inspections-"]
+        assert query.get("delimiter") == ["/"]
+        assert query.get("max-keys") == ["3"]
+        body = """
+          <ListBucketResult>
+            <Contents>
+              <Key>runtime/raw/public_data/2026-06-10/public-food_inspections-1.json</Key>
+              <LastModified>2026-06-10T00:03:00Z</LastModified>
+              <Size>34</Size>
+            </Contents>
+            <Contents>
+              <Key>runtime/raw/public_data/2026-06-10/public-food_inspections-2.json</Key>
+              <LastModified>2026-06-10T00:04:00Z</LastModified>
+              <Size>35</Size>
+            </Contents>
+            <IsTruncated>false</IsTruncated>
+          </ListBucketResult>
+        """
+        return _FakeObjectStorageResponse(body.encode("utf-8"))
+
+    monkeypatch.setattr(shared_data.urllib.request, "urlopen", fake_urlopen)
+    accessor = shared_data.S3ObjectStorageAccessor(
+        bucket="alethia-data-portable",
+        prefix="runtime",
+        endpoint_url="https://objects.example",
+        timeout_seconds=1,
+    )
+
+    entries = accessor.list_entries_with_name_prefix(
+        "raw/public_data/2026-06-10",
+        name_prefix="public-food_inspections-",
+        max_entries=3,
+    )
+
+    assert observed_queries
+    assert [entry.name for entry in entries] == [
+        "public-food_inspections-1.json",
+        "public-food_inspections-2.json",
+    ]
 
 
 def test_shared_data_lock_uses_mounted_shared_path(tmp_path) -> None:

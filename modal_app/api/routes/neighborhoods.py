@@ -9,8 +9,13 @@ import asyncio
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from backend.shared_data import get_processed_data_dir, get_raw_data_dir, iter_files, load_json_file
-from modal_app.api.services.cctv import aggregate_timeseries_for_neighborhood, load_cctv_for_neighborhood, load_parking_for_neighborhood
+from backend.shared_data import get_processed_data_dir, iter_files, load_json_file, shared_data_backend
+from modal_app.api.services.cctv import (
+    aggregate_timeseries_for_neighborhood,
+    empty_cctv_payload,
+    load_cctv_for_neighborhood,
+    load_parking_for_neighborhood,
+)
 from modal_app.api.services.documents import (
     BUSINESS_TYPE_KEYWORDS,
     aggregate_demographics,
@@ -19,7 +24,11 @@ from modal_app.api.services.documents import (
     filter_by_neighborhood,
     filter_news_relevance,
     filter_politics_relevance,
+    is_placeholder_doc,
     is_count_only_text,
+    load_live_public_dataset_docs,
+    load_public_dataset_docs,
+    load_public_dataset_docs_for_neighborhood,
     load_docs,
     sanitize_business_type,
     valid_neighborhood_names,
@@ -29,7 +38,6 @@ from modal_app.api.services.tiktok import (
     TIKTOK_TARGET_COUNT,
     filter_tiktok_pool_for_profile,
     is_low_quality_tiktok_doc,
-    maybe_spawn_tiktok_profile_refresh,
     normalize_tiktok_doc,
     parse_timestamp_epoch,
     parse_view_count,
@@ -45,6 +53,100 @@ from modal_app.pipelines.reddit import (
 )
 
 router = APIRouter()
+
+NEIGHBORHOOD_DOC_LOAD_TIMEOUT_SECONDS = 45.0
+NEIGHBORHOOD_PUBLIC_DATASET_CACHE_TIMEOUT_SECONDS = 60.0
+NEIGHBORHOOD_CCTV_TIMEOUT_SECONDS = 45.0
+NEIGHBORHOOD_CCTV_TIMESERIES_TIMEOUT_SECONDS = 10.0
+NEIGHBORHOOD_TRANSIT_TIMEOUT_SECONDS = 90.0
+NEIGHBORHOOD_PARKING_TIMEOUT_SECONDS = 10.0
+
+
+def _uses_modal_volume_backend() -> bool:
+    return shared_data_backend() in {"modal", "mounted"}
+
+
+async def _reload_volume_if_needed(context: str) -> None:
+    if not _uses_modal_volume_backend():
+        return
+
+    try:
+        await volume.reload.aio()
+    except Exception as exc:
+        print(f"{context}_volume_reload_warning: {exc!r}")
+
+
+async def _load_docs_bounded(source: str, limit: int = 200) -> list[dict]:
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(load_docs, source, limit),
+            timeout=NEIGHBORHOOD_DOC_LOAD_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"neighborhood_docs_unavailable [{source}]: {exc!r}") from exc
+
+
+async def _load_public_dataset_docs_bounded(
+    dataset: str,
+    limit: int = 200,
+    *,
+    neighborhood: str | None = None,
+) -> list[dict]:
+    async def _run_loader(loader, timeout: float = NEIGHBORHOOD_DOC_LOAD_TIMEOUT_SECONDS):
+        return await asyncio.wait_for(
+            asyncio.to_thread(loader),
+            timeout=timeout,
+        )
+
+    if neighborhood:
+        try:
+            indexed_docs = await _run_loader(
+                lambda: load_public_dataset_docs_for_neighborhood(dataset, neighborhood, limit),
+                timeout=5.0,
+            )
+            if indexed_docs:
+                return indexed_docs
+        except Exception as index_exc:
+            print(f"neighborhood_public_dataset_index_unavailable [{dataset}]: {index_exc!r}")
+
+        try:
+            return await _run_loader(lambda: load_live_public_dataset_docs(dataset, neighborhood, limit))
+        except Exception as live_exc:
+            print(f"neighborhood_public_dataset_live_unavailable [{dataset}]: {live_exc!r}")
+
+            try:
+                return await _run_loader(
+                    lambda: load_public_dataset_docs(dataset, limit),
+                    timeout=NEIGHBORHOOD_PUBLIC_DATASET_CACHE_TIMEOUT_SECONDS,
+                )
+            except Exception as cached_exc:
+                print(
+                    f"neighborhood_public_dataset_unavailable [{dataset}]: "
+                    f"live={live_exc!r}; cached={cached_exc!r}"
+                )
+                return []
+
+    try:
+        return await _run_loader(lambda: load_public_dataset_docs(dataset, limit))
+    except Exception as exc:
+        print(f"neighborhood_public_dataset_unavailable [{dataset}]: {exc!r}")
+        return []
+
+
+def _dedupe_docs_by_identity(docs: list[dict]) -> list[dict]:
+    deduped: list[dict] = []
+    seen: set[str] = set()
+    for doc in docs:
+        doc_id = str(doc.get("id", "") or "").strip()
+        if not doc_id:
+            title = str(doc.get("title", "") or "").strip().lower()
+            content = str(doc.get("content", "") or "").strip().lower()[:160]
+            doc_id = f"fp:{title}|{content}"
+        if doc_id in seen:
+            continue
+        seen.add(doc_id)
+        deduped.append(doc)
+    return deduped
 
 
 @router.get("/brief/{neighborhood}")
@@ -126,34 +228,52 @@ async def neighborhood(name: str, business_type: str = ""):
                 span.set_attribute("error", f"Unknown neighborhood: {name}")
             return JSONResponse({"error": f"Unknown neighborhood: {name}"}, status_code=404)
 
-        public_docs = load_docs("public_data", limit=500)
-        nb_docs = filter_by_neighborhood(public_docs, name)
-        inspections = []
-        permits = []
-        licenses = []
-        for doc in nb_docs:
-            dataset = doc.get("metadata", {}).get("dataset", "")
-            if dataset == "food_inspections":
-                inspections.append(doc)
-            elif dataset == "building_permits":
-                permits.append(doc)
-            elif dataset == "business_licenses":
-                licenses.append(doc)
+        (
+            inspection_pool,
+            permit_pool,
+            license_pool,
+            all_news,
+            all_politics,
+            all_reddit,
+            all_reviews,
+            all_realestate,
+            tiktok_raw_docs,
+            all_federal,
+        ) = await asyncio.gather(
+            _load_public_dataset_docs_bounded("food_inspections", 120, neighborhood=name),
+            _load_public_dataset_docs_bounded("building_permits", 120, neighborhood=name),
+            _load_public_dataset_docs_bounded("business_licenses", 120, neighborhood=name),
+            _load_docs_bounded("news", 32),
+            _load_docs_bounded("politics", 32),
+            _load_docs_bounded("reddit", 32),
+            _load_docs_bounded("reviews", 32),
+            _load_docs_bounded("realestate", 32),
+            _load_docs_bounded("tiktok", 48),
+            _load_docs_bounded("federal_register", 32),
+        )
 
-        all_news = load_docs("news")
-        all_politics = load_docs("politics")
+        all_news = [doc for doc in all_news if not is_placeholder_doc(doc)]
+        all_politics = [doc for doc in all_politics if not is_placeholder_doc(doc)]
+        all_reddit = [doc for doc in all_reddit if not is_placeholder_doc(doc)]
+        all_reviews = [doc for doc in all_reviews if not is_placeholder_doc(doc)]
+        all_realestate = [doc for doc in all_realestate if not is_placeholder_doc(doc)]
+        tiktok_raw_docs = [doc for doc in tiktok_raw_docs if not is_placeholder_doc(doc)]
+        all_federal = [doc for doc in all_federal if not is_placeholder_doc(doc)]
+
+        inspections = filter_by_neighborhood(inspection_pool, name)
+        permits = filter_by_neighborhood(permit_pool, name)
+        licenses = filter_by_neighborhood(license_pool, name)
+
         news_docs = filter_by_neighborhood(all_news, name)
         if news_docs:
             news_docs = filter_news_relevance(news_docs, business_type, name)
-        politics_docs = filter_politics_relevance(filter_by_neighborhood(all_politics, name), business_type)
+        politics_docs = _dedupe_docs_by_identity(
+            filter_politics_relevance(filter_by_neighborhood(all_politics, name), business_type)
+        )
 
-        all_reddit = load_docs("reddit")
-        all_reviews = load_docs("reviews")
-        all_realestate = load_docs("realestate")
-        all_tiktok = [normalize_tiktok_doc(doc) for doc in load_docs("tiktok")]
+        all_tiktok = [normalize_tiktok_doc(doc) for doc in tiktok_raw_docs]
         all_tiktok = [doc for doc in all_tiktok if not is_low_quality_tiktok_doc(doc)]
         all_tiktok_profile = filter_tiktok_pool_for_profile(all_tiktok, business_type)
-        all_federal = load_docs("federal_register")
 
         reddit_docs = rank_reddit_docs(
             filter_by_neighborhood(all_reddit, name),
@@ -164,28 +284,18 @@ async def neighborhood(name: str, business_type: str = ""):
         reviews_docs = filter_by_neighborhood(all_reviews, name)
         realestate_docs = filter_by_neighborhood(all_realestate, name)
         tiktok_docs = rank_tiktok_docs(all_tiktok_profile, business_type, name)
-        federal_docs = filter_politics_relevance(filter_by_neighborhood(all_federal, name), business_type)
+        federal_docs = _dedupe_docs_by_identity(
+            filter_politics_relevance(filter_by_neighborhood(all_federal, name), business_type)
+        )
         profile_count, local_count, freshest_epoch = profile_tiktok_freshness(all_tiktok_profile, business_type, name)
-        try:
-            tiktok_refresh = await asyncio.wait_for(
-                maybe_spawn_tiktok_profile_refresh(
-                    neighborhood=name,
-                    business_type=business_type or "small business",
-                    profile_count=profile_count,
-                    local_count=local_count,
-                    freshest_epoch=freshest_epoch,
-                ),
-                timeout=1.5,
-            )
-        except Exception as exc:
-            print(f"tiktok_refresh_error: {exc}")
-            tiktok_refresh = {
-                "requested": False,
-                "reason": f"refresh_error:{exc}",
-                "cooldown_seconds_remaining": 0,
-                "profile_docs": profile_count,
-                "local_docs": local_count,
-            }
+        tiktok_refresh = {
+            "requested": False,
+            "reason": "profile_route_read_only",
+            "cooldown_seconds_remaining": 0,
+            "profile_docs": profile_count,
+            "local_docs": local_count,
+            "freshest_epoch": freshest_epoch,
+        }
 
         traffic_docs: list[dict] = []
 
@@ -211,45 +321,63 @@ async def neighborhood(name: str, business_type: str = ""):
                 },
             )
 
-        if not reddit_docs and all_reddit:
-            reddit_docs = rank_reddit_docs(
-                all_reddit,
-                business_type=business_type or "small business",
-                neighborhood=name,
-                min_score=0,
-            )[:10]
-
-        if not reviews_docs and all_reviews:
-            if business_type:
-                typed = filter_by_business_type(all_reviews, business_type)
-                reviews_docs = typed[:10] if typed else all_reviews[:5]
-            else:
-                reviews_docs = all_reviews[:5]
-
-        if not realestate_docs and all_realestate:
-            realestate_docs = all_realestate[:5]
         if not federal_docs and all_federal:
-            federal_docs = filter_politics_relevance(all_federal, business_type)[:10]
-        if not news_docs and all_news:
-            news_docs = filter_news_relevance(all_news, business_type, name)[:10]
-        if not politics_docs and all_politics:
-            politics_docs = filter_politics_relevance(all_politics, business_type)[:10]
+            federal_docs = _dedupe_docs_by_identity(filter_politics_relevance(all_federal, business_type))[:10]
 
         failed = sum(1 for inspection in inspections if inspection.get("metadata", {}).get("raw_record", {}).get("results") in ("Fail", "Out of Business"))
         passed = sum(1 for inspection in inspections if inspection.get("metadata", {}).get("raw_record", {}).get("results") == "Pass")
         computed_metrics = compute_metrics(name, inspections, permits, licenses, news_docs, politics_docs, reviews_docs)
         demographics = aggregate_demographics(name)
 
-        cctv_analysis = await load_cctv_for_neighborhood(name)
-        if cctv_analysis.get("cameras"):
-            cam_ids = [camera["camera_id"] for camera in cctv_analysis["cameras"]]
-            ts = await aggregate_timeseries_for_neighborhood(name, camera_ids=cam_ids)
-            if ts.get("hours"):
-                cctv_analysis["peak_hour"] = ts["peak_hour"]
-                cctv_analysis["peak_pedestrians"] = ts["peak_pedestrians"]
+        async def _load_neighborhood_cctv() -> dict:
+            try:
+                cctv_payload = await asyncio.wait_for(
+                    load_cctv_for_neighborhood(name),
+                    timeout=NEIGHBORHOOD_CCTV_TIMEOUT_SECONDS,
+                )
+            except Exception as exc:
+                print(f"neighborhood_cctv_unavailable: {exc}")
+                cctv_payload = empty_cctv_payload()
+            if cctv_payload.get("cameras"):
+                cam_ids = [camera["camera_id"] for camera in cctv_payload["cameras"]]
+                try:
+                    ts = await asyncio.wait_for(
+                        aggregate_timeseries_for_neighborhood(name, camera_ids=cam_ids),
+                        timeout=NEIGHBORHOOD_CCTV_TIMESERIES_TIMEOUT_SECONDS,
+                    )
+                except Exception as exc:
+                    print(f"neighborhood_cctv_timeseries_unavailable: {exc}")
+                    ts = {}
+                if ts.get("hours"):
+                    cctv_payload["peak_hour"] = ts["peak_hour"]
+                    cctv_payload["peak_pedestrians"] = ts["peak_pedestrians"]
+            return cctv_payload
 
-        transit_data = compute_transit_score(name)
-        parking_data = load_parking_for_neighborhood(name)
+        async def _load_neighborhood_transit() -> dict:
+            try:
+                return await asyncio.wait_for(
+                    asyncio.to_thread(compute_transit_score, name),
+                    timeout=NEIGHBORHOOD_TRANSIT_TIMEOUT_SECONDS,
+                )
+            except Exception as exc:
+                print(f"neighborhood_transit_unavailable: {exc}")
+                return {"stations_nearby": 0, "total_daily_riders": 0, "transit_score": 0, "station_names": []}
+
+        async def _load_neighborhood_parking() -> dict | None:
+            try:
+                return await asyncio.wait_for(
+                    asyncio.to_thread(load_parking_for_neighborhood, name),
+                    timeout=NEIGHBORHOOD_PARKING_TIMEOUT_SECONDS,
+                )
+            except Exception as exc:
+                print(f"neighborhood_parking_unavailable: {exc}")
+                return None
+
+        cctv_analysis, transit_data, parking_data = await asyncio.gather(
+            _load_neighborhood_cctv(),
+            _load_neighborhood_transit(),
+            _load_neighborhood_parking(),
+        )
 
         if span:
             span.set_attribute(
@@ -577,7 +705,7 @@ async def social_trends(neighborhood: str, business_type: str = ""):
             span.set_attribute("input.value", neighborhood)
             span.set_attribute("social_trends.business_type", business_type or "general")
 
-        volume.reload()
+        await _reload_volume_if_needed("social_trends")
         if neighborhood.lower() not in valid_neighborhood_names():
             return JSONResponse({"error": f"Unknown neighborhood: {neighborhood}"}, status_code=404)
 
@@ -754,10 +882,10 @@ async def social_trends(neighborhood: str, business_type: str = ""):
 async def get_trends(neighborhood: str):
     import hashlib
 
-    volume.reload()
+    await _reload_volume_if_needed("trends")
     baseline_path = get_processed_data_dir() / "trends" / "baselines" / f"{neighborhood}.json"
     baseline = load_json_file(baseline_path, default=None)
-    if not isinstance(baseline, dict):
+    if not isinstance(baseline, dict) or not isinstance(baseline.get("hours"), list):
         seed = int(hashlib.md5(neighborhood.encode()).hexdigest()[:8], 16)
         rng_base = (seed % 10) + 5
         baseline = {
@@ -772,12 +900,21 @@ async def get_trends(neighborhood: str):
             ]
         }
 
-    hours = baseline["hours"]
+    hours = baseline.get("hours", [])
+    if not isinstance(hours, list):
+        hours = []
     recent = hours[18:24]
     prior = hours[12:18]
 
     def avg_field(entries, field):
-        vals = [entry[field] for entry in entries]
+        vals = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                vals.append(float(entry.get(field, 0) or 0))
+            except (TypeError, ValueError):
+                continue
         return sum(vals) / len(vals) if vals else 0
 
     recent_peds = avg_field(recent, "pedestrians")
@@ -787,39 +924,42 @@ async def get_trends(neighborhood: str):
     prior_cong = avg_field(prior, "congestion")
     cong_change = round(((recent_cong - prior_cong) / max(prior_cong, 0.01)) * 100)
 
-    news_dir = get_raw_data_dir() / "news"
     news_count = 0
-    for file_path in iter_files(news_dir, pattern="*.json")[:200]:
-        try:
-            doc = load_json_file(file_path, default=None)
-            if not isinstance(doc, dict):
-                continue
-            geo = doc.get("geo", {})
-            if geo.get("neighborhood", "").lower() == neighborhood.lower():
-                news_count += 1
-        except Exception:
-            continue
+    try:
+        news_docs = await asyncio.wait_for(
+            asyncio.to_thread(load_docs, "news", 200),
+            timeout=8.0,
+        )
+    except Exception as exc:
+        print(f"trends_news_unavailable: {exc!r}")
+        news_docs = []
+    for doc in news_docs:
+        geo = doc.get("geo", {}) if isinstance(doc, dict) else {}
+        if geo.get("neighborhood", "").lower() == neighborhood.lower():
+            news_count += 1
     news_trend = "up" if news_count > 5 else ("stable" if news_count > 2 else "down")
 
     anomalies = []
-    traffic_dir = get_raw_data_dir() / "traffic"
-    for date_dir in sorted((path for path in traffic_dir.iterdir() if path.is_dir()), reverse=True)[:1]:
-        for file_path in iter_files(date_dir, recursive=False, pattern="*.json"):
-            try:
-                doc = load_json_file(file_path, default=None)
-                if not isinstance(doc, dict):
-                    continue
-                meta = doc.get("metadata", {})
-                if meta.get("is_anomaly") and doc.get("geo", {}).get("neighborhood", "").lower() == neighborhood.lower():
-                    anomalies.append(
-                        {
-                            "type": meta.get("severity", "info"),
-                            "description": meta.get("congestion_level", "anomaly detected"),
-                            "road": doc.get("title", "Unknown road"),
-                        }
-                    )
-            except Exception:
-                continue
+    try:
+        traffic_docs = await asyncio.wait_for(
+            asyncio.to_thread(load_docs, "traffic", 250),
+            timeout=8.0,
+        )
+    except Exception as exc:
+        print(f"trends_traffic_unavailable: {exc!r}")
+        traffic_docs = []
+    for doc in traffic_docs:
+        if not isinstance(doc, dict):
+            continue
+        meta = doc.get("metadata", {})
+        if meta.get("is_anomaly") and doc.get("geo", {}).get("neighborhood", "").lower() == neighborhood.lower():
+            anomalies.append(
+                {
+                    "type": meta.get("severity", "info"),
+                    "description": meta.get("congestion_level", "anomaly detected"),
+                    "road": doc.get("title", "Unknown road"),
+                }
+            )
 
     def trend_dir(change_pct):
         if change_pct > 5:

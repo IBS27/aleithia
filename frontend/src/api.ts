@@ -6,6 +6,10 @@ export const API_BASE = import.meta.env.VITE_MODAL_URL || '/api/data'
 export const BACKEND_API_BASE = import.meta.env.VITE_BACKEND_URL || '/api/data'
 const LOCAL_USER_ID_KEY = 'aleithia.localUserId'
 const BACKEND_METADATA_TIMEOUT_MS = 10_000
+const MODAL_RUNTIME_TIMEOUT_MS = 15_000
+const MODAL_NEIGHBORHOOD_TIMEOUT_MS = 150_000
+const MODAL_TRENDS_TIMEOUT_MS = 60_000
+const MODAL_SOCIAL_TIMEOUT_MS = 90_000
 
 function getLocalUserId(): string {
   if (typeof window === 'undefined') {
@@ -184,13 +188,23 @@ export async function fetchPipelineStatus(): Promise<PipelineStatus> {
   let gpuMetrics: GpuMetrics | null = null
   if (import.meta.env.VITE_MODAL_URL) {
     try {
-      runtimeStatus = await fetchJSON<ModalRuntimeStatus>('/status')
+      runtimeStatus = await fetchBaseJSON<ModalRuntimeStatus>(
+        API_BASE,
+        '/status',
+        undefined,
+        { timeoutMs: MODAL_RUNTIME_TIMEOUT_MS },
+      )
     } catch {
       runtimeStatus = null
     }
 
     try {
-      gpuMetrics = await fetchJSON<GpuMetrics>('/gpu-metrics')
+      gpuMetrics = await fetchBaseJSON<GpuMetrics>(
+        API_BASE,
+        '/gpu-metrics',
+        undefined,
+        { timeoutMs: MODAL_RUNTIME_TIMEOUT_MS },
+      )
     } catch {
       gpuMetrics = null
     }
@@ -227,7 +241,12 @@ export interface GpuMetricsEntry {
 export type GpuMetrics = Record<string, GpuMetricsEntry>
 
 export async function fetchGpuMetrics(): Promise<GpuMetrics> {
-  return fetchJSON<GpuMetrics>('/gpu-metrics')
+  return fetchBaseJSON<GpuMetrics>(
+    API_BASE,
+    '/gpu-metrics',
+    undefined,
+    { timeoutMs: MODAL_RUNTIME_TIMEOUT_MS },
+  )
 }
 
 export interface TrendData {
@@ -238,16 +257,32 @@ export interface TrendData {
 }
 
 export async function fetchTrends(neighborhood: string): Promise<TrendData> {
-  return fetchJSON<TrendData>(`/trends/${encodeURIComponent(neighborhood)}`)
+  return fetchBaseJSON<TrendData>(
+    API_BASE,
+    `/trends/${encodeURIComponent(neighborhood)}`,
+    undefined,
+    { timeoutMs: MODAL_TRENDS_TIMEOUT_MS },
+  )
 }
 
 export const api = {
   sources: () => fetchBackendJSON<SourceSnapshot>('/sources', undefined, { timeoutMs: BACKEND_METADATA_TIMEOUT_MS }),
   geo: () => fetchBackendJSON<GeoJSON>('/geo'),
   summary: () => fetchBackendJSON<Record<string, unknown>>('/summary', undefined, { timeoutMs: BACKEND_METADATA_TIMEOUT_MS }),
-  neighborhood: (name: string, businessType?: string) => {
+  neighborhood: async (name: string, businessType?: string) => {
     const qs = businessType ? `?business_type=${encodeURIComponent(businessType)}` : ''
-    return fetchJSON<NeighborhoodData>(`/neighborhood/${encodeURIComponent(name)}${qs}`)
+    const path = `/neighborhood/${encodeURIComponent(name)}${qs}`
+
+    if (!import.meta.env.VITE_MODAL_URL) {
+      return fetchJSON<NeighborhoodData>(path)
+    }
+
+    return fetchBaseJSON<NeighborhoodData>(
+      API_BASE,
+      path,
+      undefined,
+      { timeoutMs: MODAL_NEIGHBORHOOD_TIMEOUT_MS },
+    )
   },
   inspections: (opts?: { neighborhood?: string; result?: string }) => {
     const params = new URLSearchParams()
@@ -347,7 +382,12 @@ export const api = {
 
   socialTrends: (neighborhood: string, businessType?: string) => {
     const qs = businessType ? `?business_type=${encodeURIComponent(businessType)}` : ''
-    return fetchJSON<SocialTrendsData>(`/social-trends/${encodeURIComponent(neighborhood)}${qs}`)
+    return fetchBaseJSON<SocialTrendsData>(
+      API_BASE,
+      `/social-trends/${encodeURIComponent(neighborhood)}${qs}`,
+      undefined,
+      { timeoutMs: MODAL_SOCIAL_TIMEOUT_MS },
+    )
   },
 
   commandSynthesis: (snapshot: CommandAnalysisSnapshot) =>

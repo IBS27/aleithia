@@ -417,6 +417,18 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
     }
   }, [visibleTabKeys, activeTab])
 
+  const sessionState = error ? 'ERROR' : loading ? 'ANALYZING' : 'READY'
+  const sessionTone = error
+    ? 'text-red-400/75'
+    : loading
+      ? 'text-blue-400/70'
+      : 'text-emerald-400/70'
+  const sessionDot = error
+    ? 'bg-red-400'
+    : loading
+      ? 'bg-blue-400 animate-pulse'
+      : 'bg-emerald-400'
+
   return (
     <div className="h-screen flex flex-col bg-[#06080d]">
       {/* Top bar */}
@@ -452,9 +464,9 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
             >
               <span className="text-[9px] font-mono uppercase tracking-wider text-white/25">Session</span>
               <Timer running={loading} />
-              <span className={`flex items-center gap-1.5 text-[10px] font-mono ${loading ? 'text-blue-400/70' : 'text-emerald-400/70'}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-blue-400 animate-pulse' : 'bg-emerald-400'}`} />
-                {loading ? 'ANALYZING' : 'READY'}
+              <span className={`flex items-center gap-1.5 text-[10px] font-mono ${sessionTone}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${sessionDot}`} />
+                {sessionState}
               </span>
             </div>
             <div className="flex items-stretch">
@@ -510,7 +522,7 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
           )}
 
           {/* Tabs — segmented workspace navigation */}
-          <div className="flex gap-0 border-b border-white/[0.06] items-stretch">
+          {!error && <div className="flex gap-0 border-b border-white/[0.06] items-stretch">
             {tabs.map(tab => {
               const isActive = activeTab === tab.key
               return (
@@ -534,9 +546,9 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
                 </button>
               )
             })}
-          </div>
+          </div>}
 
-          {loading ? (
+          {error ? null : loading ? (
             <LoadingFlow neighborhood={profile.neighborhood} />
           ) : (
             <>
@@ -1037,10 +1049,19 @@ interface EvidenceEntry {
 
 function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
   const entries: EvidenceEntry[] = []
+  const seenIds = new Map<string, number>()
+  const nextId = (source: string, rawId: unknown, title: string) => {
+    const idText = String(rawId || '').trim()
+    const titleText = title.trim().toLowerCase().replace(/\s+/g, '-').slice(0, 80)
+    const base = `${source}-${idText || titleText || 'record'}`
+    const count = seenIds.get(base) || 0
+    seenIds.set(base, count + 1)
+    return count === 0 ? base : `${base}-${count + 1}`
+  }
 
   for (const n of data.news || []) {
     entries.push({
-      id: `news-${n.id}`,
+      id: nextId('news', n.id, n.title),
       title: n.title,
       snippet: (n.content || '').slice(0, 180),
       family: 'news',
@@ -1054,7 +1075,7 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
 
   for (const p of data.politics || []) {
     entries.push({
-      id: `politics-${p.id}`,
+      id: nextId('politics', p.id, p.title),
       title: p.title,
       snippet: (p.content || '').slice(0, 180),
       family: 'policy',
@@ -1069,7 +1090,7 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
 
   for (const r of data.federal_register || []) {
     entries.push({
-      id: `fed-${r.id}`,
+      id: nextId('federal', r.id, r.title),
       title: r.title,
       snippet: (r.content || '').slice(0, 180),
       family: 'policy',
@@ -1084,7 +1105,7 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
 
   for (const r of data.reddit || []) {
     entries.push({
-      id: `reddit-${r.id}`,
+      id: nextId('reddit', r.id, r.title),
       title: r.title,
       snippet: (r.content || '').slice(0, 180),
       family: 'community',
@@ -1099,7 +1120,7 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
 
   for (const t of data.tiktok || []) {
     entries.push({
-      id: `tiktok-${t.id}`,
+      id: nextId('tiktok', t.id, t.title || 'TikTok video'),
       title: t.title || 'TikTok video',
       snippet: (t.content || '').slice(0, 180),
       family: 'community',
@@ -1114,7 +1135,7 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
 
   for (const rv of data.reviews || []) {
     entries.push({
-      id: `review-${rv.id}`,
+      id: nextId('review', rv.id, rv.title),
       title: rv.title,
       snippet: ((rv.metadata?.categories as string[]) || []).join(', '),
       family: 'market',
@@ -1129,7 +1150,7 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
 
   for (const re of data.realestate || []) {
     entries.push({
-      id: `re-${re.id}`,
+      id: nextId('realestate', re.id, re.title),
       title: re.title,
       snippet: `${(re.metadata?.property_type as string) || ''} · ${(re.metadata?.size_sqft as number) || ''} sqft`,
       family: 'market',
@@ -1144,9 +1165,10 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
 
   for (const i of data.inspections || []) {
     const raw = i.metadata?.raw_record as Record<string, string> | undefined
+    const title = raw?.dba_name || i.title
     entries.push({
-      id: `insp-${i.id}`,
-      title: raw?.dba_name || i.title,
+      id: nextId('inspection', i.id, title),
+      title,
       snippet: `${raw?.inspection_type || 'Inspection'} — ${raw?.results || 'Unknown'}`,
       family: 'regulatory',
       source: 'inspections',
@@ -1160,9 +1182,10 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
 
   for (const p of data.permits || []) {
     const raw = p.metadata?.raw_record as Record<string, string> | undefined
+    const title = raw?.work_type || p.title
     entries.push({
-      id: `permit-${p.id}`,
-      title: raw?.work_type || p.title,
+      id: nextId('permit', p.id, title),
+      title,
       snippet: (raw?.work_description || '').slice(0, 180),
       family: 'regulatory',
       source: 'permits',

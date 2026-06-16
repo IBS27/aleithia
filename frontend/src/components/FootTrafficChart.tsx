@@ -27,6 +27,8 @@ export default function FootTrafficChart({ neighborhood, embedded }: Props) {
   }, [neighborhood])
 
   if (loading) {
+    if (embedded) return null
+
     return (
       <div className="border border-white/[0.06] bg-white/[0.02] p-4">
         <div className="text-[10px] font-mono text-white/20">Loading highway traffic timeseries...</div>
