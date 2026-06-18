@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 import httpx
 import modal
 
-from backend.shared_data import get_raw_data_dir
+from backend.shared_data import get_raw_data_dir, write_source_status
 from modal_app.common import SourceType, build_document, detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
@@ -209,6 +209,7 @@ async def _extract_pdf_text(pdf_url: str) -> str:
 @app.function(
     image=politics_image,
     volumes={"/data": volume},
+    secrets=[modal.Secret.from_name("alethia-secrets")],
     timeout=300,
     retries=modal.Retries(max_retries=2, backoff_coefficient=2.0),
 )
@@ -261,6 +262,7 @@ async def politics_ingester():
 
     if not new_docs:
         seen.save()
+        write_source_status("politics", documents_seen=len(all_docs), documents_written=0)
         await safe_volume_commit(volume, "politics")
         print("Politics ingester: no new documents")
         return 0
@@ -283,6 +285,7 @@ async def politics_ingester():
     await safe_queue_push(doc_queue, new_docs, "politics")
 
     seen.save()
+    write_source_status("politics", documents_seen=len(all_docs), documents_written=len(new_docs))
     await safe_volume_commit(volume, "politics")
     print(f"Politics ingester complete: {len(new_docs)} documents saved to {out_dir}")
     return len(new_docs)

@@ -21,6 +21,7 @@ from modal_app.api.services.cctv import (
     load_cctv_latest_index,
     load_parking_for_neighborhood,
 )
+from modal_app.common import safe_volume_reload
 from modal_app.runtime import ENABLE_CCTV_ANALYSIS
 from modal_app.volume import volume
 
@@ -62,7 +63,7 @@ async def cctv_latest():
 
 @router.get("/cctv/frame/{camera_id}")
 async def cctv_frame(camera_id: str):
-    volume.reload()
+    await safe_volume_reload(volume, "cctv_frame")
     frame_dirs = []
     if ENABLE_CCTV_ANALYSIS:
         frame_dirs.append((_processed_data_dir() / "cctv" / "annotated", "annotated"))
@@ -93,7 +94,7 @@ async def cctv_timeseries(neighborhood: str):
 
 @router.get("/vision/streetscape/{neighborhood}")
 async def vision_streetscape(neighborhood: str):
-    volume.reload()
+    await safe_volume_reload(volume, "vision_streetscape")
     analysis_dir = _processed_data_dir() / "vision" / "analysis"
     analysis_paths = iter_files(analysis_dir, recursive=False, pattern="*.json")
 
@@ -156,7 +157,7 @@ async def vision_streetscape(neighborhood: str):
 
 @router.get("/parking/latest")
 async def parking_latest():
-    volume.reload()
+    await safe_volume_reload(volume, "parking_latest")
     analysis_dir = _processed_data_dir() / "parking" / "analysis"
 
     latest_by_nb: dict[str, dict] = {}
@@ -185,7 +186,7 @@ async def parking_neighborhood(neighborhood: str):
 
 @router.get("/parking/annotated/{neighborhood}")
 async def parking_annotated(neighborhood: str):
-    volume.reload()
+    await safe_volume_reload(volume, "parking_annotated")
     slug = neighborhood.lower().replace(" ", "_")
     ann_path = _processed_data_dir() / "parking" / "annotated" / f"{slug}.jpg"
     content = read_file_bytes(ann_path, default=None)
@@ -204,7 +205,7 @@ async def vision_assess(neighborhood: str):
             status_code=503,
         )
 
-    volume.reload()
+    await safe_volume_reload(volume, "vision_assess")
     slug = neighborhood.lower().replace(" ", "_")
     frame_paths = []
 

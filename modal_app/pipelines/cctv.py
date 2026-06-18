@@ -23,8 +23,10 @@ from backend.shared_data import (
     iter_files,
     load_json_file,
     read_file_bytes,
+    shared_data_backend,
     write_file_bytes,
     write_json_file,
+    write_source_status,
 )
 from modal_app.common import (
     Document,
@@ -383,6 +385,7 @@ async def cctv_ingester():
     ])
 
     if not cameras:
+        write_source_status("cctv", state="empty", documents_seen=0, documents_written=0)
         print("CCTV ingester: no snapshots obtained")
         return 0
 
@@ -405,12 +408,24 @@ async def cctv_ingester():
     await safe_volume_commit(volume, "cctv")
 
     if not ENABLE_CCTV_ANALYSIS:
+        write_source_status(
+            "cctv",
+            documents_seen=len(cameras),
+            documents_written=len(cameras),
+            metadata={"analysis_enabled": False},
+        )
         print(f"CCTV ingester: {len(cameras)} cameras processed, analysis disabled")
         return len(cameras)
 
     # Spawn GPU batch analysis
     await analyze_cctv_batch.spawn.aio()
 
+    write_source_status(
+        "cctv",
+        documents_seen=len(cameras),
+        documents_written=len(cameras),
+        metadata={"analysis_enabled": True, "batch_analysis_spawned": True},
+    )
     print(f"CCTV ingester: {len(cameras)} cameras processed, batch analysis spawned")
     return len(cameras)
 
@@ -436,7 +451,8 @@ class TrafficAnalyzer:
     def load_model(self):
         import cv2
         from ultralytics import YOLO
-        volume.reload()  # Ensure latest frames from ingester are visible
+        if shared_data_backend() != "s3":
+            volume.reload()  # Ensure latest frames from ingester are visible
         try:
             cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_SILENT)
         except AttributeError:
@@ -709,6 +725,12 @@ async def analyze_cctv_batch():
         print(f"CCTV batch: latest index update failed: {e}")
 
     await safe_volume_commit(volume, "cctv")
+    write_source_status(
+        "cctv",
+        documents_seen=len(results),
+        documents_written=len(documents),
+        metadata={"analysis_enabled": True, "batch_analysis_complete": True},
+    )
     print(f"CCTV batch: analyzed {len(results)} frames, created {len(documents)} documents")
     return len(results)
 
@@ -757,10 +779,11 @@ def rebuild_cctv_latest_index(max_analysis_files: int = 50000, max_meta_days: in
         max_meta_days=max_meta_days,
     )
     stats = _update_cctv_latest_index(results, meta_by_camera)
-    try:
-        volume.commit()
-    except Exception as exc:
-        print(f"cctv index rebuild commit warning: {exc}")
+    if shared_data_backend() != "s3":
+        try:
+            volume.commit()
+        except Exception as exc:
+            print(f"cctv index rebuild commit warning: {exc}")
 
     with_geo = sum(
         1

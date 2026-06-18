@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 import httpx
 import modal
 
-from backend.shared_data import get_processed_data_dir, get_raw_data_dir, write_json_file
+from backend.shared_data import get_processed_data_dir, get_raw_data_dir, write_json_file, write_source_status
 from modal_app.common import (
     Document,
     SourceType,
@@ -254,6 +254,7 @@ async def traffic_ingester():
         all_raw_data.extend(traffic_data)
         print(f"TomTom: {len(traffic_data)} neighborhoods processed")
     else:
+        write_source_status("traffic", state="empty", documents_seen=0, documents_written=0)
         print("TomTom: No data retrieved (fallback used or API unavailable)")
         return 0
     
@@ -304,6 +305,7 @@ async def traffic_ingester():
     except Exception as e:
         print(f"Traffic queue push failed: {e}")
     
+    write_source_status("traffic", documents_seen=len(all_raw_data), documents_written=len(documents))
     await safe_volume_commit(volume, "traffic")
     print(f"Traffic ingester complete: {len(documents)} documents saved to {processed_dir}")
     

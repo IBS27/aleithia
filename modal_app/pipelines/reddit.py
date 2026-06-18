@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 import httpx
 import modal
 
-from backend.shared_data import get_raw_data_dir
+from backend.shared_data import get_raw_data_dir, write_source_status
 from modal_app.common import (
     REDDIT_SIGNAL_SUBREDDITS,
     REDDIT_SUBREDDITS,
@@ -763,6 +763,7 @@ async def _persist_reddit_docs(docs: list[dict], ingestion_mode: str) -> int:
     print(f"Reddit persist [{ingestion_mode}]: {len(docs)} received, {len(new_docs)} new")
     if not new_docs:
         seen.save()
+        write_source_status("reddit", documents_seen=len(docs), documents_written=0, metadata={"ingestion_mode": ingestion_mode})
         await safe_volume_commit(volume, "reddit")
         return 0
 
@@ -791,6 +792,12 @@ async def _persist_reddit_docs(docs: list[dict], ingestion_mode: str) -> int:
 
     await safe_queue_push(doc_queue, new_docs, f"reddit-{ingestion_mode}")
     seen.save()
+    write_source_status(
+        "reddit",
+        documents_seen=len(docs),
+        documents_written=len(new_docs),
+        metadata={"ingestion_mode": ingestion_mode},
+    )
     await safe_volume_commit(volume, "reddit")
     print(f"Reddit persist [{ingestion_mode}] complete: {len(new_docs)} saved to {out_dir}")
     return len(new_docs)

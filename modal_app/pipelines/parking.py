@@ -21,6 +21,7 @@ from backend.shared_data import (
     get_raw_data_dir,
     load_json_file,
     read_file_bytes,
+    shared_data_backend,
     write_file_bytes,
     write_json_file,
 )
@@ -201,7 +202,8 @@ class ParkingAnalyzer:
         from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
         from ultralytics import YOLO
 
-        volume.reload()
+        if shared_data_backend() != "s3":
+            volume.reload()
 
         # Stage 1: SegFormer-b5 for semantic segmentation
         model_name = "nvidia/segformer-b5-finetuned-cityscapes-1024-1024"

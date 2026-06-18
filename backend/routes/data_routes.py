@@ -23,6 +23,7 @@ from read_helpers import (
 )
 from shared_data import (
     SharedDataPath,
+    apply_source_statuses,
     count_files,
     get_processed_data_dir,
     get_raw_data_dir,
@@ -182,12 +183,13 @@ def _build_data_snapshot(
     processed_dir: SharedDataPath,
     source_names: list[str],
 ) -> dict[str, object]:
+    source_stats = scan_source_directories(
+        {source: raw_dir / source for source in source_names},
+        neighborhood_sample_limit=0,
+    )
     return {
         "metadata_ready": True,
-        "source_stats": scan_source_directories(
-            {source: raw_dir / source for source in source_names},
-            neighborhood_sample_limit=0,
-        ),
+        "source_stats": apply_source_statuses(source_stats, source_names),
         "enriched_docs": count_files(processed_dir / "enriched", pattern="*.json"),
     }
 

@@ -24,6 +24,7 @@ from backend.shared_data import (
     load_json_file,
     read_file_bytes,
 )
+from modal_app.common import safe_volume_reload
 from modal_app.runtime import ENABLE_CCTV_ANALYSIS, get_modal_cls, get_modal_function
 from modal_app.volume import app, sandbox_image, volume
 
@@ -524,7 +525,7 @@ async def analyze(payload: AnalyzePayload):
 
 @router.get("/impact-briefs")
 async def list_impact_briefs(limit: int = 20, min_score: float = 0.0):
-    volume.reload()
+    await safe_volume_reload(volume, "impact_briefs")
     briefs_dir = _processed_data_dir() / "impact_briefs"
 
     briefs = []
@@ -542,7 +543,7 @@ async def list_impact_briefs(limit: int = 20, min_score: float = 0.0):
 
 @router.get("/impact-briefs/{brief_id}")
 async def get_impact_brief(brief_id: str):
-    volume.reload()
+    await safe_volume_reload(volume, "impact_brief")
     briefs_dir = _processed_data_dir() / "impact_briefs"
 
     for json_file in iter_files(briefs_dir, pattern="*.json"):

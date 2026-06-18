@@ -709,8 +709,44 @@ async def safe_queue_push(queue, docs: list[dict], source: str) -> int:
 async def safe_volume_commit(vol, source: str) -> bool:
     """Commit volume with error logging. Returns True on success."""
     try:
+        from backend.shared_data import shared_data_backend
+
+        if shared_data_backend() == "s3":
+            return True
+    except Exception:
+        pass
+
+    try:
         await vol.commit.aio()
         return True
     except Exception as e:
         print(f"safe_volume_commit [{source}]: failed: {e}")
+        return False
+
+
+async def safe_volume_reload(vol, source: str = "") -> bool:
+    """Reload a Modal Volume only when shared data is volume-backed."""
+    try:
+        from backend.shared_data import shared_data_backend
+
+        if shared_data_backend() == "s3":
+            return True
+    except Exception:
+        pass
+
+    try:
+        reload_attr = getattr(vol, "reload", None)
+        if reload_attr is None:
+            return True
+        reload_aio = getattr(reload_attr, "aio", None)
+        if callable(reload_aio):
+            await reload_aio()
+        else:
+            result = reload_attr()
+            if hasattr(result, "__await__"):
+                await result
+        return True
+    except Exception as e:
+        label = f" [{source}]" if source else ""
+        print(f"safe_volume_reload{label}: failed: {e}")
         return False

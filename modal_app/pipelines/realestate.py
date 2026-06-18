@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import httpx
 import modal
 
-from backend.shared_data import get_raw_data_dir
+from backend.shared_data import get_raw_data_dir, write_source_status
 from modal_app.common import SourceType, CHICAGO_NEIGHBORHOODS, build_document, detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
@@ -188,6 +188,7 @@ async def realestate_ingester():
     ])
 
     if not all_docs:
+        write_source_status("realestate", state="empty", documents_seen=0, documents_written=0)
         print("Real estate ingester: no data from any source")
         return 0
 
@@ -198,6 +199,7 @@ async def realestate_ingester():
 
     if not new_docs:
         seen.save()
+        write_source_status("realestate", documents_seen=len(all_docs), documents_written=0)
         await safe_volume_commit(volume, "realestate")
         print("Real estate ingester: no new documents")
         return 0
@@ -219,6 +221,7 @@ async def realestate_ingester():
     await safe_queue_push(doc_queue, new_docs, "realestate")
 
     seen.save()
+    write_source_status("realestate", documents_seen=len(all_docs), documents_written=len(new_docs))
     await safe_volume_commit(volume, "realestate")
     print(f"Real estate ingester complete: {len(new_docs)} documents saved to {out_dir}")
     return len(new_docs)

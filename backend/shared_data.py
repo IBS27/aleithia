@@ -35,6 +35,8 @@ DEFAULT_PROCESSED_PREFIX = "processed"
 DEFAULT_OBJECT_STORAGE_REGION = "us-east-1"
 DEFAULT_MOUNTED_VOLUME_ROOT = "/data"
 DEFAULT_SHARED_DATA_READ_CONCURRENCY = 8
+DEFAULT_SHARED_DATA_LOCK_STALE_SECONDS = 300
+SOURCE_STATUS_DIR = ("status", "sources")
 
 _LAST_LOGGED_LAYOUT: tuple[str, str] | None = None
 _VOLUME: modal.Volume | None = None
@@ -887,14 +889,58 @@ def local_filesystem_path(path: Path | SharedDataPath) -> Path | None:
     return None
 
 
+def _parse_lock_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _shared_data_lock_age_seconds(lock_path: Path | SharedDataPath, payload: Any) -> float:
+    """Best-effort age for object-storage locks.
+
+    Older or interrupted writers can leave malformed lock objects behind. In
+    that case, use the object mtime so stale cleanup can still make progress.
+    """
+    now = datetime.now(timezone.utc)
+    created_at = payload.get("created_at") if isinstance(payload, dict) else None
+    created = _parse_lock_timestamp(created_at)
+    if created is not None:
+        return max(0.0, (now - created).total_seconds())
+
+    try:
+        mtime = float(lock_path.stat().st_mtime)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return 0.0
+    if mtime <= 0:
+        return 0.0
+    return max(0.0, now.timestamp() - mtime)
+
+
 @contextmanager
 def shared_data_lock(
     lock_path: Path | SharedDataPath,
     *,
     timeout_seconds: float = 30.0,
     poll_seconds: float = 0.1,
+    stale_seconds: float | None = None,
 ):
     """Acquire an advisory lock for local mounts or object-storage lock keys."""
+    if stale_seconds is None:
+        raw_stale_seconds = os.getenv(
+            "ALEITHIA_SHARED_DATA_LOCK_STALE_SECONDS",
+            str(DEFAULT_SHARED_DATA_LOCK_STALE_SECONDS),
+        )
+        try:
+            stale_seconds = max(1.0, float(raw_stale_seconds))
+        except ValueError:
+            stale_seconds = float(DEFAULT_SHARED_DATA_LOCK_STALE_SECONDS)
+
     local_path = local_filesystem_path(lock_path)
     if local_path is not None:
         import fcntl
@@ -926,13 +972,26 @@ def shared_data_lock(
                 if try_create(lock_path.relative_path, payload, content_type="application/json"):
                     acquired = True
                     break
+                try:
+                    current = json.loads(lock_path.read_text())
+                except Exception:
+                    current = {}
+                age_seconds = _shared_data_lock_age_seconds(lock_path, current)
+                if age_seconds > stale_seconds:
+                    delete_entry(lock_path.relative_path)
+                    continue
                 time.sleep(poll_seconds)
             if not acquired:
                 raise TimeoutError(f"Timed out acquiring shared data lock: {lock_path}")
             try:
                 yield
             finally:
-                delete_entry(lock_path.relative_path)
+                try:
+                    current = json.loads(lock_path.read_text())
+                except Exception:
+                    current = {}
+                if not isinstance(current, dict) or current.get("owner") == owner:
+                    delete_entry(lock_path.relative_path)
             return
 
     yield
@@ -1028,6 +1087,127 @@ def load_json_file(path: Path | SharedDataPath, default: Any = None) -> Any:
 def write_json_file(path: Path | SharedDataPath, data: Any, *, indent: int | None = 2) -> None:
     raw = json.dumps(data, indent=indent, default=str).encode("utf-8")
     write_file_bytes(path, raw, content_type="application/json")
+
+
+def _source_status_path(source: str) -> Path | SharedDataPath:
+    safe_source = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(source or "").strip()).strip("._-")
+    if not safe_source:
+        raise ValueError("source name is required")
+    return get_processed_data_dir().joinpath(*SOURCE_STATUS_DIR, f"{safe_source}.json")
+
+
+def write_source_status(
+    source: str,
+    *,
+    state: str = "success",
+    documents_seen: int | None = None,
+    documents_written: int | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Write a lightweight pipeline heartbeat used for freshness checks."""
+    completed_at = datetime.now(timezone.utc).isoformat()
+    payload: dict[str, Any] = {
+        "source": source,
+        "state": state,
+        "last_update": completed_at,
+        "storage_backend": shared_data_backend(),
+    }
+    if state == "success":
+        payload["last_success"] = completed_at
+    if documents_seen is not None:
+        payload["documents_seen"] = int(documents_seen)
+    if documents_written is not None:
+        payload["documents_written"] = int(documents_written)
+    if metadata:
+        payload["metadata"] = dict(metadata)
+
+    write_json_file(_source_status_path(source), payload)
+    return payload
+
+
+def load_source_status(source: str) -> dict[str, Any] | None:
+    parsed = load_json_file(_source_status_path(source), default=None)
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _status_last_update(status: Mapping[str, Any] | None) -> str | None:
+    if not status:
+        return None
+    for key in ("last_success", "last_update", "completed_at"):
+        value = status.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def apply_source_statuses(
+    source_stats: Mapping[str, Mapping[str, object]],
+    sources: Iterable[str] | None = None,
+) -> dict[str, dict[str, object]]:
+    """Merge persisted source heartbeats into raw-document stats."""
+    selected_sources = list(sources or source_stats.keys())
+    merged: dict[str, dict[str, object]] = {
+        source: dict(source_stats.get(source, {}))
+        for source in selected_sources
+    }
+    for source in selected_sources:
+        current = merged.setdefault(
+            source,
+            {"doc_count": 0, "active": False, "last_update": None},
+        )
+        status = load_source_status(source)
+        if not status:
+            continue
+        last_update = _status_last_update(status)
+        if last_update:
+            current["last_update"] = last_update
+            current["active"] = bool(current.get("active")) or status.get("state") == "success"
+        current["last_status"] = status.get("state")
+        current["last_status_payload"] = status
+    return merged
+
+
+def get_source_freshness_stats(sources: Iterable[str]) -> dict[str, dict[str, object]]:
+    stats = scan_source_directories({source: get_raw_data_dir() / source for source in sources})
+    return apply_source_statuses(stats, sources)
+
+
+def get_source_freshness_statuses(sources: Iterable[str]) -> dict[str, dict[str, object]]:
+    """Return source freshness with heartbeat-first lookup and raw fallback.
+
+    This avoids recursively listing raw S3 objects on every scheduled
+    reconciler tick once a source has written a heartbeat.
+    """
+    selected_sources = list(sources)
+    stats: dict[str, dict[str, object]] = {}
+    missing_sources: list[str] = []
+    for source in selected_sources:
+        status = load_source_status(source)
+        if not status:
+            missing_sources.append(source)
+            continue
+        last_update = _status_last_update(status)
+        stats[source] = {
+            "doc_count": int(status.get("documents_written") or 0),
+            "active": status.get("state") == "success",
+            "last_update": last_update,
+            "last_status": status.get("state"),
+            "last_status_payload": status,
+        }
+
+    if missing_sources:
+        if shared_data_backend() == "s3":
+            for source in missing_sources:
+                stats[source] = {
+                    "doc_count": 0,
+                    "active": False,
+                    "last_update": None,
+                    "last_status": None,
+                    "missing_status": True,
+                }
+        else:
+            stats.update(scan_source_directories({source: get_raw_data_dir() / source for source in missing_sources}))
+    return stats
 
 
 def load_processed_json(*parts: str, default: Any = None) -> Any:

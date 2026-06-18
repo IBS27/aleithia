@@ -16,6 +16,7 @@ from backend.shared_data import (
     get_raw_data_dir,
     load_json_docs_from_directory,
     write_json_file,
+    write_source_status,
 )
 from modal_app.common import SourceType, build_document, detect_neighborhood, parse_timestamp, safe_volume_commit, tract_to_neighborhood
 from modal_app.dedup import SeenSet
@@ -290,6 +291,7 @@ async def demographics_ingester():
     ])
 
     if not all_docs:
+        write_source_status("demographics", state="empty", documents_seen=0, documents_written=0)
         print("Demographics ingester: no data from any source")
         return 0
 
@@ -301,6 +303,7 @@ async def demographics_ingester():
     if not new_docs:
         seen.save()
         _write_demographics_summary()
+        write_source_status("demographics", documents_seen=len(all_docs), documents_written=0)
         await safe_volume_commit(volume, "demographics")
         print("Demographics ingester: no new documents")
         return 0
@@ -320,6 +323,7 @@ async def demographics_ingester():
 
     seen.save()
     _write_demographics_summary()
+    write_source_status("demographics", documents_seen=len(all_docs), documents_written=len(new_docs))
     await safe_volume_commit(volume, "demographics")
     print(f"Demographics ingester complete: {len(new_docs)} documents saved to {out_dir}")
     return len(new_docs)

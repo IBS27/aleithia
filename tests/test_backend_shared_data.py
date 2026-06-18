@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 import urllib.parse
+from datetime import datetime, timezone
 
 from tests.backend_test_helpers import StrictRecursiveAccessor, install_local_accessor, write_json
 
@@ -266,6 +268,76 @@ def test_shared_data_lock_uses_mounted_shared_path(tmp_path) -> None:
         assert (tmp_path / "dedup" / "test.lock").exists()
 
 
+def test_shared_data_lock_reclaims_stale_malformed_object_lock() -> None:
+    class LockAccessor:
+        def __init__(self) -> None:
+            self.objects: dict[str, tuple[bytes, float]] = {
+                "dedup/news.lock": (
+                    b"not-json",
+                    datetime.now(timezone.utc).timestamp() - 120,
+                )
+            }
+            self.deleted: list[str] = []
+
+        def display_uri(self, relative_path: str) -> str:
+            return f"s3://example/{relative_path}"
+
+        def get_entry(self, relative_path: str):
+            if relative_path not in self.objects:
+                return None
+            data, mtime = self.objects[relative_path]
+            return shared_data.SharedFileEntry(
+                path=relative_path,
+                is_file=True,
+                is_dir=False,
+                mtime=mtime,
+                size=len(data),
+            )
+
+        def list_entries(self, relative_path: str, *, recursive: bool = False):
+            del relative_path, recursive
+            return []
+
+        def read_bytes(self, relative_path: str) -> bytes:
+            return self.objects[relative_path][0]
+
+        def write_bytes(self, relative_path: str, data: bytes, *, content_type: str | None = None) -> None:
+            del content_type
+            self.objects[relative_path] = (data, datetime.now(timezone.utc).timestamp())
+
+        def try_write_bytes_if_absent(
+            self,
+            relative_path: str,
+            data: bytes,
+            *,
+            content_type: str | None = None,
+        ) -> bool:
+            del content_type
+            if relative_path in self.objects:
+                return False
+            self.write_bytes(relative_path, data)
+            return True
+
+        def delete_entry(self, relative_path: str) -> None:
+            self.deleted.append(relative_path)
+            self.objects.pop(relative_path, None)
+
+    accessor = LockAccessor()
+    lock_path = shared_data.SharedDataPath(accessor, "dedup/news.lock")
+
+    with shared_data.shared_data_lock(
+        lock_path,
+        timeout_seconds=0.5,
+        poll_seconds=0.01,
+        stale_seconds=60,
+    ):
+        payload = json.loads(accessor.objects["dedup/news.lock"][0].decode("utf-8"))
+        assert payload["owner"]
+
+    assert accessor.deleted.count("dedup/news.lock") == 2
+    assert "dedup/news.lock" not in accessor.objects
+
+
 def test_load_raw_docs_recurses_and_skips_invalid_payloads(tmp_path, monkeypatch) -> None:
     data_root = tmp_path / "shared"
     install_local_accessor(monkeypatch, data_root)
@@ -336,6 +408,60 @@ def test_processed_data_helpers_load_json_directory_and_latest_file(tmp_path, mo
     latest = shared_data.find_latest_processed_json_file("parking", "analysis", pattern="loop_*.json")
     assert latest is not None
     assert latest.name == "loop_new.json"
+
+
+def test_source_status_heartbeat_overrides_stale_raw_mtime(tmp_path, monkeypatch) -> None:
+    data_root = tmp_path / "shared"
+    accessor = shared_data.MountedVolumeAccessor(data_root)
+    monkeypatch.setattr(shared_data, "_get_accessor", lambda: accessor)
+    shared_data._LAST_LOGGED_LAYOUT = None
+    shared_data._VOLUME = None
+
+    raw_doc = data_root / "raw" / "news" / "2026-03-17" / "latest.json"
+    write_json(raw_doc, '{"id":"n1","title":"Old raw file"}')
+    os.utime(raw_doc, (1, 1))
+
+    status = shared_data.write_source_status("news", documents_seen=1, documents_written=0)
+    stats = shared_data.get_source_freshness_stats(["news"])
+    cheap_stats = shared_data.get_source_freshness_statuses(["news"])
+
+    assert stats["news"]["doc_count"] == 1
+    assert stats["news"]["active"] is True
+    assert stats["news"]["last_update"] == status["last_success"]
+    assert cheap_stats["news"]["doc_count"] == 0
+    assert cheap_stats["news"]["last_update"] == status["last_success"]
+    parsed = datetime.fromisoformat(stats["news"]["last_update"])
+    assert parsed.tzinfo is not None
+    assert parsed > datetime.fromtimestamp(1, tz=timezone.utc)
+
+
+def test_s3_source_freshness_statuses_do_not_scan_raw_when_heartbeat_missing(monkeypatch) -> None:
+    class NoRawScanAccessor:
+        def get_entry(self, relative_path: str):
+            return None
+
+        def list_entries(self, relative_path: str, *, recursive: bool = False):
+            if relative_path.startswith("raw/"):
+                raise AssertionError("raw source scan should not run for missing S3 heartbeats")
+            return []
+
+        def read_bytes(self, relative_path: str) -> bytes:
+            raise FileNotFoundError(relative_path)
+
+    monkeypatch.setenv("ALEITHIA_SHARED_DATA_BACKEND", "s3")
+    monkeypatch.setattr(shared_data, "_get_accessor", lambda: NoRawScanAccessor())
+    shared_data._LAST_LOGGED_LAYOUT = None
+    shared_data._VOLUME = None
+
+    stats = shared_data.get_source_freshness_statuses(["news"])
+
+    assert stats["news"] == {
+        "doc_count": 0,
+        "active": False,
+        "last_update": None,
+        "last_status": None,
+        "missing_status": True,
+    }
 
 
 def test_raw_source_stats_and_read_helpers(tmp_path, monkeypatch) -> None:

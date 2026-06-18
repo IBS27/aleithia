@@ -1,12 +1,13 @@
-"""SeenSet — persistent deduplication set backed by JSON on Modal Volume.
+"""SeenSet — persistent deduplication set backed by shared JSON storage.
 
 Stores seen document IDs at /data/dedup/{source}.json.
 Follows the same persistence pattern as FallbackChain cache files.
-Uses advisory file locking (fcntl) to prevent concurrent pipeline runs
-from losing dedup entries.
+Uses advisory locks to prevent concurrent pipeline runs from losing dedup
+entries across mounted volumes and S3/object storage.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,6 +15,41 @@ from backend.shared_data import get_dedup_data_dir, load_json_file, shared_data_
 
 DEDUP_PATH = None
 MAX_IDS = 10_000
+DEFAULT_DEDUP_LOCK_TIMEOUT_SECONDS = 180.0
+DEFAULT_DEDUP_LOCK_STALE_SECONDS = 60.0
+DEFAULT_DEDUP_LOCK_POLL_SECONDS = 1.0
+
+
+def _positive_env_float(name: str, default: float, *, minimum: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return max(minimum, value)
+
+
+def _dedup_lock_settings() -> tuple[float, float, float]:
+    stale_seconds = _positive_env_float(
+        "ALEITHIA_DEDUP_LOCK_STALE_SECONDS",
+        DEFAULT_DEDUP_LOCK_STALE_SECONDS,
+        minimum=5.0,
+    )
+    timeout_seconds = _positive_env_float(
+        "ALEITHIA_DEDUP_LOCK_TIMEOUT_SECONDS",
+        max(DEFAULT_DEDUP_LOCK_TIMEOUT_SECONDS, stale_seconds + 30.0),
+        minimum=10.0,
+    )
+    if timeout_seconds <= stale_seconds:
+        timeout_seconds = stale_seconds + 30.0
+    poll_seconds = _positive_env_float(
+        "ALEITHIA_DEDUP_LOCK_POLL_SECONDS",
+        DEFAULT_DEDUP_LOCK_POLL_SECONDS,
+        minimum=0.1,
+    )
+    return timeout_seconds, poll_seconds, stale_seconds
 
 
 class SeenSet:
@@ -67,7 +103,13 @@ class SeenSet:
 
     def _acquire_lock(self) -> None:
         """Acquire exclusive file lock for save operations."""
-        self._lock_cm = shared_data_lock(self._lock_file)
+        timeout_seconds, poll_seconds, stale_seconds = _dedup_lock_settings()
+        self._lock_cm = shared_data_lock(
+            self._lock_file,
+            timeout_seconds=timeout_seconds,
+            poll_seconds=poll_seconds,
+            stale_seconds=stale_seconds,
+        )
         try:
             self._lock_cm.__enter__()
         except Exception:

@@ -14,7 +14,7 @@ from datetime import datetime, timezone, timedelta
 import httpx
 import modal
 
-from backend.shared_data import get_raw_data_dir
+from backend.shared_data import get_raw_data_dir, write_source_status
 from modal_app.common import (
     SourceType, SOCRATA_DATASETS, COMMUNITY_AREA_MAP, build_document,
     detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit,
@@ -149,6 +149,7 @@ async def public_data_ingester():
     ])
 
     if not all_docs:
+        write_source_status("public_data", state="empty", documents_seen=0, documents_written=0)
         print("Public data ingester: no data from any source")
         return 0
 
@@ -167,6 +168,7 @@ async def public_data_ingester():
 
     if not new_docs:
         seen.save()
+        write_source_status("public_data", documents_seen=len(all_docs), documents_written=0)
         await safe_volume_commit(volume, "public_data")
         print("Public data ingester: no new documents")
         return 0
@@ -189,6 +191,7 @@ async def public_data_ingester():
     await safe_queue_push(doc_queue, new_docs, "public_data")
 
     seen.save()
+    write_source_status("public_data", documents_seen=len(all_docs), documents_written=len(new_docs))
     await safe_volume_commit(volume, "public_data")
     print(f"Public data ingester complete: {len(new_docs)} documents saved to {out_dir}")
     return len(new_docs)
