@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import fnmatch
 import hashlib
 import hmac
@@ -947,7 +948,19 @@ def shared_data_lock(
 
         local_path.parent.mkdir(parents=True, exist_ok=True)
         with open(local_path, "w") as lock_fd:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            deadline = time.monotonic() + timeout_seconds
+            while True:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    pass
+                except OSError as exc:
+                    if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                        raise
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"Timed out acquiring shared data lock: {lock_path}")
+                time.sleep(poll_seconds)
             try:
                 yield
             finally:
@@ -979,6 +992,19 @@ def shared_data_lock(
                 age_seconds = _shared_data_lock_age_seconds(lock_path, current)
                 if age_seconds > stale_seconds:
                     delete_entry(lock_path.relative_path)
+                    if try_create(lock_path.relative_path, payload, content_type="application/json"):
+                        acquired = True
+                        break
+                    write_bytes = getattr(lock_path.accessor, "write_bytes", None)
+                    if callable(write_bytes):
+                        try:
+                            write_bytes(lock_path.relative_path, payload, content_type="application/json")
+                            current = json.loads(lock_path.read_text())
+                        except Exception:
+                            current = {}
+                        if isinstance(current, dict) and current.get("owner") == owner:
+                            acquired = True
+                            break
                     continue
                 time.sleep(poll_seconds)
             if not acquired:

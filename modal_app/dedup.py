@@ -101,14 +101,20 @@ class SeenSet:
             print(f"SeenSet [{self.source}]: load error: {e}")
         print(f"SeenSet [{self.source}]: starting empty")
 
-    def _acquire_lock(self) -> None:
+    def _acquire_lock(
+        self,
+        *,
+        timeout_seconds: float | None = None,
+        poll_seconds: float | None = None,
+        stale_seconds: float | None = None,
+    ) -> None:
         """Acquire exclusive file lock for save operations."""
-        timeout_seconds, poll_seconds, stale_seconds = _dedup_lock_settings()
+        default_timeout_seconds, default_poll_seconds, default_stale_seconds = _dedup_lock_settings()
         self._lock_cm = shared_data_lock(
             self._lock_file,
-            timeout_seconds=timeout_seconds,
-            poll_seconds=poll_seconds,
-            stale_seconds=stale_seconds,
+            timeout_seconds=timeout_seconds if timeout_seconds is not None else default_timeout_seconds,
+            poll_seconds=poll_seconds if poll_seconds is not None else default_poll_seconds,
+            stale_seconds=stale_seconds if stale_seconds is not None else default_stale_seconds,
         )
         try:
             self._lock_cm.__enter__()
@@ -158,14 +164,24 @@ class SeenSet:
             self._list.append(doc_id)
             self._set.add(doc_id)
 
-    def save(self) -> None:
+    def save(
+        self,
+        *,
+        timeout_seconds: float | None = None,
+        poll_seconds: float | None = None,
+        stale_seconds: float | None = None,
+    ) -> bool:
         """Persist the set to Volume under exclusive file lock.
 
         Lock → reload from disk (merge any IDs added by concurrent runs) →
         merge in-memory additions → write → unlock.
         """
         try:
-            self._acquire_lock()
+            self._acquire_lock(
+                timeout_seconds=timeout_seconds,
+                poll_seconds=poll_seconds,
+                stale_seconds=stale_seconds,
+            )
             try:
                 # Reload from disk under lock to merge concurrent additions
                 disk_ids: list[str] = []
@@ -204,7 +220,9 @@ class SeenSet:
                 self._set = merged_set
                 self._seen_at = merged_seen_at
                 print(f"SeenSet [{self.source}]: saved {len(self._list)} IDs")
+                return True
             finally:
                 self._release_lock()
         except Exception as e:
             print(f"SeenSet [{self.source}]: save error: {e}")
+            return False

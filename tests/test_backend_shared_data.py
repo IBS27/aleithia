@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
+import time
 import urllib.parse
 from datetime import datetime, timezone
 
@@ -268,6 +271,42 @@ def test_shared_data_lock_uses_mounted_shared_path(tmp_path) -> None:
         assert (tmp_path / "dedup" / "test.lock").exists()
 
 
+def test_shared_data_lock_times_out_when_mounted_lock_is_held(tmp_path) -> None:
+    lock_file = tmp_path / "dedup" / "test.lock"
+    script = (
+        "import fcntl, pathlib, sys, time\n"
+        "path = pathlib.Path(sys.argv[1])\n"
+        "path.parent.mkdir(parents=True, exist_ok=True)\n"
+        "with path.open('w') as handle:\n"
+        "    fcntl.flock(handle, fcntl.LOCK_EX)\n"
+        "    print('locked', flush=True)\n"
+        "    time.sleep(2)\n"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script, str(lock_file)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert proc.stdout is not None
+        assert proc.stdout.readline().strip() == "locked"
+
+        accessor = shared_data.MountedVolumeAccessor(tmp_path)
+        lock_path = shared_data.SharedDataPath(accessor, "dedup/test.lock")
+
+        started_at = time.monotonic()
+        try:
+            with shared_data.shared_data_lock(lock_path, timeout_seconds=0.1, poll_seconds=0.01):
+                raise AssertionError("lock should not be acquired while another process holds it")
+        except TimeoutError:
+            pass
+        assert time.monotonic() - started_at < 1.0
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
 def test_shared_data_lock_reclaims_stale_malformed_object_lock() -> None:
     class LockAccessor:
         def __init__(self) -> None:
@@ -336,6 +375,71 @@ def test_shared_data_lock_reclaims_stale_malformed_object_lock() -> None:
 
     assert accessor.deleted.count("dedup/news.lock") == 2
     assert "dedup/news.lock" not in accessor.objects
+
+
+def test_shared_data_lock_steals_stale_object_lock_when_delete_does_not_clear() -> None:
+    class StickyLockAccessor:
+        def __init__(self) -> None:
+            self.objects: dict[str, tuple[bytes, float]] = {
+                "dedup/news.lock": (
+                    b"not-json",
+                    datetime.now(timezone.utc).timestamp() - 120,
+                )
+            }
+            self.deleted: list[str] = []
+
+        def display_uri(self, relative_path: str) -> str:
+            return f"s3://example/{relative_path}"
+
+        def get_entry(self, relative_path: str):
+            if relative_path not in self.objects:
+                return None
+            data, mtime = self.objects[relative_path]
+            return shared_data.SharedFileEntry(
+                path=relative_path,
+                is_file=True,
+                is_dir=False,
+                mtime=mtime,
+                size=len(data),
+            )
+
+        def list_entries(self, relative_path: str, *, recursive: bool = False):
+            del relative_path, recursive
+            return []
+
+        def read_bytes(self, relative_path: str) -> bytes:
+            return self.objects[relative_path][0]
+
+        def write_bytes(self, relative_path: str, data: bytes, *, content_type: str | None = None) -> None:
+            del content_type
+            self.objects[relative_path] = (data, datetime.now(timezone.utc).timestamp())
+
+        def try_write_bytes_if_absent(
+            self,
+            relative_path: str,
+            data: bytes,
+            *,
+            content_type: str | None = None,
+        ) -> bool:
+            del data, content_type
+            return relative_path not in self.objects
+
+        def delete_entry(self, relative_path: str) -> None:
+            self.deleted.append(relative_path)
+
+    accessor = StickyLockAccessor()
+    lock_path = shared_data.SharedDataPath(accessor, "dedup/news.lock")
+
+    with shared_data.shared_data_lock(
+        lock_path,
+        timeout_seconds=0.5,
+        poll_seconds=0.01,
+        stale_seconds=60,
+    ):
+        payload = json.loads(accessor.objects["dedup/news.lock"][0].decode("utf-8"))
+        assert payload["owner"]
+
+    assert accessor.deleted
 
 
 def test_load_raw_docs_recurses_and_skips_invalid_payloads(tmp_path, monkeypatch) -> None:
