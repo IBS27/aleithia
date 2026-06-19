@@ -189,6 +189,7 @@ async def realestate_ingester():
 
     if not all_docs:
         write_source_status("realestate", state="empty", documents_seen=0, documents_written=0)
+        await safe_volume_commit(volume, "realestate")
         print("Real estate ingester: no data from any source")
         return 0
 

@@ -449,7 +449,7 @@ async def _write_news_doc(doc_data: dict, out_dir) -> dict | None:
 
 async def _persist_news_docs(all_docs: list[dict]) -> int:
     """Persist raw news docs and durable ingestion state before queueing."""
-    claim_owner, new_docs, claim_stats = _claim_news_docs_for_attempt(all_docs)
+    claim_owner, new_docs, claim_stats = await asyncio.to_thread(_claim_news_docs_for_attempt, all_docs)
     print(
         "News: "
         f"{len(all_docs)} fetched, {len(new_docs)} claimed "
@@ -484,7 +484,7 @@ async def _persist_news_docs(all_docs: list[dict]) -> int:
     failed_ids = {str(doc["id"]) for doc in new_docs if str(doc.get("id", "") or "")} - written_ids
 
     if failed_ids:
-        _finalize_news_claims(claim_owner, release_ids=failed_ids)
+        await asyncio.to_thread(_finalize_news_claims, claim_owner, release_ids=failed_ids)
 
     if not await safe_volume_commit(volume, "news"):
         print("News ingester: raw documents were written but commit failed before classification enqueue")
@@ -502,7 +502,7 @@ async def _persist_news_docs(all_docs: list[dict]) -> int:
         )
         return 0
 
-    _finalize_news_claims(claim_owner, completed_ids=written_ids)
+    await asyncio.to_thread(_finalize_news_claims, claim_owner, completed_ids=written_ids)
     write_source_status(
         "news",
         documents_seen=len(all_docs),

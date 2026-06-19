@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
 import os
+import tempfile
 from pathlib import Path
 
 import modal
@@ -255,14 +256,13 @@ def _public_data_dataset_paths(
                     partition.relative_path,
                     name_prefix=prefix,
                     recursive=False,
-                    max_entries=remaining,
                 )
             else:
                 entries = [
                     entry
                     for entry in partition.accessor.list_entries(partition.relative_path, recursive=False)
                     if entry.name.startswith(prefix)
-                ][:remaining]
+                ]
             entries = [
                 entry
                 for entry in entries
@@ -277,7 +277,8 @@ def _public_data_dataset_paths(
             for path in partition.glob(f"{prefix}*.json")
             if path.is_file()
         ]
-        paths.extend(sorted(files, key=lambda path: path.name, reverse=True)[:remaining])
+        files.sort(key=lambda path: (path.stat().st_mtime, path.name), reverse=True)
+        paths.extend(files[:remaining])
 
     return paths
 
@@ -581,10 +582,15 @@ def build_public_data_index(
     mounted_index_path.parent.mkdir(parents=True, exist_ok=True)
     mounted_index_path.write_text(raw_index, encoding="utf-8")
 
-    upload_path = Path("/tmp/public_data_by_neighborhood.json")
-    upload_path.write_text(raw_index, encoding="utf-8")
-    with volume.batch_upload(force=True) as batch:
-        batch.put_file(str(upload_path), "/processed/cache/public_data_by_neighborhood.json")
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
+        tmp.write(raw_index)
+        upload_path = Path(tmp.name)
+    try:
+        with volume.batch_upload(force=True) as batch:
+            batch.put_file(str(upload_path), "/processed/cache/public_data_by_neighborhood.json")
+    finally:
+        if upload_path.exists():
+            upload_path.unlink()
     volume.commit()
 
     result = {
@@ -664,12 +670,17 @@ def build_transit_cache(max_files: int = DEFAULT_CTA_RIDERSHIP_MAX_FILES):
     mounted_cache_path.parent.mkdir(parents=True, exist_ok=True)
     mounted_cache_path.write_text(raw_payload, encoding="utf-8")
 
-    upload_path = Path("/tmp/cta_l_ridership_by_station.json")
-    upload_path.write_text(raw_payload, encoding="utf-8")
-    with volume.batch_upload(force=True) as batch:
-        batch.put_file(str(upload_path), "/processed/cache/cta_l_ridership_by_station.json")
-        if isinstance(station_cache, list):
-            batch.put_file(str(mounted_station_cache_path), "/processed/cache/cta_stations.json")
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
+        tmp.write(raw_payload)
+        upload_path = Path(tmp.name)
+    try:
+        with volume.batch_upload(force=True) as batch:
+            batch.put_file(str(upload_path), "/processed/cache/cta_l_ridership_by_station.json")
+            if isinstance(station_cache, list):
+                batch.put_file(str(mounted_station_cache_path), "/processed/cache/cta_stations.json")
+    finally:
+        if upload_path.exists():
+            upload_path.unlink()
     volume.commit()
 
     result = {

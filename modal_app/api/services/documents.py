@@ -468,7 +468,15 @@ def neighborhood_from_coordinates(
 
 def _coordinate_matches_neighborhood(doc: dict, neighborhood: str) -> bool:
     coords = _extract_lat_lng(doc)
-    centroid = NEIGHBORHOOD_CENTROIDS.get(neighborhood)
+    neighborhood_key = next(
+        (
+            name
+            for name in NEIGHBORHOOD_CENTROIDS
+            if name.lower() == (neighborhood or "").strip().lower()
+        ),
+        (neighborhood or "").strip(),
+    )
+    centroid = NEIGHBORHOOD_CENTROIDS.get(neighborhood_key)
     if coords is None or centroid is None:
         return False
     lat, lng = coords

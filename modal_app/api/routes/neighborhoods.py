@@ -83,7 +83,8 @@ async def _load_docs_bounded(source: str, limit: int = 200) -> list[dict]:
             timeout=NEIGHBORHOOD_DOC_LOAD_TIMEOUT_SECONDS,
         )
     except Exception as exc:
-        raise RuntimeError(f"neighborhood_docs_unavailable [{source}]: {exc!r}") from exc
+        print(f"neighborhood_docs_unavailable [{source}]: {exc!r}")
+        return []
 
 
 async def _load_public_dataset_docs_bounded(
@@ -228,6 +229,39 @@ async def neighborhood(name: str, business_type: str = ""):
                 span.set_attribute("error", f"Unknown neighborhood: {name}")
             return JSONResponse({"error": f"Unknown neighborhood: {name}"}, status_code=404)
 
+        load_labels = [
+            "food_inspections",
+            "building_permits",
+            "business_licenses",
+            "news",
+            "politics",
+            "reddit",
+            "reviews",
+            "realestate",
+            "tiktok",
+            "federal_register",
+        ]
+        load_results = await asyncio.gather(
+            _load_public_dataset_docs_bounded("food_inspections", 120, neighborhood=name),
+            _load_public_dataset_docs_bounded("building_permits", 120, neighborhood=name),
+            _load_public_dataset_docs_bounded("business_licenses", 120, neighborhood=name),
+            _load_docs_bounded("news", 32),
+            _load_docs_bounded("politics", 32),
+            _load_docs_bounded("reddit", 32),
+            _load_docs_bounded("reviews", 32),
+            _load_docs_bounded("realestate", 32),
+            _load_docs_bounded("tiktok", 48),
+            _load_docs_bounded("federal_register", 32),
+            return_exceptions=True,
+        )
+        normalized_results: list[list[dict]] = []
+        for label, result in zip(load_labels, load_results, strict=True):
+            if isinstance(result, Exception):
+                print(f"neighborhood_source_unavailable [{label}]: {result!r}")
+                normalized_results.append([])
+            else:
+                normalized_results.append(result)
+
         (
             inspection_pool,
             permit_pool,
@@ -239,18 +273,7 @@ async def neighborhood(name: str, business_type: str = ""):
             all_realestate,
             tiktok_raw_docs,
             all_federal,
-        ) = await asyncio.gather(
-            _load_public_dataset_docs_bounded("food_inspections", 120, neighborhood=name),
-            _load_public_dataset_docs_bounded("building_permits", 120, neighborhood=name),
-            _load_public_dataset_docs_bounded("business_licenses", 120, neighborhood=name),
-            _load_docs_bounded("news", 32),
-            _load_docs_bounded("politics", 32),
-            _load_docs_bounded("reddit", 32),
-            _load_docs_bounded("reviews", 32),
-            _load_docs_bounded("realestate", 32),
-            _load_docs_bounded("tiktok", 48),
-            _load_docs_bounded("federal_register", 32),
-        )
+        ) = normalized_results
 
         all_news = [doc for doc in all_news if not is_placeholder_doc(doc)]
         all_politics = [doc for doc in all_politics if not is_placeholder_doc(doc)]

@@ -8,6 +8,8 @@ import time
 import urllib.parse
 from datetime import datetime, timezone
 
+import pytest
+
 from tests.backend_test_helpers import StrictRecursiveAccessor, install_local_accessor, write_json
 
 import read_helpers
@@ -377,7 +379,7 @@ def test_shared_data_lock_reclaims_stale_malformed_object_lock() -> None:
     assert "dedup/news.lock" not in accessor.objects
 
 
-def test_shared_data_lock_steals_stale_object_lock_when_delete_does_not_clear() -> None:
+def test_shared_data_lock_does_not_steal_stale_object_lock_when_delete_does_not_clear() -> None:
     class StickyLockAccessor:
         def __init__(self) -> None:
             self.objects: dict[str, tuple[bytes, float]] = {
@@ -430,16 +432,17 @@ def test_shared_data_lock_steals_stale_object_lock_when_delete_does_not_clear() 
     accessor = StickyLockAccessor()
     lock_path = shared_data.SharedDataPath(accessor, "dedup/news.lock")
 
-    with shared_data.shared_data_lock(
-        lock_path,
-        timeout_seconds=0.5,
-        poll_seconds=0.01,
-        stale_seconds=60,
-    ):
-        payload = json.loads(accessor.objects["dedup/news.lock"][0].decode("utf-8"))
-        assert payload["owner"]
+    with pytest.raises(TimeoutError):
+        with shared_data.shared_data_lock(
+            lock_path,
+            timeout_seconds=0.05,
+            poll_seconds=0.01,
+            stale_seconds=60,
+        ):
+            raise AssertionError("lock should not be acquired")
 
     assert accessor.deleted
+    assert accessor.objects["dedup/news.lock"][0] == b"not-json"
 
 
 def test_load_raw_docs_recurses_and_skips_invalid_payloads(tmp_path, monkeypatch) -> None:

@@ -150,6 +150,7 @@ async def public_data_ingester():
 
     if not all_docs:
         write_source_status("public_data", state="empty", documents_seen=0, documents_written=0)
+        await safe_volume_commit(volume, "public_data")
         print("Public data ingester: no data from any source")
         return 0
 

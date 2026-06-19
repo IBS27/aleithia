@@ -713,8 +713,8 @@ async def safe_volume_commit(vol, source: str) -> bool:
 
         if shared_data_backend() == "s3":
             return True
-    except Exception:
-        pass
+    except ImportError as exc:
+        print(f"safe_volume_commit [{source}]: shared backend check unavailable: {exc}")
 
     try:
         await vol.commit.aio()
@@ -731,8 +731,9 @@ async def safe_volume_reload(vol, source: str = "") -> bool:
 
         if shared_data_backend() == "s3":
             return True
-    except Exception:
-        pass
+    except ImportError as exc:
+        label = f" [{source}]" if source else ""
+        print(f"safe_volume_reload{label}: shared backend check unavailable: {exc}")
 
     try:
         reload_attr = getattr(vol, "reload", None)

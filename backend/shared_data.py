@@ -987,7 +987,7 @@ def shared_data_lock(
                     break
                 try:
                     current = json.loads(lock_path.read_text())
-                except Exception:
+                except (json.JSONDecodeError, ObjectStorageError, OSError, UnicodeDecodeError):
                     current = {}
                 age_seconds = _shared_data_lock_age_seconds(lock_path, current)
                 if age_seconds > stale_seconds:
@@ -995,16 +995,7 @@ def shared_data_lock(
                     if try_create(lock_path.relative_path, payload, content_type="application/json"):
                         acquired = True
                         break
-                    write_bytes = getattr(lock_path.accessor, "write_bytes", None)
-                    if callable(write_bytes):
-                        try:
-                            write_bytes(lock_path.relative_path, payload, content_type="application/json")
-                            current = json.loads(lock_path.read_text())
-                        except Exception:
-                            current = {}
-                        if isinstance(current, dict) and current.get("owner") == owner:
-                            acquired = True
-                            break
+                    time.sleep(poll_seconds)
                     continue
                 time.sleep(poll_seconds)
             if not acquired:
@@ -1012,15 +1003,18 @@ def shared_data_lock(
             try:
                 yield
             finally:
+                current = None
                 try:
-                    current = json.loads(lock_path.read_text())
-                except Exception:
-                    current = {}
-                if not isinstance(current, dict) or current.get("owner") == owner:
+                    parsed = json.loads(lock_path.read_text())
+                    if isinstance(parsed, dict):
+                        current = parsed
+                except (json.JSONDecodeError, ObjectStorageError, OSError, UnicodeDecodeError):
+                    pass
+                if current is not None and current.get("owner") == owner:
                     delete_entry(lock_path.relative_path)
             return
 
-    yield
+    raise RuntimeError(f"Shared data lock backend does not support mutual exclusion: {lock_path}")
 
 
 def _relative_entry_path(directory: SharedDataPath, entry_path: str) -> PurePosixPath | None:
@@ -1431,8 +1425,9 @@ def load_json_docs_from_paths(
         except ValueError:
             max_workers = DEFAULT_SHARED_DATA_READ_CONCURRENCY
         docs: list[dict] = []
+        selected_paths = path_list[:limit] if limit is not None else path_list
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            for parsed in executor.map(_load_one, path_list):
+            for parsed in executor.map(_load_one, selected_paths):
                 if parsed is None:
                     continue
                 docs.append(parsed)

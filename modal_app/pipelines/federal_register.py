@@ -165,6 +165,7 @@ async def federal_register_ingester():
 
     if not all_docs:
         write_source_status("federal_register", state="empty", documents_seen=0, documents_written=0)
+        await safe_volume_commit(volume, "federal_register")
         print("Federal Register ingester: no relevant documents found")
         return 0
 

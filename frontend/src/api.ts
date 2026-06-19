@@ -49,7 +49,11 @@ async function fetchBaseJSON<T>(base: string, path: string, init?: RequestInit, 
 
   const onAbort = () => controller?.abort()
   if (controller && init?.signal) {
-    init.signal.addEventListener('abort', onAbort, { once: true })
+    if (init.signal.aborted) {
+      onAbort()
+    } else {
+      init.signal.addEventListener('abort', onAbort, { once: true })
+    }
   }
 
   try {

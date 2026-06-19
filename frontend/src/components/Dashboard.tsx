@@ -1051,7 +1051,7 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
   const entries: EvidenceEntry[] = []
   const seenIds = new Map<string, number>()
   const nextId = (source: string, rawId: unknown, title: string) => {
-    const idText = String(rawId || '').trim()
+    const idText = String(rawId ?? '').trim()
     const titleText = title.trim().toLowerCase().replace(/\s+/g, '-').slice(0, 80)
     const base = `${source}-${idText || titleText || 'record'}`
     const count = seenIds.get(base) || 0

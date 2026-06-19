@@ -18,6 +18,8 @@ import httpx
 import modal
 
 from backend.shared_data import (
+    ObjectStorageError,
+    SharedDataPath,
     get_processed_data_dir,
     get_raw_data_dir,
     iter_files,
@@ -124,30 +126,27 @@ def _safe_float(value: object, default: float = 0.0) -> float:
         return default
 
 
-def _atomic_write_json(path, payload: dict) -> None:
-    if isinstance(path, Path):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = path.with_name(f"{path.name}.tmp")
-        tmp_path.write_text(json.dumps(payload, indent=2, default=str))
-        tmp_path.replace(path)
-        return
-    write_json_file(path, payload)
-
-
-def _iter_cctv_meta_dirs(max_meta_days: int | None = None) -> list:
+def _iter_cctv_meta_dirs(max_meta_days: int | None = None) -> list[Path | SharedDataPath]:
     root = get_raw_data_dir() / "cctv"
     try:
-        entries = root.iterdir()
-    except OSError:
+        if isinstance(root, SharedDataPath):
+            entries = root.accessor.list_entries(root.relative_path, recursive=False)
+            dirs = [
+                SharedDataPath(root.accessor, entry.path)
+                for entry in entries
+                if entry.is_dir and entry.name != "frames"
+            ]
+        else:
+            dirs = [d for d in root.iterdir() if d.is_dir() and d.name != "frames"]
+    except (ObjectStorageError, OSError):
         return []
-    dirs = [d for d in entries if d.is_dir() and d.name != "frames"]
     dirs.sort(key=lambda d: d.name, reverse=True)
 
     if not max_meta_days or max_meta_days <= 0:
         return dirs
 
     cutoff_date = datetime.now(timezone.utc).date() - timedelta(days=max_meta_days)
-    filtered: list[Path] = []
+    filtered: list[Path | SharedDataPath] = []
     for d in dirs:
         try:
             dir_date = datetime.strptime(d.name, "%Y-%m-%d").date()
@@ -249,7 +248,7 @@ def _update_cctv_latest_index(results: list[dict], meta_by_camera: dict[str, dic
         }
         updated += 1
 
-    _atomic_write_json(_cctv_latest_index_path(), latest_index)
+    write_json_file(_cctv_latest_index_path(), latest_index)
     return {"updated": updated, "total": len(latest_index)}
 
 

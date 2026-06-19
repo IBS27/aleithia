@@ -225,4 +225,4 @@ class SeenSet:
                 self._release_lock()
         except Exception as e:
             print(f"SeenSet [{self.source}]: save error: {e}")
-            return False
+            raise
