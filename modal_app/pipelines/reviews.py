@@ -25,10 +25,13 @@ YELP_CATEGORIES = [
 
 # Search neighborhoods
 SEARCH_NEIGHBORHOODS = [
+    "Loop, Chicago, IL",
     "Lincoln Park, Chicago, IL",
     "Wicker Park, Chicago, IL",
     "Logan Square, Chicago, IL",
     "West Loop, Chicago, IL",
+    "River North, Chicago, IL",
+    "South Loop, Chicago, IL",
     "Pilsen, Chicago, IL",
     "Hyde Park, Chicago, IL",
     "Andersonville, Chicago, IL",
@@ -97,7 +100,7 @@ async def _fetch_yelp(api_key: str) -> list[dict]:
 
     coros = [
         _fetch_yelp_location(api_key, location, category)
-        for location in SEARCH_NEIGHBORHOODS[:4]
+        for location in SEARCH_NEIGHBORHOODS
         for category in YELP_CATEGORIES[:3]
     ]
     results = await gather_with_limit(coros, max_concurrent=5)
@@ -162,7 +165,7 @@ async def _fetch_google_places(api_key: str) -> list[dict]:
         print("GOOGLE_PLACES_API_KEY not set, skipping Google Places")
         return []
 
-    coros = [_fetch_google_location(api_key, loc) for loc in SEARCH_NEIGHBORHOODS[:4]]
+    coros = [_fetch_google_location(api_key, loc) for loc in SEARCH_NEIGHBORHOODS]
     results = await gather_with_limit(coros, max_concurrent=5)
     docs = []
     for result in results:

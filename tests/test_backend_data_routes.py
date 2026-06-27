@@ -101,6 +101,8 @@ def test_backend_routes_read_shared_raw_and_processed_data(tmp_path, monkeypatch
     assert sources.status_code == 200
     sources_data = sources.json()
     assert sources_data["metadata_ready"] is True
+    assert sources_data["storage_backend"] == "modal"
+    assert sources_data["warning"] is None
     assert sources_data["sources"]["news"] == {"count": 1, "active": True}
     assert sources_data["sources"]["reddit"] == {"count": 1, "active": True}
     assert sources_data["sources"]["tiktok"] == {"count": 1, "active": True}
@@ -293,8 +295,17 @@ def test_backend_status_and_metrics_routes_own_document_freshness(tmp_path, monk
     status = client.get("/api/data/status")
     assert status.status_code == 200
     status_data = status.json()
-    assert set(status_data) == {"metadata_ready", "pipelines", "enriched_docs", "total_docs"}
+    assert set(status_data) == {
+        "metadata_ready",
+        "storage_backend",
+        "warning",
+        "pipelines",
+        "enriched_docs",
+        "total_docs",
+    }
     assert status_data["metadata_ready"] is True
+    assert status_data["storage_backend"] == "modal"
+    assert status_data["warning"] is None
     assert status_data["pipelines"]["news"]["state"] == "idle"
     assert status_data["pipelines"]["politics"]["state"] == "stale"
     assert status_data["pipelines"]["reddit"]["state"] == "no_data"
@@ -310,3 +321,20 @@ def test_backend_status_and_metrics_routes_own_document_freshness(tmp_path, monk
         "data_sources": 9,
         "neighborhoods_total": 77,
     }
+
+
+def test_backend_sources_warn_when_s3_runtime_tree_is_empty(tmp_path, monkeypatch) -> None:
+    data_root = tmp_path / "shared"
+    client = make_data_client(monkeypatch, data_root)
+    monkeypatch.setenv("ALEITHIA_SHARED_DATA_BACKEND", "s3")
+
+    sources = client.get("/api/data/sources")
+    assert sources.status_code == 200
+    payload = sources.json()
+    assert payload["metadata_ready"] is True
+    assert payload["storage_backend"] == "s3"
+    assert "S3 shared data returned 0 documents" in payload["warning"]
+
+    status = client.get("/api/data/status")
+    assert status.status_code == 200
+    assert "S3 shared data returned 0 documents" in status.json()["warning"]

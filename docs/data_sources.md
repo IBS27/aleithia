@@ -87,7 +87,7 @@ Chicago-focused data source collectors, each running as Modal functions. All out
 - Rating, review count, price level
 - Review velocity annotation (`high` / `medium` / `low`)
 
-**Neighborhoods searched:** Lincoln Park, Wicker Park, Logan Square, West Loop, Pilsen, Hyde Park, Andersonville, Chinatown
+**Neighborhoods searched:** Loop, Lincoln Park, Wicker Park, Logan Square, West Loop, River North, South Loop, Pilsen, Hyde Park, Andersonville, Chinatown
 
 ### 3c. TikTok — `tiktok_ingester`
 

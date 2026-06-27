@@ -9,6 +9,7 @@ import os
 import re
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from backend.shared_data import (
@@ -252,6 +253,75 @@ def load_live_public_dataset_docs(dataset: str, neighborhood: str, limit: int = 
     if not isinstance(records, list):
         return []
     return [_socrata_record_to_doc(dataset, record) for record in records if isinstance(record, dict)]
+
+
+def load_live_review_docs(neighborhood: str, business_type: str = "", limit: int = 12) -> list[dict]:
+    """Load current business review summaries for a neighborhood from Google Places."""
+    api_key = os.getenv("GOOGLE_PLACES_API_KEY", "").strip()
+    if not api_key:
+        return []
+
+    query_subject = sanitize_business_type(business_type) or "businesses"
+    params = {
+        "query": f"{query_subject} in {neighborhood}, Chicago, IL",
+        "key": api_key,
+    }
+    url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?{urllib.parse.urlencode(params)}"
+    request = urllib.request.Request(url)
+    with urllib.request.urlopen(request, timeout=8) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    results = payload.get("results", []) if isinstance(payload, dict) else []
+    if not isinstance(results, list):
+        return []
+
+    docs: list[dict] = []
+    timestamp = datetime.now(timezone.utc).isoformat()
+    for place in results[:limit]:
+        if not isinstance(place, dict):
+            continue
+        place_id = str(place.get("place_id") or "").strip()
+        if not place_id:
+            continue
+        name = str(place.get("name") or "Business").strip()
+        address = str(place.get("formatted_address") or "").strip()
+        rating = place.get("rating")
+        review_count = int(place.get("user_ratings_total") or 0)
+        types = [str(value) for value in place.get("types", []) if isinstance(value, str)]
+        location = (place.get("geometry") or {}).get("location") if isinstance(place.get("geometry"), dict) else {}
+        docs.append(
+            {
+                "id": f"gplaces-live-{place_id}",
+                "source": "google_places",
+                "title": name,
+                "content": (
+                    f"{name} — {address}. "
+                    f"Rating: {rating if rating is not None else 'N/A'}/5 ({review_count} reviews). "
+                    f"Search: {query_subject} in {neighborhood}."
+                ),
+                "url": f"https://www.google.com/maps/place/?q=place_id:{place_id}",
+                "timestamp": timestamp,
+                "metadata": {
+                    "rating": rating,
+                    "review_count": review_count,
+                    "user_ratings_total": review_count,
+                    "types": types,
+                    "categories": [value.replace("_", " ").title() for value in types],
+                    "business_status": place.get("business_status", ""),
+                    "price_level": place.get("price_level"),
+                    "address": address,
+                    "neighborhood": neighborhood,
+                    "query": query_subject,
+                    "live_fallback": True,
+                },
+                "geo": {
+                    "lat": location.get("lat") if isinstance(location, dict) else None,
+                    "lng": location.get("lng") if isinstance(location, dict) else None,
+                    "neighborhood": neighborhood,
+                },
+            }
+        )
+    return docs
 
 
 def _socrata_record_to_doc(dataset: str, record: dict) -> dict:

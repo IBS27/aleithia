@@ -36,7 +36,6 @@
 - Product-facing frontend pages and old planning docs may still mention VectorAI DB or VectorDB health/status. Treat live code paths as source of truth and update copy narrowly when it would otherwise become false.
 - Some older docs, scripts, or comments may still mention repo-local runtime data roots. Treat `backend/shared_data.py`, `modal_app/volume.py`, and `tests/test_backend_shared_data.py` as the current source of truth.
 - `backend/database.py` defaults to `sqlite:///./test.db`. Run backend commands from `backend/` or set `DATABASE_URL` explicitly, otherwise SQLite may be created in an unexpected directory.
-- `backend/test.db` may exist locally and is git-ignored. Do not delete or rewrite local DB/data artifacts unless the task explicitly requires it.
 
 ## Frontend guidance
 
@@ -51,7 +50,6 @@
 - `ENABLE_CCTV_ANALYSIS` is controlled through the Modal secret `alethia-secrets`. If you add or change CCTV env-gated behavior in Modal functions/classes, verify those functions/classes mount that secret before assuming the flag is available everywhere.
 - If you touch `modal_app/agents.py::regulatory_agent`, preserve the non-VectorDB path: concurrent live API fetches, dedup against cached volume docs, cached-freshness reporting, and live-result write-back.
 - When adding or renaming source/document fields, update downstream readers, ranking logic, and tests in the same change.
-- Avoid silent architectural cleanup outside scope. If you discover dead paths, stale messages, or inconsistencies, note them in your final response unless the task asked you to fix them.
 
 ## Instructions for writing HTML documents when asked by the user
 

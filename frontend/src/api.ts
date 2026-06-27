@@ -132,6 +132,8 @@ export async function requestDeepDive(
 
 export interface PipelineStatus {
   metadata_ready: boolean
+  storage_backend?: string
+  warning?: string | null
   pipelines: Record<string, { doc_count: number; last_update: string | null; state: string }>
   enriched_docs: number
   gpu_status: Record<string, string>
@@ -141,6 +143,8 @@ export interface PipelineStatus {
 
 interface BackendPipelineStatus {
   metadata_ready: boolean
+  storage_backend?: string
+  warning?: string | null
   pipelines: Record<string, { doc_count: number; last_update: string | null; state: string }>
   enriched_docs: number
   total_docs: number
@@ -148,6 +152,8 @@ interface BackendPipelineStatus {
 
 export interface SourceSnapshot {
   metadata_ready: boolean
+  storage_backend?: string
+  warning?: string | null
   sources: DataSources
 }
 

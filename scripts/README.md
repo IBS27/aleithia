@@ -20,6 +20,11 @@ All scripts are grouped to keep repo operations explicit.
   - Requires `SUPERMEMORY_API_KEY`; optional paid service
   - Supported when Supermemory is used
 
+  - `sync_shared_data_to_s3.py`
+  - Dry-run by default; pass `--write` to copy shared runtime data from Modal Volume to S3-compatible object storage
+  - Requires Modal credentials plus `ALEITHIA_OBJECT_STORAGE_*` destination settings
+  - Use after changing `ALEITHIA_SHARED_DATA_BACKEND=s3` to verify/copy `raw/`, `processed/`, `cache/`, and `dedup/`
+
   - `test_pipelines.py`
   - Local pipeline harness with mocked Modal runtime
   - No external services required for core test path
@@ -47,3 +52,4 @@ All scripts are grouped to keep repo operations explicit.
 - `make pipeline-smoke`
 - `make dev-frontend`
 - `make dev-backend`
+- `.venv/bin/python scripts/maintenance/sync_shared_data_to_s3.py`

@@ -103,6 +103,22 @@ def test_social_trends_contract_no_data(monkeypatch) -> None:
     assert payload["source_counts"] == {"reddit": 0, "tiktok": 0}
 
 
+def test_social_trends_uses_bounded_source_windows(monkeypatch) -> None:
+    monkeypatch.setattr(web, "volume", _DummyVolume())
+    observed_limits: dict[str, int] = {}
+
+    def _fake_load_docs(source: str, limit: int = 200):
+        observed_limits[source] = limit
+        return []
+
+    monkeypatch.setattr(web, "_load_docs", _fake_load_docs)
+
+    payload = asyncio.run(web.social_trends("Loop", "Coffee Shop"))
+
+    assert payload["source_counts"] == {"reddit": 0, "tiktok": 0}
+    assert observed_limits == {"reddit": 48, "tiktok": 80}
+
+
 def test_social_trends_contract_with_mixed_data(monkeypatch) -> None:
     monkeypatch.setattr(web, "volume", _DummyVolume())
     _mock_social_docs(monkeypatch)
@@ -142,6 +158,46 @@ def test_social_trends_contract_with_mixed_data(monkeypatch) -> None:
         assert trend["title"].strip()
         assert trend["detail"].strip()
     assert rank_called["value"] is True
+
+
+def test_social_trends_openai_unavailable_uses_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(web, "volume", _DummyVolume())
+    _mock_social_docs(monkeypatch)
+
+    monkeypatch.setattr(openai_utils, "openai_available", lambda: False)
+
+    payload = asyncio.run(web.social_trends("Loop", "Coffee Shop"))
+
+    assert payload["source_counts"] == {"reddit": 1, "tiktok": 1}
+    assert len(payload["trends"]) == 3
+    assert all(trend["title"].strip() and trend["detail"].strip() for trend in payload["trends"])
+
+
+def test_social_trends_openai_timeout_uses_fallback(monkeypatch) -> None:
+    from modal_app.api.routes import neighborhoods as neighborhood_routes
+
+    class _SlowCompletions:
+        call_count = 0
+
+        async def create(self, **kwargs):
+            del kwargs
+            self.call_count += 1
+            await asyncio.sleep(0.05)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="{}"), finish_reason="stop")])
+
+    slow_completions = _SlowCompletions()
+    monkeypatch.setattr(web, "volume", _DummyVolume())
+    _mock_social_docs(monkeypatch)
+    monkeypatch.setattr(openai_utils, "openai_available", lambda: True)
+    monkeypatch.setattr(openai_utils, "get_openai_client", lambda: _FakeClient(slow_completions))
+    monkeypatch.setattr(openai_utils, "get_social_trends_model", lambda: "gpt-5-test")
+    monkeypatch.setattr(neighborhood_routes, "SOCIAL_TRENDS_OPENAI_TIMEOUT_SECONDS", 0.001)
+
+    payload = asyncio.run(web.social_trends("Loop", "Coffee Shop"))
+
+    assert slow_completions.call_count == 1
+    assert payload["source_counts"] == {"reddit": 1, "tiktok": 1}
+    assert len(payload["trends"]) == 3
 
 
 @pytest.mark.parametrize(

@@ -27,6 +27,7 @@ from modal_app.api.services.documents import (
     is_placeholder_doc,
     is_count_only_text,
     load_live_public_dataset_docs,
+    load_live_review_docs,
     load_public_dataset_docs,
     load_public_dataset_docs_for_neighborhood,
     load_docs,
@@ -44,7 +45,7 @@ from modal_app.api.services.tiktok import (
     profile_tiktok_freshness,
     rank_tiktok_docs,
 )
-from modal_app.common import CHICAGO_NEIGHBORHOODS, COMMUNITY_AREA_MAP
+from modal_app.common import CHICAGO_NEIGHBORHOODS, COMMUNITY_AREA_MAP, safe_volume_reload
 from modal_app.runtime import get_modal_function
 from modal_app.volume import volume
 from modal_app.pipelines.reddit import (
@@ -60,6 +61,17 @@ NEIGHBORHOOD_CCTV_TIMEOUT_SECONDS = 45.0
 NEIGHBORHOOD_CCTV_TIMESERIES_TIMEOUT_SECONDS = 10.0
 NEIGHBORHOOD_TRANSIT_TIMEOUT_SECONDS = 90.0
 NEIGHBORHOOD_PARKING_TIMEOUT_SECONDS = 10.0
+NEIGHBORHOOD_LIVE_REVIEWS_TIMEOUT_SECONDS = 10.0
+SOCIAL_TRENDS_OPENAI_TIMEOUT_SECONDS = 20.0
+NEIGHBORHOOD_SOURCE_LIMITS = {
+    "news": 48,
+    "politics": 48,
+    "reddit": 48,
+    "reviews": 64,
+    "realestate": 64,
+    "tiktok": 80,
+    "federal_register": 48,
+}
 
 
 def _uses_modal_volume_backend() -> bool:
@@ -67,13 +79,8 @@ def _uses_modal_volume_backend() -> bool:
 
 
 async def _reload_volume_if_needed(context: str) -> None:
-    if not _uses_modal_volume_backend():
-        return
-
-    try:
-        await volume.reload.aio()
-    except Exception as exc:
-        print(f"{context}_volume_reload_warning: {exc!r}")
+    if _uses_modal_volume_backend():
+        await safe_volume_reload(volume, context)
 
 
 async def _load_docs_bounded(source: str, limit: int = 200) -> list[dict]:
@@ -131,6 +138,21 @@ async def _load_public_dataset_docs_bounded(
         return await _run_loader(lambda: load_public_dataset_docs(dataset, limit))
     except Exception as exc:
         print(f"neighborhood_public_dataset_unavailable [{dataset}]: {exc!r}")
+        return []
+
+
+async def _load_live_reviews_bounded(
+    neighborhood: str,
+    business_type: str,
+    limit: int = 12,
+) -> list[dict]:
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(load_live_review_docs, neighborhood, business_type, limit),
+            timeout=NEIGHBORHOOD_LIVE_REVIEWS_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        print(f"neighborhood_live_reviews_unavailable: {exc!r}")
         return []
 
 
@@ -245,13 +267,13 @@ async def neighborhood(name: str, business_type: str = ""):
             _load_public_dataset_docs_bounded("food_inspections", 120, neighborhood=name),
             _load_public_dataset_docs_bounded("building_permits", 120, neighborhood=name),
             _load_public_dataset_docs_bounded("business_licenses", 120, neighborhood=name),
-            _load_docs_bounded("news", 32),
-            _load_docs_bounded("politics", 32),
-            _load_docs_bounded("reddit", 32),
-            _load_docs_bounded("reviews", 32),
-            _load_docs_bounded("realestate", 32),
-            _load_docs_bounded("tiktok", 48),
-            _load_docs_bounded("federal_register", 32),
+            _load_docs_bounded("news", NEIGHBORHOOD_SOURCE_LIMITS["news"]),
+            _load_docs_bounded("politics", NEIGHBORHOOD_SOURCE_LIMITS["politics"]),
+            _load_docs_bounded("reddit", NEIGHBORHOOD_SOURCE_LIMITS["reddit"]),
+            _load_docs_bounded("reviews", NEIGHBORHOOD_SOURCE_LIMITS["reviews"]),
+            _load_docs_bounded("realestate", NEIGHBORHOOD_SOURCE_LIMITS["realestate"]),
+            _load_docs_bounded("tiktok", NEIGHBORHOOD_SOURCE_LIMITS["tiktok"]),
+            _load_docs_bounded("federal_register", NEIGHBORHOOD_SOURCE_LIMITS["federal_register"]),
             return_exceptions=True,
         )
         normalized_results: list[list[dict]] = []
@@ -305,6 +327,8 @@ async def neighborhood(name: str, business_type: str = ""):
             min_score=0,
         )
         reviews_docs = filter_by_neighborhood(all_reviews, name)
+        if not reviews_docs:
+            reviews_docs = await _load_live_reviews_bounded(name, business_type)
         realestate_docs = filter_by_neighborhood(all_realestate, name)
         tiktok_docs = rank_tiktok_docs(all_tiktok_profile, business_type, name)
         federal_docs = _dedupe_docs_by_identity(
@@ -732,8 +756,14 @@ async def social_trends(neighborhood: str, business_type: str = ""):
         if neighborhood.lower() not in valid_neighborhood_names():
             return JSONResponse({"error": f"Unknown neighborhood: {neighborhood}"}, status_code=404)
 
-        all_reddit = load_docs("reddit")
-        all_tiktok = [normalize_tiktok_doc(doc) for doc in load_docs("tiktok")]
+        reddit_limit = NEIGHBORHOOD_SOURCE_LIMITS["reddit"]
+        tiktok_limit = NEIGHBORHOOD_SOURCE_LIMITS["tiktok"]
+        all_reddit, tiktok_raw_docs = await asyncio.gather(
+            _load_docs_bounded("reddit", reddit_limit),
+            _load_docs_bounded("tiktok", tiktok_limit),
+        )
+        all_reddit = [doc for doc in all_reddit if not is_placeholder_doc(doc)]
+        all_tiktok = [normalize_tiktok_doc(doc) for doc in tiktok_raw_docs if not is_placeholder_doc(doc)]
 
         reddit_docs = rank_reddit_docs(
             filter_by_neighborhood(all_reddit, neighborhood),
@@ -792,41 +822,43 @@ async def social_trends(neighborhood: str, business_type: str = ""):
         msgs = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
         retry_used = False
         fallback_used = False
-        if not openai_available():
-            return JSONResponse(
-                {"error": "Social trends synthesis unavailable: OpenAI not configured"},
-                status_code=503,
-            )
+        raw = ""
+        model_call_failed = False
 
-        try:
-            client = get_openai_client()
-            social_model = get_social_trends_model()
-            create_kwargs = build_chat_kwargs(
-                social_model,
-                msgs,
-                max_completion_tokens=512,
-                gpt5_max_completion_tokens=2048,
-                temperature=0.4,
-                response_format={"type": "json_object"},
-            )
-            oai_resp = await client.chat.completions.create(**create_kwargs)
-            raw = oai_resp.choices[0].message.content or ""
-            choice = oai_resp.choices[0]
-            finish = getattr(choice, "finish_reason", None)
-            usage = getattr(oai_resp, "usage", None)
-            print(f"[social-trends] model={social_model} finish_reason={finish} usage={usage} raw_preview={raw[:200]!r}")
-        except Exception as exc:
-            print(f"[social-trends] OpenAI call failed: {exc!r}")
-            return JSONResponse(
-                {"error": f"Social trends synthesis unavailable: OpenAI failed ({exc})"},
-                status_code=503,
-            )
+        if openai_available():
+            try:
+                client = get_openai_client()
+                social_model = get_social_trends_model()
+                create_kwargs = build_chat_kwargs(
+                    social_model,
+                    msgs,
+                    max_completion_tokens=512,
+                    gpt5_max_completion_tokens=2048,
+                    temperature=0.4,
+                    response_format={"type": "json_object"},
+                )
+                oai_resp = await asyncio.wait_for(
+                    client.chat.completions.create(**create_kwargs),
+                    timeout=SOCIAL_TRENDS_OPENAI_TIMEOUT_SECONDS,
+                )
+                raw = oai_resp.choices[0].message.content or ""
+                choice = oai_resp.choices[0]
+                finish = getattr(choice, "finish_reason", None)
+                usage = getattr(oai_resp, "usage", None)
+                print(f"[social-trends] model={social_model} finish_reason={finish} usage={usage} raw_preview={raw[:200]!r}")
+            except Exception as exc:
+                model_call_failed = True
+                print(f"[social-trends] OpenAI call failed; using deterministic fallback: {exc!r}")
+        else:
+            print("[social-trends] OpenAI not configured; using deterministic fallback")
 
         validated = _parse_social_trends_response(raw)
-        if not validated:
+        if not validated and openai_available() and not model_call_failed:
             try:
                 retry_used = True
                 client = get_openai_client()
+                if client is None:
+                    raise RuntimeError("OpenAI client unavailable")
                 social_model = get_social_trends_model()
                 retry_msgs = [
                     {"role": "system", "content": "Return valid JSON only with shape {\"trends\":[{\"title\":\"...\",\"detail\":\"...\"}, ...]} and exactly 3 items. No markdown, no explanation."},
@@ -840,7 +872,10 @@ async def social_trends(neighborhood: str, business_type: str = ""):
                     temperature=0.4,
                     response_format={"type": "json_object"},
                 )
-                retry_resp = await client.chat.completions.create(**retry_kwargs)
+                retry_resp = await asyncio.wait_for(
+                    client.chat.completions.create(**retry_kwargs),
+                    timeout=SOCIAL_TRENDS_OPENAI_TIMEOUT_SECONDS,
+                )
                 retry_raw = retry_resp.choices[0].message.content or ""
                 retry_choice = retry_resp.choices[0]
                 retry_finish = getattr(retry_choice, "finish_reason", None)

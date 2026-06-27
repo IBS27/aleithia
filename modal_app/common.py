@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from datetime import datetime, timezone
 from enum import Enum
@@ -736,16 +737,24 @@ async def safe_volume_reload(vol, source: str = "") -> bool:
         print(f"safe_volume_reload{label}: shared backend check unavailable: {exc}")
 
     try:
+        try:
+            timeout_seconds = max(
+                0.1,
+                float(os.getenv("ALEITHIA_MODAL_VOLUME_RELOAD_TIMEOUT_SECONDS", "5")),
+            )
+        except ValueError:
+            timeout_seconds = 5.0
+
         reload_attr = getattr(vol, "reload", None)
         if reload_attr is None:
             return True
         reload_aio = getattr(reload_attr, "aio", None)
         if callable(reload_aio):
-            await reload_aio()
+            await asyncio.wait_for(reload_aio(), timeout=timeout_seconds)
         else:
             result = reload_attr()
             if hasattr(result, "__await__"):
-                await result
+                await asyncio.wait_for(result, timeout=timeout_seconds)
         return True
     except Exception as e:
         label = f" [{source}]" if source else ""

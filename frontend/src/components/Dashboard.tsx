@@ -251,6 +251,42 @@ function computeRiskScore(data: NeighborhoodData, profile: UserProfile): RiskSco
   }
 }
 
+function fallbackSocialTrends(data: NeighborhoodData, profile: UserProfile): SocialTrend[] {
+  const redditDocs = data.reddit || []
+  const tiktokDocs = data.tiktok || []
+  const socialDocs = [...redditDocs, ...tiktokDocs]
+  if (socialDocs.length === 0) return []
+
+  const business = profile.business_type || 'business'
+  const neighborhood = profile.neighborhood || data.neighborhood
+  const trends: SocialTrend[] = []
+
+  if (tiktokDocs.length > 0) {
+    const topTikTok = tiktokDocs[0]
+    const title = (topTikTok.title || 'Short-form attention').trim()
+    trends.push({
+      title: 'Short-Form Attention',
+      detail: `${tiktokDocs.length} TikTok signal${tiktokDocs.length === 1 ? '' : 's'} mention nearby demand patterns. The strongest visible cue is "${title}", which is worth checking against daypart traffic before positioning a ${business.toLowerCase()} in ${neighborhood}.`,
+    })
+  }
+
+  if (redditDocs.length > 0) {
+    const topReddit = redditDocs[0]
+    const title = (topReddit.title || 'local discussion').trim()
+    trends.push({
+      title: 'Local Discussion Watch',
+      detail: `${redditDocs.length} Reddit discussion${redditDocs.length === 1 ? '' : 's'} are indexed for this area, led by "${title}". Treat this as qualitative neighborhood context for pricing, hours, and customer expectations.`,
+    })
+  }
+
+  trends.push({
+    title: 'Community Signal Overview',
+    detail: `${socialDocs.length} social item${socialDocs.length === 1 ? '' : 's'} are available for ${neighborhood}. Use them as directional evidence alongside reviews, permits, and inspections rather than as a standalone demand forecast.`,
+  })
+
+  return trends.slice(0, 3)
+}
+
 interface Props {
   profile: UserProfile
   onReset: () => void
@@ -308,7 +344,7 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
 
         setSources(snapshot.sources)
         setSourcesMetadataReady(true)
-        setSourcesWarning(null)
+        setSourcesWarning(snapshot.warning ?? null)
       } catch (err) {
         setSourcesMetadataReady(false)
         setSourcesWarning(`Source metadata unavailable: ${toErrorMessage(err)}`)
@@ -355,6 +391,13 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
       return
     }
 
+    if (!neighborhoodData || neighborhoodData.neighborhood !== profile.neighborhood) {
+      setSocialTrends([])
+      setSocialLoading(true)
+      setSocialError(null)
+      return
+    }
+
     let cancelled = false
     setSocialLoading(true)
     setSocialError(null)
@@ -362,17 +405,25 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
 
     api.socialTrends(profile.neighborhood, profile.business_type)
       .then((data) => {
-        if (!cancelled) setSocialTrends(data.trends)
+        if (!cancelled) setSocialTrends(data.trends.length > 0 ? data.trends : fallbackSocialTrends(neighborhoodData, profile))
       })
       .catch((err) => {
-        if (!cancelled) setSocialError(err instanceof Error ? err.message : 'Failed to load social trends')
+        if (!cancelled) {
+          const fallback = fallbackSocialTrends(neighborhoodData, profile)
+          if (fallback.length > 0) {
+            setSocialTrends(fallback)
+            setSocialError(null)
+          } else {
+            setSocialError(err instanceof Error ? err.message : 'Failed to load social trends')
+          }
+        }
       })
       .finally(() => {
         if (!cancelled) setSocialLoading(false)
       })
 
     return () => { cancelled = true }
-  }, [profile.neighborhood, profile.business_type])
+  }, [profile.neighborhood, profile.business_type, neighborhoodData])
 
   const sourceList = sources
     ? (Object.entries(sources) as Array<[string, { count: number; active: boolean }]>).map(([name, info]) => ({

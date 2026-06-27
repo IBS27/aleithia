@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import time
+
 from fastapi.testclient import TestClient
 
 
@@ -15,6 +18,26 @@ def _public_doc(doc_id: str, dataset: str, *, lat: object = "", lng: object = ""
         },
         "geo": geo if geo is not None else {"lat": lat, "lng": lng, "neighborhood": "", "community_area": ""},
     }
+
+
+def test_neighborhood_volume_reload_is_bounded(monkeypatch) -> None:
+    from modal_app.api.routes import neighborhoods as neighborhood_routes
+
+    class SlowReload:
+        async def aio(self) -> None:
+            await asyncio.sleep(1)
+
+    class SlowVolume:
+        reload = SlowReload()
+
+    monkeypatch.setenv("ALEITHIA_SHARED_DATA_BACKEND", "modal")
+    monkeypatch.setenv("ALEITHIA_MODAL_VOLUME_RELOAD_TIMEOUT_SECONDS", "0.01")
+    monkeypatch.setattr(neighborhood_routes, "volume", SlowVolume())
+
+    started = time.monotonic()
+    asyncio.run(neighborhood_routes._reload_volume_if_needed("test"))
+
+    assert time.monotonic() - started < 0.5
 
 
 def test_modal_neighborhood_profile_uses_actual_source_matches(monkeypatch) -> None:
@@ -136,6 +159,145 @@ def test_modal_neighborhood_profile_uses_actual_source_matches(monkeypatch) -> N
     assert [doc["id"] for doc in payload["federal_register"]] == ["fed-2026-08108"]
     assert payload["tiktok_refresh"]["reason"] == "profile_route_read_only"
     assert payload["transit"]["stations_nearby"] == 4
+
+
+def test_modal_neighborhood_profile_uses_wider_citywide_source_windows(monkeypatch) -> None:
+    from modal_app.api.routes import neighborhoods as neighborhood_routes
+    from modal_app.web import web_app
+
+    observed_limits: dict[str, int] = {}
+
+    def fake_load_docs(source: str, limit: int = 200) -> list[dict]:
+        observed_limits[source] = limit
+        if source == "reviews":
+            docs = [
+                {
+                    "id": "review-other",
+                    "title": "Logan Square cafe",
+                    "content": "Rating: 4.5/5.",
+                    "geo": {"neighborhood": "Logan Square"},
+                    "metadata": {"rating": 4.5, "categories": ["Coffee"]},
+                }
+            ]
+            if limit > 32:
+                docs.append(
+                    {
+                        "id": "review-loop",
+                        "title": "Loop cafe",
+                        "content": "Rating: 4.6/5.",
+                        "geo": {},
+                        "metadata": {"neighborhood": "Loop", "rating": 4.6, "categories": ["Coffee"]},
+                    }
+                )
+            return docs
+        if source == "realestate":
+            docs = [
+                {
+                    "id": "listing-placeholder",
+                    "title": "Demo listing",
+                    "content": "Placeholder",
+                    "geo": {"neighborhood": "Loop"},
+                    "metadata": {"is_placeholder": True},
+                }
+            ]
+            if limit > 32:
+                docs.append(
+                    {
+                        "id": "listing-loop",
+                        "title": "Loop retail lease",
+                        "content": "Retail space in the Loop.",
+                        "geo": {"neighborhood": "Loop"},
+                        "metadata": {"listing_type": "lease", "price": "$4,000/mo"},
+                    }
+                )
+            return docs
+        if source == "reddit":
+            return [
+                {
+                    "id": "reddit-loop",
+                    "title": "Coffee demand in Loop",
+                    "content": "Office workers want faster coffee options.",
+                    "geo": {"neighborhood": "Loop"},
+                    "metadata": {"score": 12, "num_comments": 4},
+                }
+            ] if limit > 32 else []
+        return []
+
+    async def fake_public_dataset_loader(dataset: str, limit: int = 200, *, neighborhood: str | None = None) -> list[dict]:
+        del dataset, limit, neighborhood
+        return []
+
+    monkeypatch.setattr(neighborhood_routes, "_load_public_dataset_docs_bounded", fake_public_dataset_loader)
+    monkeypatch.setattr(neighborhood_routes, "load_docs", fake_load_docs)
+    monkeypatch.setattr(neighborhood_routes, "compute_transit_score", lambda name: {"stations_nearby": 0, "total_daily_riders": 0, "transit_score": 0, "station_names": []})
+    monkeypatch.setattr(neighborhood_routes, "load_parking_for_neighborhood", lambda name: None)
+
+    async def fake_load_cctv_for_neighborhood(name: str) -> dict:
+        return {"cameras": [], "avg_pedestrians": 0, "avg_vehicles": 0, "density": "unknown"}
+
+    async def fake_aggregate_timeseries_for_neighborhood(name: str, camera_ids=None) -> dict:
+        return {}
+
+    monkeypatch.setattr(neighborhood_routes, "load_cctv_for_neighborhood", fake_load_cctv_for_neighborhood)
+    monkeypatch.setattr(neighborhood_routes, "aggregate_timeseries_for_neighborhood", fake_aggregate_timeseries_for_neighborhood)
+
+    payload = TestClient(web_app).get("/neighborhood/Loop?business_type=Coffee%20Shop").json()
+
+    assert observed_limits["reviews"] > 32
+    assert observed_limits["realestate"] > 32
+    assert observed_limits["reddit"] > 32
+    assert observed_limits["news"] > 32
+    assert observed_limits["politics"] > 32
+    assert observed_limits["federal_register"] > 32
+    assert [doc["id"] for doc in payload["reviews"]] == ["review-loop"]
+    assert [doc["id"] for doc in payload["realestate"]] == ["listing-loop"]
+    assert [doc["id"] for doc in payload["reddit"]] == ["reddit-loop"]
+
+
+def test_modal_neighborhood_profile_fetches_live_reviews_when_cache_has_no_match(monkeypatch) -> None:
+    from modal_app.api.routes import neighborhoods as neighborhood_routes
+    from modal_app.web import web_app
+
+    async def fake_public_dataset_loader(dataset: str, limit: int = 200, *, neighborhood: str | None = None) -> list[dict]:
+        del dataset, limit, neighborhood
+        return []
+
+    def fake_load_docs(source: str, limit: int = 200) -> list[dict]:
+        del source, limit
+        return []
+
+    def fake_live_reviews(neighborhood: str, business_type: str = "", limit: int = 12) -> list[dict]:
+        assert neighborhood == "Loop"
+        assert business_type == "Coffee Shop"
+        assert limit == 12
+        return [
+            {
+                "id": "gplaces-live-loop-cafe",
+                "title": "Loop Cafe",
+                "content": "Loop Cafe — Rating: 4.7/5 (120 reviews).",
+                "geo": {"neighborhood": "Loop"},
+                "metadata": {"rating": 4.7, "review_count": 120, "categories": ["Coffee"]},
+            }
+        ]
+
+    monkeypatch.setattr(neighborhood_routes, "_load_public_dataset_docs_bounded", fake_public_dataset_loader)
+    monkeypatch.setattr(neighborhood_routes, "load_docs", fake_load_docs)
+    monkeypatch.setattr(neighborhood_routes, "load_live_review_docs", fake_live_reviews)
+    monkeypatch.setattr(neighborhood_routes, "compute_transit_score", lambda name: {"stations_nearby": 0, "total_daily_riders": 0, "transit_score": 0, "station_names": []})
+    monkeypatch.setattr(neighborhood_routes, "load_parking_for_neighborhood", lambda name: None)
+
+    async def fake_load_cctv_for_neighborhood(name: str) -> dict:
+        return {"cameras": [], "avg_pedestrians": 0, "avg_vehicles": 0, "density": "unknown"}
+
+    async def fake_aggregate_timeseries_for_neighborhood(name: str, camera_ids=None) -> dict:
+        return {}
+
+    monkeypatch.setattr(neighborhood_routes, "load_cctv_for_neighborhood", fake_load_cctv_for_neighborhood)
+    monkeypatch.setattr(neighborhood_routes, "aggregate_timeseries_for_neighborhood", fake_aggregate_timeseries_for_neighborhood)
+
+    payload = TestClient(web_app).get("/neighborhood/Loop?business_type=Coffee%20Shop").json()
+
+    assert [doc["id"] for doc in payload["reviews"]] == ["gplaces-live-loop-cafe"]
 
 
 def test_modal_neighborhood_public_dataset_falls_back_to_cached_docs(monkeypatch) -> None:

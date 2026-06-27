@@ -984,6 +984,14 @@
           still needs a filesystem boundary, such as generated-code sandboxes and YOLO training
           artifacts.
         </p>
+
+        <p>
+          Before switching a runtime to <code>ALEITHIA_SHARED_DATA_BACKEND=s3</code>, run
+          <code>.venv/bin/python scripts/maintenance/sync_shared_data_to_s3.py</code> as a dry-run,
+          then rerun with <code>--write</code> once the destination bucket and prefix are confirmed.
+          An empty <code>runtime/raw</code> or <code>runtime/processed</code> prefix will make the UI
+          look healthy but sparsely populated.
+        </p>
       </section>
 
     </div>
