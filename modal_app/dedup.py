@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from backend.shared_data import get_dedup_data_dir, load_json_file, shared_data_lock, write_json_file
 
@@ -52,6 +53,29 @@ def _dedup_lock_settings() -> tuple[float, float, float]:
     return timeout_seconds, poll_seconds, stale_seconds
 
 
+def _parse_dedup_payload(data: Any) -> tuple[list[str], dict[str, str]] | None:
+    if isinstance(data, list):
+        return [doc_id for doc_id in data if isinstance(doc_id, str)], {}
+
+    if isinstance(data, dict):
+        raw_ids = data.get("ids", [])
+        if not isinstance(raw_ids, list):
+            return [], {}
+
+        ids = [doc_id for doc_id in raw_ids if isinstance(doc_id, str)]
+        raw_seen_at = data.get("seen_at", {})
+        seen_at: dict[str, str] = {}
+        if isinstance(raw_seen_at, dict):
+            seen_at = {
+                key: str(value)
+                for key, value in raw_seen_at.items()
+                if isinstance(key, str)
+            }
+        return ids, seen_at
+
+    return None
+
+
 class SeenSet:
     """Persistent set of document IDs for cross-run deduplication.
 
@@ -79,24 +103,12 @@ class SeenSet:
         try:
             if self.file.exists():
                 data = load_json_file(self.file, default=None)
-                if isinstance(data, list):
-                    self._list = data
-                    self._set = set(data)
-                    self._seen_at = {}
+                parsed = _parse_dedup_payload(data)
+                if parsed is not None:
+                    self._list, self._seen_at = parsed
+                    self._set = set(self._list)
                     print(f"SeenSet [{self.source}]: loaded {len(self._set)} IDs")
                     return
-                if isinstance(data, dict):
-                    ids = data.get("ids", [])
-                    seen_at = data.get("seen_at", {})
-                    if isinstance(ids, list):
-                        self._list = ids
-                        self._set = set(ids)
-                        if isinstance(seen_at, dict):
-                            self._seen_at = {
-                                k: str(v) for k, v in seen_at.items() if isinstance(k, str)
-                            }
-                        print(f"SeenSet [{self.source}]: loaded {len(self._set)} IDs")
-                        return
         except Exception as e:
             print(f"SeenSet [{self.source}]: load error: {e}")
         print(f"SeenSet [{self.source}]: starting empty")
@@ -188,11 +200,9 @@ class SeenSet:
                 disk_seen_at: dict[str, str] = {}
                 if self.file.exists():
                     data = load_json_file(self.file, default=None)
-                    if isinstance(data, list):
-                        disk_ids = data
-                    elif isinstance(data, dict):
-                        disk_ids = data.get("ids", [])
-                        disk_seen_at = data.get("seen_at", {})
+                    parsed = _parse_dedup_payload(data)
+                    if parsed is not None:
+                        disk_ids, disk_seen_at = parsed
 
                 # Merge: disk IDs first, then our in-memory IDs (preserves order)
                 merged_set = set(disk_ids)

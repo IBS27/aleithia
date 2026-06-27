@@ -119,6 +119,46 @@ def test_social_trends_uses_bounded_source_windows(monkeypatch) -> None:
     assert observed_limits == {"reddit": 48, "tiktok": 80}
 
 
+def test_social_trends_filters_low_quality_tiktok_docs(monkeypatch) -> None:
+    from modal_app.api.routes import neighborhoods as neighborhood_routes
+
+    monkeypatch.setattr(web, "volume", _DummyVolume())
+
+    def _fake_load_docs(source: str, limit: int = 200):
+        del limit
+        if source == "tiktok":
+            return [
+                {
+                    "id": "low",
+                    "title": "TikTok video",
+                    "content": "",
+                    "metadata": {},
+                    "geo": {"neighborhood": "Loop"},
+                },
+                {
+                    "id": "good",
+                    "title": "Loop cafe demand",
+                    "content": "Coffee lines are growing.",
+                    "metadata": {"views": "12K"},
+                    "geo": {"neighborhood": "Loop"},
+                },
+            ]
+        return []
+
+    monkeypatch.setattr(web, "_load_docs", _fake_load_docs)
+    monkeypatch.setattr(web, "_rank_tiktok_docs", lambda docs, *_args, **_kwargs: docs)
+    monkeypatch.setattr(
+        neighborhood_routes,
+        "is_low_quality_tiktok_doc",
+        lambda doc: doc.get("id") == "low",
+    )
+    monkeypatch.setattr(openai_utils, "openai_available", lambda: False)
+
+    payload = asyncio.run(web.social_trends("Loop", "Coffee Shop"))
+
+    assert payload["source_counts"] == {"reddit": 0, "tiktok": 1}
+
+
 def test_social_trends_contract_with_mixed_data(monkeypatch) -> None:
     monkeypatch.setattr(web, "volume", _DummyVolume())
     _mock_social_docs(monkeypatch)

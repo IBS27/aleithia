@@ -135,3 +135,27 @@ def test_shared_data_sync_accepts_direct_file_prefix() -> None:
     assert result.discovered == 1
     assert result.copied == 1
     assert destination.objects["processed/demographics_summary.json"] == b'{"city_wide":{}}'
+
+
+def test_shared_data_sync_skips_dedup_lock_files() -> None:
+    source = MemoryAccessor(
+        {
+            "dedup/news.json": b'{"ids":[]}',
+            "dedup/news.lock": b'{"owner":"stale"}',
+            "dedup/archive/old.lock": b"stale",
+        }
+    )
+    destination = MemoryAccessor()
+
+    result = sync_shared_data_to_s3.sync_prefix(
+        source=source,
+        destination=destination,
+        prefix="dedup",
+        write=True,
+        overwrite=False,
+    )
+
+    assert result.discovered == 1
+    assert result.copied == 1
+    assert destination.objects == {"dedup/news.json": b'{"ids":[]}'}
+    assert sync_shared_data_to_s3.iter_source_files(source, "dedup/news.lock") == []

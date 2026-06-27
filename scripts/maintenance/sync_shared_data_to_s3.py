@@ -29,6 +29,10 @@ from backend.shared_data import (  # noqa: E402
 DEFAULT_PREFIXES = ("raw", "processed", "cache", "dedup")
 
 
+def _is_syncable_file(entry: SharedFileEntry) -> bool:
+    return entry.is_file and not entry.path.endswith(".lock")
+
+
 @dataclass
 class PrefixSyncResult:
     prefix: str
@@ -41,10 +45,13 @@ class PrefixSyncResult:
 
 def iter_source_files(accessor: SharedDataAccessor, prefix: str) -> list[SharedFileEntry]:
     direct = accessor.get_entry(prefix)
-    if direct is not None and direct.is_file:
+    if direct is not None and _is_syncable_file(direct):
         return [direct]
     entries = accessor.list_entries(prefix, recursive=True)
-    return sorted((entry for entry in entries if entry.is_file), key=lambda entry: entry.path)
+    return sorted(
+        (entry for entry in entries if _is_syncable_file(entry)),
+        key=lambda entry: entry.path,
+    )
 
 
 def list_existing_destination_files(accessor: SharedDataAccessor, prefix: str) -> set[str]:

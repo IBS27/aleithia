@@ -241,6 +241,7 @@ async def neighborhood(name: str, business_type: str = ""):
     span_ctx = tracer.start_as_current_span("neighborhood-profile") if tracer else None
     span = span_ctx.__enter__() if span_ctx else None
     try:
+        await _reload_volume_if_needed("neighborhood")
         if span:
             span.set_attribute("openinference.span.kind", "CHAIN")
             span.set_attribute("input.value", name)
@@ -764,6 +765,7 @@ async def social_trends(neighborhood: str, business_type: str = ""):
         )
         all_reddit = [doc for doc in all_reddit if not is_placeholder_doc(doc)]
         all_tiktok = [normalize_tiktok_doc(doc) for doc in tiktok_raw_docs if not is_placeholder_doc(doc)]
+        all_tiktok = [doc for doc in all_tiktok if not is_low_quality_tiktok_doc(doc)]
 
         reddit_docs = rank_reddit_docs(
             filter_by_neighborhood(all_reddit, neighborhood),

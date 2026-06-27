@@ -901,7 +901,15 @@ def compute_transit_score(neighborhood_name: str) -> dict:
     processed_dir = get_processed_data_dir()
 
     def _compute() -> dict:
-        centroid = NEIGHBORHOOD_CENTROIDS.get(neighborhood_name)
+        neighborhood_key = next(
+            (
+                name
+                for name in NEIGHBORHOOD_CENTROIDS
+                if name.lower() == (neighborhood_name or "").strip().lower()
+            ),
+            (neighborhood_name or "").strip(),
+        )
+        centroid = NEIGHBORHOOD_CENTROIDS.get(neighborhood_key)
         if not centroid:
             return {"stations_nearby": 0, "total_daily_riders": 0, "transit_score": 0, "station_names": []}
 

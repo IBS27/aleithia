@@ -40,6 +40,65 @@ def test_neighborhood_volume_reload_is_bounded(monkeypatch) -> None:
     assert time.monotonic() - started < 0.5
 
 
+def test_modal_neighborhood_profile_reloads_before_source_reads(monkeypatch) -> None:
+    from modal_app.api.routes import neighborhoods as neighborhood_routes
+
+    events: list[str] = []
+
+    async def fake_reload(context: str) -> None:
+        events.append(f"reload:{context}")
+
+    async def fake_public_dataset_loader(
+        dataset: str,
+        limit: int = 200,
+        *,
+        neighborhood: str | None = None,
+    ) -> list[dict]:
+        del limit, neighborhood
+        assert events and events[0] == "reload:neighborhood"
+        events.append(f"public:{dataset}")
+        return []
+
+    async def fake_docs_loader(source: str, limit: int = 200) -> list[dict]:
+        del limit
+        assert events and events[0] == "reload:neighborhood"
+        events.append(f"docs:{source}")
+        return []
+
+    async def fake_live_reviews(neighborhood: str, business_type: str = "") -> list[dict]:
+        del neighborhood, business_type
+        return []
+
+    async def fake_load_cctv_for_neighborhood(name: str) -> dict:
+        del name
+        return {"cameras": [], "avg_pedestrians": 0, "avg_vehicles": 0, "density": "unknown"}
+
+    monkeypatch.setattr(neighborhood_routes, "_reload_volume_if_needed", fake_reload)
+    monkeypatch.setattr(neighborhood_routes, "_load_public_dataset_docs_bounded", fake_public_dataset_loader)
+    monkeypatch.setattr(neighborhood_routes, "_load_docs_bounded", fake_docs_loader)
+    monkeypatch.setattr(neighborhood_routes, "_load_live_reviews_bounded", fake_live_reviews)
+    monkeypatch.setattr(neighborhood_routes, "compute_metrics", lambda *args, **kwargs: {})
+    monkeypatch.setattr(neighborhood_routes, "aggregate_demographics", lambda name: {})
+    monkeypatch.setattr(
+        neighborhood_routes,
+        "compute_transit_score",
+        lambda name: {
+            "stations_nearby": 0,
+            "total_daily_riders": 0,
+            "transit_score": 0,
+            "station_names": [],
+        },
+    )
+    monkeypatch.setattr(neighborhood_routes, "load_parking_for_neighborhood", lambda name: None)
+    monkeypatch.setattr(neighborhood_routes, "load_cctv_for_neighborhood", fake_load_cctv_for_neighborhood)
+
+    payload = asyncio.run(neighborhood_routes.neighborhood("Loop"))
+
+    assert payload["neighborhood"] == "Loop"
+    assert events[0] == "reload:neighborhood"
+    assert "docs:news" in events
+
+
 def test_modal_neighborhood_profile_uses_actual_source_matches(monkeypatch) -> None:
     from modal_app.api.routes import neighborhoods as neighborhood_routes
     from modal_app.web import web_app
@@ -513,6 +572,30 @@ def test_compute_transit_score_uses_cached_ridership(monkeypatch, tmp_path) -> N
     assert score["stations_nearby"] == 1
     assert score["station_names"] == ["Clark/Lake"]
     assert score["total_daily_riders"] == 13500
+    assert score["transit_score"] == 100
+
+
+def test_compute_transit_score_normalizes_neighborhood_name(monkeypatch, tmp_path) -> None:
+    from modal_app.api.services import documents
+    from modal_app.common import NEIGHBORHOOD_CENTROIDS
+
+    lat, lng = NEIGHBORHOOD_CENTROIDS["Loop"]
+    documents.cache.invalidate_prefix("cta:")
+    monkeypatch.setattr(documents, "get_processed_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        documents,
+        "load_cta_stations",
+        lambda: [{"station_name": "Clark/Lake", "lat": lat, "lng": lng}],
+    )
+    monkeypatch.setattr(
+        documents,
+        "load_cta_ridership_by_station",
+        lambda: {"clarklake": {"avg_weekday_rides": 13500}},
+    )
+
+    score = documents.compute_transit_score("loop")
+
+    assert score["stations_nearby"] == 1
     assert score["transit_score"] == 100
 
 

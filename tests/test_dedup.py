@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import json
 
 import modal_app.dedup as dedup_mod
 
@@ -42,3 +43,19 @@ def test_seen_set_lock_timeout_extends_past_configured_stale(monkeypatch) -> Non
     assert stale_seconds == 90
     assert timeout_seconds == 120
     assert poll_seconds == dedup_mod.DEFAULT_DEDUP_LOCK_POLL_SECONDS
+
+
+def test_seen_set_save_recovers_from_malformed_disk_ids(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(dedup_mod, "DEDUP_PATH", tmp_path)
+    (tmp_path / "news.json").write_text(json.dumps(["disk-doc", {"bad": "shape"}, 17]))
+
+    seen = dedup_mod.SeenSet("news")
+    seen.add("memory-doc", seen_at="2026-06-27T00:00:00+00:00")
+    seen.save()
+
+    payload = json.loads((tmp_path / "news.json").read_text())
+    assert payload["ids"] == ["disk-doc", "memory-doc"]
+    assert payload["seen_at"] == {
+        "disk-doc": "",
+        "memory-doc": "2026-06-27T00:00:00+00:00",
+    }
