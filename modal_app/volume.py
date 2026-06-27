@@ -1,7 +1,10 @@
 """Modal app definition, volume, and image configuration."""
 import modal
 
+from modal_app.cost_controls import apply_modal_cost_controls
+
 app = modal.App("alethia")
+apply_modal_cost_controls(app)
 
 volume = modal.Volume.from_name("alethia-data", create_if_missing=True)
 

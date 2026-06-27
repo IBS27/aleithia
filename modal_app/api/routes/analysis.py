@@ -25,6 +25,7 @@ from backend.shared_data import (
     read_file_bytes,
 )
 from modal_app.common import safe_volume_reload
+from modal_app.cost_controls import demos_enabled
 from modal_app.runtime import ENABLE_CCTV_ANALYSIS, get_modal_cls, get_modal_function
 from modal_app.volume import app, sandbox_image, volume
 
@@ -414,6 +415,14 @@ async def gpu_metrics(probe_h100: bool = False):
 
 @router.post("/demo/scale")
 async def demo_scale(request: Request):
+    if not demos_enabled():
+        return JSONResponse(
+            {
+                "error": "Scaling demo is disabled by default to prevent accidental Modal spend.",
+                "enable_with": "ALETHIA_MODAL_ENABLE_DEMOS=1",
+            },
+            status_code=403,
+        )
     body = await request.json() if request.headers.get("content-type") == "application/json" else {}
     demo_fn = get_modal_function("scaling_demo")
     return await demo_fn.remote.aio(

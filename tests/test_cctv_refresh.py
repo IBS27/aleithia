@@ -59,6 +59,7 @@ def _synthetic_cctv_payload(camera_id: str = "synth-loop-1") -> dict:
 
 
 def test_load_cctv_latest_index_triggers_refresh_when_stale(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cctv_service, "ENABLE_CCTV_ANALYSIS", True)
     index_path = tmp_path / "latest_by_camera.json"
     index_path.write_text(json.dumps({"cam-1": {"camera_id": "cam-1", "timestamp": "2026-03-03T00:00:00+00:00"}}))
 
@@ -86,6 +87,7 @@ def test_load_cctv_latest_index_triggers_refresh_when_stale(tmp_path, monkeypatc
 
 
 def test_load_cctv_latest_index_skips_refresh_when_fresh(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cctv_service, "ENABLE_CCTV_ANALYSIS", True)
     index_path = tmp_path / "latest_by_camera.json"
     index_path.write_text(json.dumps({"cam-1": {"camera_id": "cam-1", "timestamp": "2026-03-03T00:00:00+00:00"}}))
 

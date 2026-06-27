@@ -19,7 +19,9 @@ def env_flag(name: str, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
-ENABLE_CCTV_ANALYSIS = env_flag("ENABLE_CCTV_ANALYSIS", default=True)
+# Real CCTV frame analysis uses GPU workers. Keep it opt-in; API routes fall
+# back to synthetic CCTV analytics when this is disabled.
+ENABLE_CCTV_ANALYSIS = env_flag("ENABLE_CCTV_ANALYSIS", default=False)
 
 
 def get_modal_function(name: str) -> modal.Function:

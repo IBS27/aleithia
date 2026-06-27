@@ -132,6 +132,11 @@ def test_modal_neighborhood_profile_uses_actual_source_matches(monkeypatch) -> N
         "load_live_public_dataset_docs",
         lambda dataset, neighborhood, limit=200: public_by_dataset.get(dataset, []),
     )
+    monkeypatch.setattr(
+        neighborhood_routes,
+        "load_public_dataset_docs_for_neighborhood",
+        lambda dataset, neighborhood, limit=200: public_by_dataset.get(dataset, []),
+    )
     monkeypatch.setattr(neighborhood_routes, "load_public_dataset_docs", lambda dataset, limit=200: public_by_dataset.get(dataset, []))
     monkeypatch.setattr(neighborhood_routes, "load_docs", lambda source, limit=200: docs_by_source.get(source, []))
     monkeypatch.setattr(neighborhood_routes, "compute_transit_score", lambda name: {"stations_nearby": 4, "total_daily_riders": 21000, "transit_score": 100, "station_names": ["Clark/Lake", "Washington/Wabash"]})
