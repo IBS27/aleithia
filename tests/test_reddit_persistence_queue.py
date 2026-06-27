@@ -45,8 +45,14 @@ def test_persist_reddit_docs_dedups_and_enqueues_once(monkeypatch, tmp_path: Pat
         captured["committed"] = True
         return True
 
+    def _fake_write_source_status(source, **kwargs):
+        captured["status_source"] = source
+        captured["status_kwargs"] = kwargs
+        return {"source": source, **kwargs}
+
     monkeypatch.setattr(reddit_mod, "safe_queue_push", _fake_safe_queue_push)
     monkeypatch.setattr(reddit_mod, "safe_volume_commit", _fake_safe_volume_commit)
+    monkeypatch.setattr(reddit_mod, "write_source_status", _fake_write_source_status)
 
     docs = [
         {
@@ -74,6 +80,9 @@ def test_persist_reddit_docs_dedups_and_enqueues_once(monkeypatch, tmp_path: Pat
     assert count == 1
     assert captured["source"] == "reddit-query_fallback"
     assert captured["committed"] is True
+    assert captured["status_source"] == "reddit"
+    assert captured["status_kwargs"]["documents_seen"] == 2
+    assert captured["status_kwargs"]["documents_written"] == 1
     assert len(captured["queue_docs"]) == 1
     assert captured["queue_docs"][0]["metadata"]["ingestion_mode"] == "query_fallback"
 

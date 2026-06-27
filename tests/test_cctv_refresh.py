@@ -59,6 +59,7 @@ def _synthetic_cctv_payload(camera_id: str = "synth-loop-1") -> dict:
 
 
 def test_load_cctv_latest_index_triggers_refresh_when_stale(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cctv_service, "ENABLE_CCTV_ANALYSIS", True)
     index_path = tmp_path / "latest_by_camera.json"
     index_path.write_text(json.dumps({"cam-1": {"camera_id": "cam-1", "timestamp": "2026-03-03T00:00:00+00:00"}}))
 
@@ -86,6 +87,7 @@ def test_load_cctv_latest_index_triggers_refresh_when_stale(tmp_path, monkeypatc
 
 
 def test_load_cctv_latest_index_skips_refresh_when_fresh(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cctv_service, "ENABLE_CCTV_ANALYSIS", True)
     index_path = tmp_path / "latest_by_camera.json"
     index_path.write_text(json.dumps({"cam-1": {"camera_id": "cam-1", "timestamp": "2026-03-03T00:00:00+00:00"}}))
 
@@ -198,6 +200,21 @@ def test_cctv_frame_falls_back_to_raw_frames_when_analysis_disabled(tmp_path, mo
     assert response.status_code == 200
     assert response.media_type == "image/jpeg"
     assert response.body == b"\xff\xd8raw-frame"
+
+
+def test_cctv_frame_does_not_treat_camera_id_as_glob(tmp_path, monkeypatch) -> None:
+    raw_dir = tmp_path / "raw" / "cctv" / "frames"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    (raw_dir / "cam-1_20260413_0100.jpg").write_bytes(b"\xff\xd8raw-frame")
+
+    monkeypatch.setattr(vision_routes, "ENABLE_CCTV_ANALYSIS", False)
+    monkeypatch.setattr(vision_routes, "RAW_DATA_PATH", str(tmp_path / "raw"))
+    monkeypatch.setattr(vision_routes, "PROCESSED_DATA_PATH", str(tmp_path / "processed"))
+    monkeypatch.setattr(vision_routes.volume, "reload", lambda: None)
+
+    response = asyncio.run(vision_routes.cctv_frame("*"))
+
+    assert response.status_code == 404
 
 
 def test_runtime_status_and_metrics_disable_cctv_gpu(monkeypatch) -> None:

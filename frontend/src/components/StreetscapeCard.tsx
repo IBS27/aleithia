@@ -32,11 +32,7 @@ export default function StreetscapeCard({ neighborhood }: Props) {
   }, [neighborhood])
 
   if (loading) {
-    return (
-      <div className="border border-white/[0.06] bg-white/[0.02] p-4">
-        <div className="text-[10px] font-mono text-white/20">Loading streetscape data...</div>
-      </div>
-    )
+    return null
   }
 
   if (!data) return null

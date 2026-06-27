@@ -10,11 +10,10 @@ Usage:
 """
 
 import hashlib
-import json
 import math
 from datetime import datetime, timedelta, timezone
 
-from shared_data import get_processed_data_dir
+from shared_data import get_processed_data_dir, write_json_file
 
 # ---------------------------------------------------------------------------
 # Neighborhood centroids (copied from modal_app/common.py to keep standalone)
@@ -350,11 +349,8 @@ def main():
     data = generate()
 
     out_dir = get_processed_data_dir() / "cctv"
-    out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "synthetic_analytics.json"
-
-    with open(out_path, "w") as f:
-        json.dump(data, f, indent=2)
+    write_json_file(out_path, data)
 
     print(f"Wrote {len(data)} neighborhoods to {out_path}")
     # Show a sample

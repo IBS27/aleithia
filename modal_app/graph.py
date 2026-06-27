@@ -1,16 +1,12 @@
 """City Knowledge Graph — NetworkX MultiDiGraph construction and serialization."""
-import json
 import math
 from datetime import datetime, timezone
-from pathlib import Path
 
 import modal
 
-from modal_app.volume import app, volume, graph_image, VOLUME_MOUNT, RAW_DATA_PATH, PROCESSED_DATA_PATH
+from backend.shared_data import get_processed_data_dir, get_raw_data_dir, iter_files, load_json_file, write_json_file
+from modal_app.volume import app, volume, graph_image, VOLUME_MOUNT
 from modal_app.common import CHICAGO_NEIGHBORHOODS, NEIGHBORHOOD_CENTROIDS, detect_neighborhood
-
-
-GRAPH_OUTPUT_DIR = f"{PROCESSED_DATA_PATH}/graph"
 
 
 @app.function(
@@ -32,86 +28,87 @@ def build_city_graph():
             G.add_node(f"nb:{nb}", type="neighborhood", label=nb, lat=lat, lng=lng, size=40)
 
     # ── 2. Scan enriched docs for entities ──
-    enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
+    enriched_dir = get_processed_data_dir() / "enriched"
     regulations: dict[str, dict] = {}
     entities: dict[str, dict] = {}
     business_types: dict[str, dict] = {}
 
-    if enriched_dir.exists():
-        for f in enriched_dir.rglob("*.json"):
-            try:
-                doc = json.loads(f.read_text())
-            except Exception:
+    for f in iter_files(enriched_dir, pattern="*.json"):
+        try:
+            doc = load_json_file(f, default=None)
+            if not isinstance(doc, dict):
                 continue
+        except Exception:
+            continue
 
-            nb = doc.get("geo", {}).get("neighborhood", "")
-            source = doc.get("source", "")
-            title = doc.get("title", "")
-            content = doc.get("content", "")
-            meta = doc.get("metadata", {})
-            timestamp_str = doc.get("timestamp", "")
+        nb = doc.get("geo", {}).get("neighborhood", "")
+        source = doc.get("source", "")
+        title = doc.get("title", "")
+        content = doc.get("content", "")
+        meta = doc.get("metadata", {})
+        timestamp_str = doc.get("timestamp", "")
 
-            # If no geo neighborhood, try to detect from content/title
-            if not nb:
-                nb = detect_neighborhood(f"{title} {content}")
+        # If no geo neighborhood, try to detect from content/title
+        if not nb:
+            nb = detect_neighborhood(f"{title} {content}")
 
-            # Age decay factor (7-day half-life)
-            try:
-                ts = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-                age_days = (datetime.now(timezone.utc) - ts).total_seconds() / 86400
-            except Exception:
-                age_days = 30
-            decay = math.exp(-age_days / 7)
+        # Age decay factor (7-day half-life)
+        try:
+            ts = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+            age_days = (datetime.now(timezone.utc) - ts).total_seconds() / 86400
+        except Exception:
+            age_days = 30
+        decay = math.exp(-age_days / 7)
 
-            # Regulation nodes from politics + federal_register
-            if source in ("politics", "federal_register") and title:
-                reg_id = f"reg:{title[:50].replace(' ', '-').lower()}"
-                if reg_id not in regulations:
-                    regulations[reg_id] = {"label": title[:60], "neighborhoods": set(), "count": 0, "decay_sum": 0}
-                regulations[reg_id]["count"] += 1
-                regulations[reg_id]["decay_sum"] += decay
+        # Regulation nodes from politics + federal_register
+        if source in ("politics", "federal_register") and title:
+            reg_id = f"reg:{title[:50].replace(' ', '-').lower()}"
+            if reg_id not in regulations:
+                regulations[reg_id] = {"label": title[:60], "neighborhoods": set(), "count": 0, "decay_sum": 0}
+            regulations[reg_id]["count"] += 1
+            regulations[reg_id]["decay_sum"] += decay
+            if nb:
+                regulations[reg_id]["neighborhoods"].add(nb)
+
+        # Entity nodes from reviews + news
+        if source in ("news", "yelp", "google_places"):
+            entity_name = meta.get("business_name") or meta.get("source_name") or ""
+            if entity_name and len(entity_name) > 2:
+                ent_id = f"ent:{entity_name[:40].replace(' ', '-').lower()}"
+                if ent_id not in entities:
+                    entities[ent_id] = {"label": entity_name[:40], "neighborhoods": set(), "sentiment_sum": 0, "count": 0}
+                entities[ent_id]["count"] += 1
+                sentiment = meta.get("sentiment_score", 0)
+                if isinstance(sentiment, (int, float)):
+                    entities[ent_id]["sentiment_sum"] += sentiment * decay
                 if nb:
-                    regulations[reg_id]["neighborhoods"].add(nb)
+                    entities[ent_id]["neighborhoods"].add(nb)
 
-            # Entity nodes from reviews + news
-            if source in ("news", "yelp", "google_places"):
-                entity_name = meta.get("business_name") or meta.get("source_name") or ""
-                if entity_name and len(entity_name) > 2:
-                    ent_id = f"ent:{entity_name[:40].replace(' ', '-').lower()}"
-                    if ent_id not in entities:
-                        entities[ent_id] = {"label": entity_name[:40], "neighborhoods": set(), "sentiment_sum": 0, "count": 0}
-                    entities[ent_id]["count"] += 1
-                    sentiment = meta.get("sentiment_score", 0)
-                    if isinstance(sentiment, (int, float)):
-                        entities[ent_id]["sentiment_sum"] += sentiment * decay
-                    if nb:
-                        entities[ent_id]["neighborhoods"].add(nb)
-
-            # Business type nodes from licenses
-            if source == "public_data":
-                biz_type = meta.get("raw_record", {}).get("license_description", "")
-                # Fallback: extract from content field
-                if not biz_type:
-                    for line in content.split("\n"):
-                        if line.startswith("license_description:"):
-                            biz_type = line.split(":", 1)[1].strip()
-                            break
-                if biz_type and len(biz_type) > 2:
-                    bt_key = biz_type.strip().title()[:30]
-                    bt_id = f"biz:{bt_key.replace(' ', '-').lower()}"
-                    if bt_id not in business_types:
-                        business_types[bt_id] = {"label": bt_key, "neighborhoods": {}}
-                    if nb:
-                        business_types[bt_id]["neighborhoods"][nb] = business_types[bt_id]["neighborhoods"].get(nb, 0) + 1
+        # Business type nodes from licenses
+        if source == "public_data":
+            biz_type = meta.get("raw_record", {}).get("license_description", "")
+            # Fallback: extract from content field
+            if not biz_type:
+                for line in content.split("\n"):
+                    if line.startswith("license_description:"):
+                        biz_type = line.split(":", 1)[1].strip()
+                        break
+            if biz_type and len(biz_type) > 2:
+                bt_key = biz_type.strip().title()[:30]
+                bt_id = f"biz:{bt_key.replace(' ', '-').lower()}"
+                if bt_id not in business_types:
+                    business_types[bt_id] = {"label": bt_key, "neighborhoods": {}}
+                if nb:
+                    business_types[bt_id]["neighborhoods"][nb] = business_types[bt_id]["neighborhoods"].get(nb, 0) + 1
 
     # Also scan raw docs for neighborhoods without enriched data
     for source_dir_name in ("news", "politics", "federal_register"):
-        source_dir = Path(RAW_DATA_PATH) / source_dir_name
-        if not source_dir.exists():
-            continue
-        for f in sorted(source_dir.rglob("*.json"), reverse=True)[:100]:
+        source_dir = get_raw_data_dir() / source_dir_name
+        for f in iter_files(source_dir, pattern="*.json")[:100]:
             try:
-                doc = json.loads(f.read_text())
+                doc = load_json_file(f, default=None)
+                if not isinstance(doc, dict):
+                    continue
             except Exception:
                 continue
             nb = doc.get("geo", {}).get("neighborhood", "")
@@ -205,10 +202,8 @@ def build_city_graph():
         output["edges"].append({"source": u, "target": v, **{k: v2 for k, v2 in data.items()}})
 
     # Save to volume
-    graph_dir = Path(GRAPH_OUTPUT_DIR)
-    graph_dir.mkdir(parents=True, exist_ok=True)
-    graph_path = graph_dir / "city_graph.json"
-    graph_path.write_text(json.dumps(output))
+    graph_path = get_processed_data_dir() / "graph" / "city_graph.json"
+    write_json_file(graph_path, output, indent=None)
     volume.commit()
 
     print(f"City graph built: {output['stats']}")

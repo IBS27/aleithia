@@ -1,5 +1,6 @@
 """Routes that serve Aleithia data from shared raw/processed JSON files."""
 
+import asyncio
 import copy
 from datetime import datetime, timezone
 import os
@@ -22,12 +23,14 @@ from read_helpers import (
 )
 from shared_data import (
     SharedDataPath,
+    apply_source_statuses,
     count_files,
     get_processed_data_dir,
     get_raw_data_dir,
     load_json_docs_from_directory,
     load_processed_json,
     scan_source_directories,
+    shared_data_backend,
 )
 
 router = APIRouter()
@@ -181,12 +184,13 @@ def _build_data_snapshot(
     processed_dir: SharedDataPath,
     source_names: list[str],
 ) -> dict[str, object]:
+    source_stats = scan_source_directories(
+        {source: raw_dir / source for source in source_names},
+        neighborhood_sample_limit=0,
+    )
     return {
         "metadata_ready": True,
-        "source_stats": scan_source_directories(
-            {source: raw_dir / source for source in source_names},
-            neighborhood_sample_limit=0,
-        ),
+        "source_stats": apply_source_statuses(source_stats, source_names),
         "enriched_docs": count_files(processed_dir / "enriched", pattern="*.json"),
     }
 
@@ -262,6 +266,29 @@ def _get_data_snapshot(source_names: list[str]) -> dict[str, object]:
 
 def _get_source_stats(source_names: list[str]) -> dict[str, dict[str, object]]:
     return _get_data_snapshot(source_names)["source_stats"]
+
+
+def _storage_warning(snapshot: dict[str, object], source_names: list[str]) -> str | None:
+    if shared_data_backend() != "s3" or not bool(snapshot.get("metadata_ready")):
+        return None
+
+    source_stats = snapshot.get("source_stats")
+    if not isinstance(source_stats, dict):
+        return None
+
+    total_docs = 0
+    for source in source_names:
+        data = source_stats.get(source, {})
+        if isinstance(data, dict):
+            total_docs += int(data.get("doc_count") or 0)
+
+    if total_docs > 0:
+        return None
+
+    return (
+        "S3 shared data returned 0 documents. Verify ALEITHIA_OBJECT_STORAGE_PREFIX "
+        "points at a migrated runtime tree with raw/ and processed/ data."
+    )
 
 
 def prime_route_data_snapshots() -> None:
@@ -529,6 +556,8 @@ async def get_sources():
     source_stats = snapshot["source_stats"]
     return {
         "metadata_ready": bool(snapshot["metadata_ready"]),
+        "storage_backend": shared_data_backend(),
+        "warning": _storage_warning(snapshot, STEP4_SOURCE_NAMES),
         "sources": {
             source: {"count": data["doc_count"], "active": data["active"]}
             for source, data in source_stats.items()
@@ -653,6 +682,8 @@ async def get_status():
 
     return {
         "metadata_ready": bool(snapshot["metadata_ready"]),
+        "storage_backend": shared_data_backend(),
+        "warning": _storage_warning(snapshot, STATUS_SOURCE_NAMES),
         "pipelines": pipelines,
         "enriched_docs": int(snapshot["enriched_docs"]),
         "total_docs": sum(item["doc_count"] for item in pipelines.values()),
@@ -791,7 +822,11 @@ async def get_cctv_timeseries(neighborhood: str):
 @router.get("/neighborhood/{name}")
 async def get_neighborhood(name: str):
     """Return all data for a specific neighborhood."""
-    all_public = _load_all("public_data")
+    all_public, all_news, all_politics = await asyncio.gather(
+        asyncio.to_thread(_load_source_docs, "public_data", 500),
+        asyncio.to_thread(_load_source_docs, "news", 100),
+        asyncio.to_thread(_load_source_docs, "politics", 100),
+    )
 
     all_inspections = filter_public_data_by_dataset(all_public, "food_inspections")
     inspections = filter_docs_by_neighborhood(all_inspections, name)
@@ -809,12 +844,10 @@ async def get_neighborhood(name: str):
     if not licenses:
         licenses = all_licenses
 
-    all_news = _load_all("news")
     news = filter_docs_by_neighborhood(all_news, name)
     if not news:
         news = all_news
 
-    all_politics = _load_all("politics")
     politics = filter_docs_by_neighborhood(all_politics, name)
     if not politics:
         politics = all_politics

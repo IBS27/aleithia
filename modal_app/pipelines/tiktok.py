@@ -21,12 +21,12 @@ from urllib.parse import quote_plus
 
 import modal
 
+from backend.shared_data import get_raw_data_dir, shared_data_backend, write_json_file, write_source_status
 from modal_app.common import SourceType, build_document, detect_neighborhood
 from modal_app.costs import track_cost
 from modal_app.dedup import SeenSet
 from modal_app.volume import (
     VOLUME_MOUNT,
-    RAW_DATA_PATH,
     app,
     tiktok_image,
     transcribe_image,
@@ -797,7 +797,7 @@ def _build_tiktok_title(v: dict) -> str:
     image=tiktok_image,
     timeout=600,
     volumes={VOLUME_MOUNT: volume},
-    secrets=[modal.Secret.from_name("tiktok-scraper-secrets")],
+    secrets=[modal.Secret.from_name("tiktok-scraper-secrets"), modal.Secret.from_name("alethia-secrets")],
 )
 @track_cost("ingest_tiktok", "CPU")
 def ingest_tiktok(
@@ -816,6 +816,7 @@ def ingest_tiktok(
     """
     specs = _normalize_query_specs(query_specs=query_specs, queries=queries, max_videos=max_videos)
     if not specs:
+        write_source_status("tiktok", state="empty", documents_seen=0, documents_written=0)
         return {"scraped": 0, "transcribed": 0, "saved": 0, "deduped": 0, "videos": []}
     ingested_at = datetime.now(timezone.utc).isoformat()
 
@@ -879,6 +880,7 @@ def ingest_tiktok(
     logger.info("Scraped %d unique videos from %d queries", len(all_videos), len(specs))
 
     if not all_videos:
+        write_source_status("tiktok", state="empty", documents_seen=0, documents_written=0)
         return {"scraped": 0, "transcribed": 0, "saved": 0}
 
     # --- Step 2: Parallel transcription ---
@@ -897,8 +899,7 @@ def ingest_tiktok(
     # --- Step 3: Dedup, convert to Documents, save, push to queue ---
     seen = SeenSet("tiktok")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    save_dir = f"{RAW_DATA_PATH}/tiktok/{today}"
-    os.makedirs(save_dir, exist_ok=True)
+    save_dir = get_raw_data_dir() / "tiktok" / today
 
     new_docs: list[dict] = []
     skipped = 0
@@ -987,9 +988,8 @@ def ingest_tiktok(
             continue
 
         doc = build_document(doc_data)
-        filepath = f"{save_dir}/{doc_id}.json"
-        with open(filepath, "w") as f:
-            f.write(doc.model_dump_json(indent=2))
+        filepath = save_dir / f"{doc_id}.json"
+        write_json_file(filepath, doc.model_dump(mode="json"))
 
         seen.add(doc_id)
         new_docs.append(doc_data)
@@ -1008,8 +1008,15 @@ def ingest_tiktok(
             pass
 
     seen.save()
-    volume.commit()
-    logger.info("Saved %d TikTok documents to volume", len(new_docs))
+    write_source_status(
+        "tiktok",
+        documents_seen=len(all_videos),
+        documents_written=len(new_docs),
+        metadata={"transcribe": transcribe},
+    )
+    if shared_data_backend() != "s3":
+        volume.commit()
+    logger.info("Saved %d TikTok documents to %s", len(new_docs), save_dir)
 
     # Build content summaries for downstream consumers (agents, LLM synthesis)
     video_summaries = []
@@ -1043,7 +1050,7 @@ def ingest_tiktok(
     image=tiktok_image,
     timeout=600,
     volumes={VOLUME_MOUNT: volume},
-    secrets=[modal.Secret.from_name("tiktok-scraper-secrets")],
+    secrets=[modal.Secret.from_name("tiktok-scraper-secrets"), modal.Secret.from_name("alethia-secrets")],
 )
 @track_cost("ingest_tiktok_for_profile", "CPU")
 def ingest_tiktok_for_profile(
@@ -1067,7 +1074,7 @@ def ingest_tiktok_for_profile(
     image=tiktok_image,
     timeout=900,
     volumes={VOLUME_MOUNT: volume},
-    secrets=[modal.Secret.from_name("tiktok-scraper-secrets")],
+    secrets=[modal.Secret.from_name("tiktok-scraper-secrets"), modal.Secret.from_name("alethia-secrets")],
 )
 @track_cost("tiktok_on_demand", "CPU")
 def tiktok_on_demand(

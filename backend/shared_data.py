@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import fnmatch
 import hashlib
 import hmac
@@ -11,9 +12,13 @@ import json
 import logging
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -30,6 +35,9 @@ DEFAULT_RAW_PREFIX = "raw"
 DEFAULT_PROCESSED_PREFIX = "processed"
 DEFAULT_OBJECT_STORAGE_REGION = "us-east-1"
 DEFAULT_MOUNTED_VOLUME_ROOT = "/data"
+DEFAULT_SHARED_DATA_READ_CONCURRENCY = 8
+DEFAULT_SHARED_DATA_LOCK_STALE_SECONDS = 300
+SOURCE_STATUS_DIR = ("status", "sources")
 
 _LAST_LOGGED_LAYOUT: tuple[str, str] | None = None
 _VOLUME: modal.Volume | None = None
@@ -226,6 +234,25 @@ class ModalVolumeAccessor:
         parsed_entries = [self._entry_from_modal(entry) for entry in entries]
         return [entry for entry in parsed_entries if entry is not None]
 
+    def list_entries_with_name_prefix(
+        self,
+        relative_path: str,
+        *,
+        name_prefix: str,
+        recursive: bool = False,
+        max_entries: int | None = None,
+    ) -> list[SharedFileEntry]:
+        safe_prefix = PurePosixPath(str(name_prefix or "").lstrip("/")).name
+        entries = self.list_entries(relative_path, recursive=recursive)
+        matched: list[SharedFileEntry] = []
+        for entry in entries:
+            if safe_prefix and not PurePosixPath(entry.path).name.startswith(safe_prefix):
+                continue
+            matched.append(entry)
+            if max_entries is not None and len(matched) >= max_entries:
+                break
+        return matched
+
     def read_bytes(self, relative_path: str) -> bytes:
         normalized = _normalize_relative_path(relative_path)
         chunks = []
@@ -284,6 +311,30 @@ class MountedVolumeAccessor:
         entries = [self._entry_from_path(path) for path in iterator]
         return [entry for entry in entries if entry is not None]
 
+    def list_entries_with_name_prefix(
+        self,
+        relative_path: str,
+        *,
+        name_prefix: str,
+        recursive: bool = False,
+        max_entries: int | None = None,
+    ) -> list[SharedFileEntry]:
+        directory = self._full_path(relative_path)
+        if not directory.exists() or not directory.is_dir():
+            return []
+        safe_prefix = PurePosixPath(str(name_prefix or "").lstrip("/")).name
+        pattern = f"{safe_prefix}*" if safe_prefix else "*"
+        iterator = directory.rglob(pattern) if recursive else directory.glob(pattern)
+        entries: list[SharedFileEntry] = []
+        for path in iterator:
+            entry = self._entry_from_path(path)
+            if entry is None:
+                continue
+            entries.append(entry)
+            if max_entries is not None and len(entries) >= max_entries:
+                break
+        return entries
+
     def read_bytes(self, relative_path: str) -> bytes:
         return self._full_path(relative_path).read_bytes()
 
@@ -292,6 +343,30 @@ class MountedVolumeAccessor:
         path = self._full_path(relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
+
+    def try_write_bytes_if_absent(
+        self,
+        relative_path: str,
+        data: bytes,
+        *,
+        content_type: str | None = None,
+    ) -> bool:
+        del content_type
+        path = self._full_path(relative_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            return False
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        return True
+
+    def delete_entry(self, relative_path: str) -> None:
+        try:
+            self._full_path(relative_path).unlink()
+        except FileNotFoundError:
+            return
 
 
 class ObjectStorageError(RuntimeError):
@@ -521,10 +596,49 @@ class S3ObjectStorageAccessor:
         return SharedFileEntry(path=normalized, is_file=False, is_dir=True, mtime=0.0, size=0) if entries else None
 
     def list_entries(self, relative_path: str, *, recursive: bool = False) -> list[SharedFileEntry]:
+        return self._list_entries(
+            relative_path,
+            name_prefix="",
+            recursive=recursive,
+            max_entries=None,
+        )
+
+    def list_entries_with_name_prefix(
+        self,
+        relative_path: str,
+        *,
+        name_prefix: str,
+        recursive: bool = False,
+        max_entries: int | None = None,
+    ) -> list[SharedFileEntry]:
+        """List entries whose object names start with a literal prefix.
+
+        Public-data request paths need dataset-specific files such as
+        ``public-food_inspections-*``. On object storage, pushing that literal
+        prefix into ListObjectsV2 avoids listing every public-data object first.
+        """
+        return self._list_entries(
+            relative_path,
+            name_prefix=name_prefix,
+            recursive=recursive,
+            max_entries=max_entries,
+        )
+
+    def _list_entries(
+        self,
+        relative_path: str,
+        *,
+        name_prefix: str,
+        recursive: bool,
+        max_entries: int | None,
+    ) -> list[SharedFileEntry]:
         normalized = _normalize_relative_path(relative_path)
         prefix_key = self._object_key(normalized)
         if prefix_key:
             prefix_key = f"{prefix_key.rstrip('/')}/"
+        name_prefix = str(name_prefix or "").lstrip("/")
+        if name_prefix:
+            prefix_key = f"{prefix_key}{name_prefix}"
 
         entries: list[SharedFileEntry] = []
         token = ""
@@ -532,6 +646,11 @@ class S3ObjectStorageAccessor:
             query = {"list-type": "2", "prefix": prefix_key}
             if not recursive:
                 query["delimiter"] = "/"
+            if max_entries is not None:
+                remaining = max_entries - len(entries)
+                if remaining <= 0:
+                    break
+                query["max-keys"] = str(max(1, min(1000, remaining)))
             if token:
                 query["continuation-token"] = token
             try:
@@ -555,6 +674,30 @@ class S3ObjectStorageAccessor:
     def write_bytes(self, relative_path: str, data: bytes, *, content_type: str | None = None) -> None:
         headers = {"content-type": content_type} if content_type else {}
         self._request("PUT", self._object_key(relative_path), body=data, headers=headers)
+
+    def try_write_bytes_if_absent(
+        self,
+        relative_path: str,
+        data: bytes,
+        *,
+        content_type: str | None = None,
+    ) -> bool:
+        headers = {"if-none-match": "*"}
+        if content_type:
+            headers["content-type"] = content_type
+        try:
+            self._request("PUT", self._object_key(relative_path), body=data, headers=headers)
+        except ObjectStorageError as exc:
+            if " with 409" in str(exc) or " with 412" in str(exc):
+                return False
+            raise
+        return True
+
+    def delete_entry(self, relative_path: str) -> None:
+        try:
+            self._request("DELETE", self._object_key(relative_path))
+        except ObjectStorageError:
+            return
 
     def _parse_list_response(
         self,
@@ -665,16 +808,27 @@ def _get_volume() -> modal.Volume:
     return _VOLUME
 
 
-def _get_accessor() -> SharedDataAccessor:
+def shared_data_backend() -> str:
     backend = os.getenv("ALEITHIA_SHARED_DATA_BACKEND", "modal").strip().lower()
     if backend in {"", "modal", "modal-volume", "volume"}:
+        return "modal"
+    if backend in {"mounted", "mount", "filesystem", "fs"}:
+        return "mounted"
+    if backend in {"s3", "r2", "gcs", "object", "object-storage"}:
+        return "s3"
+    return backend
+
+
+def _get_accessor() -> SharedDataAccessor:
+    backend = shared_data_backend()
+    if backend == "modal":
         mounted_root = Path(os.getenv("ALEITHIA_MOUNTED_VOLUME_ROOT", DEFAULT_MOUNTED_VOLUME_ROOT))
         if (mounted_root / DEFAULT_RAW_PREFIX).exists() and (mounted_root / DEFAULT_PROCESSED_PREFIX).exists():
             return MountedVolumeAccessor(mounted_root)
         return ModalVolumeAccessor(_get_volume())
-    if backend in {"mounted", "mount", "filesystem", "fs"}:
+    if backend == "mounted":
         return MountedVolumeAccessor(os.getenv("ALEITHIA_MOUNTED_VOLUME_ROOT", DEFAULT_MOUNTED_VOLUME_ROOT))
-    if backend in {"s3", "r2", "gcs", "object", "object-storage"}:
+    if backend == "s3":
         return S3ObjectStorageAccessor.from_env()
     raise ValueError(
         "Unsupported ALEITHIA_SHARED_DATA_BACKEND="
@@ -707,6 +861,160 @@ def get_raw_data_dir() -> SharedDataPath:
 
 def get_processed_data_dir() -> SharedDataPath:
     return get_shared_data_paths().processed_dir
+
+
+def get_shared_data_dir(*parts: str) -> SharedDataPath:
+    return SharedDataPath(_get_accessor(), "/".join(part.strip("/") for part in parts if part))
+
+
+def get_cache_data_dir() -> SharedDataPath:
+    return get_shared_data_dir("cache")
+
+
+def get_dedup_data_dir() -> SharedDataPath:
+    return get_shared_data_dir("dedup")
+
+
+def local_filesystem_path(path: Path | SharedDataPath) -> Path | None:
+    """Return a concrete filesystem path when shared data is mounted locally."""
+    if isinstance(path, Path):
+        return path
+
+    root = getattr(path.accessor, "root", None)
+    if root is not None:
+        return Path(root) / path.relative_path
+
+    display_path = str(path)
+    if display_path.startswith("/"):
+        return Path(display_path)
+    return None
+
+
+def _parse_lock_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _shared_data_lock_age_seconds(lock_path: Path | SharedDataPath, payload: Any) -> float:
+    """Best-effort age for object-storage locks.
+
+    Older or interrupted writers can leave malformed lock objects behind. In
+    that case, use the object mtime so stale cleanup can still make progress.
+    """
+    now = datetime.now(timezone.utc)
+    created_at = payload.get("created_at") if isinstance(payload, dict) else None
+    created = _parse_lock_timestamp(created_at)
+    if created is not None:
+        return max(0.0, (now - created).total_seconds())
+
+    try:
+        mtime = float(lock_path.stat().st_mtime)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return 0.0
+    if mtime <= 0:
+        return 0.0
+    return max(0.0, now.timestamp() - mtime)
+
+
+@contextmanager
+def shared_data_lock(
+    lock_path: Path | SharedDataPath,
+    *,
+    timeout_seconds: float = 30.0,
+    poll_seconds: float = 0.1,
+    stale_seconds: float | None = None,
+):
+    """Acquire an advisory lock for local mounts or object-storage lock keys."""
+    if stale_seconds is None:
+        raw_stale_seconds = os.getenv(
+            "ALEITHIA_SHARED_DATA_LOCK_STALE_SECONDS",
+            str(DEFAULT_SHARED_DATA_LOCK_STALE_SECONDS),
+        )
+        try:
+            stale_seconds = max(1.0, float(raw_stale_seconds))
+        except ValueError:
+            stale_seconds = float(DEFAULT_SHARED_DATA_LOCK_STALE_SECONDS)
+
+    local_path = local_filesystem_path(lock_path)
+    if local_path is not None:
+        import fcntl
+
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(local_path, "w") as lock_fd:
+            deadline = time.monotonic() + timeout_seconds
+            while True:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    pass
+                except OSError as exc:
+                    if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                        raise
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"Timed out acquiring shared data lock: {lock_path}")
+                time.sleep(poll_seconds)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        return
+
+    if isinstance(lock_path, SharedDataPath):
+        try_create = getattr(lock_path.accessor, "try_write_bytes_if_absent", None)
+        delete_entry = getattr(lock_path.accessor, "delete_entry", None)
+        if callable(try_create) and callable(delete_entry):
+            owner = str(uuid.uuid4())
+            payload = json.dumps(
+                {
+                    "owner": owner,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+            deadline = time.monotonic() + timeout_seconds
+            acquired = False
+            while time.monotonic() <= deadline:
+                if try_create(lock_path.relative_path, payload, content_type="application/json"):
+                    acquired = True
+                    break
+                try:
+                    current = json.loads(lock_path.read_text())
+                except (json.JSONDecodeError, ObjectStorageError, OSError, UnicodeDecodeError):
+                    current = {}
+                age_seconds = _shared_data_lock_age_seconds(lock_path, current)
+                if age_seconds > stale_seconds:
+                    delete_entry(lock_path.relative_path)
+                    if try_create(lock_path.relative_path, payload, content_type="application/json"):
+                        acquired = True
+                        break
+                    time.sleep(poll_seconds)
+                    continue
+                time.sleep(poll_seconds)
+            if not acquired:
+                raise TimeoutError(f"Timed out acquiring shared data lock: {lock_path}")
+            try:
+                yield
+            finally:
+                current = None
+                try:
+                    parsed = json.loads(lock_path.read_text())
+                    if isinstance(parsed, dict):
+                        current = parsed
+                except (json.JSONDecodeError, ObjectStorageError, OSError, UnicodeDecodeError):
+                    pass
+                if current is not None and current.get("owner") == owner:
+                    delete_entry(lock_path.relative_path)
+            return
+
+    raise RuntimeError(f"Shared data lock backend does not support mutual exclusion: {lock_path}")
 
 
 def _relative_entry_path(directory: SharedDataPath, entry_path: str) -> PurePosixPath | None:
@@ -777,6 +1085,15 @@ def read_file_bytes(path: Path | SharedDataPath, default: bytes | None = None) -
         return default
 
 
+def write_file_bytes(path: Path | SharedDataPath, data: bytes, *, content_type: str | None = None) -> None:
+    if isinstance(path, SharedDataPath):
+        path.write_bytes(data, content_type=content_type)
+        return
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+
+
 def load_json_file(path: Path | SharedDataPath, default: Any = None) -> Any:
     raw_bytes = read_file_bytes(path, default=None)
     if raw_bytes is None:
@@ -785,6 +1102,132 @@ def load_json_file(path: Path | SharedDataPath, default: Any = None) -> Any:
         return json.loads(raw_bytes.decode("utf-8"))
     except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return default
+
+
+def write_json_file(path: Path | SharedDataPath, data: Any, *, indent: int | None = 2) -> None:
+    raw = json.dumps(data, indent=indent, default=str).encode("utf-8")
+    write_file_bytes(path, raw, content_type="application/json")
+
+
+def _source_status_path(source: str) -> Path | SharedDataPath:
+    safe_source = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(source or "").strip()).strip("._-")
+    if not safe_source:
+        raise ValueError("source name is required")
+    return get_processed_data_dir().joinpath(*SOURCE_STATUS_DIR, f"{safe_source}.json")
+
+
+def write_source_status(
+    source: str,
+    *,
+    state: str = "success",
+    documents_seen: int | None = None,
+    documents_written: int | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Write a lightweight pipeline heartbeat used for freshness checks."""
+    completed_at = datetime.now(timezone.utc).isoformat()
+    payload: dict[str, Any] = {
+        "source": source,
+        "state": state,
+        "last_update": completed_at,
+        "storage_backend": shared_data_backend(),
+    }
+    if state == "success":
+        payload["last_success"] = completed_at
+    if documents_seen is not None:
+        payload["documents_seen"] = int(documents_seen)
+    if documents_written is not None:
+        payload["documents_written"] = int(documents_written)
+    if metadata:
+        payload["metadata"] = dict(metadata)
+
+    write_json_file(_source_status_path(source), payload)
+    return payload
+
+
+def load_source_status(source: str) -> dict[str, Any] | None:
+    parsed = load_json_file(_source_status_path(source), default=None)
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _status_last_update(status: Mapping[str, Any] | None) -> str | None:
+    if not status:
+        return None
+    for key in ("last_success", "last_update", "completed_at"):
+        value = status.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def apply_source_statuses(
+    source_stats: Mapping[str, Mapping[str, object]],
+    sources: Iterable[str] | None = None,
+) -> dict[str, dict[str, object]]:
+    """Merge persisted source heartbeats into raw-document stats."""
+    selected_sources = list(sources or source_stats.keys())
+    merged: dict[str, dict[str, object]] = {
+        source: dict(source_stats.get(source, {}))
+        for source in selected_sources
+    }
+    for source in selected_sources:
+        current = merged.setdefault(
+            source,
+            {"doc_count": 0, "active": False, "last_update": None},
+        )
+        status = load_source_status(source)
+        if not status:
+            continue
+        last_update = _status_last_update(status)
+        if last_update:
+            current["last_update"] = last_update
+            current["active"] = bool(current.get("active")) or status.get("state") == "success"
+        current["last_status"] = status.get("state")
+        current["last_status_payload"] = status
+    return merged
+
+
+def get_source_freshness_stats(sources: Iterable[str]) -> dict[str, dict[str, object]]:
+    stats = scan_source_directories({source: get_raw_data_dir() / source for source in sources})
+    return apply_source_statuses(stats, sources)
+
+
+def get_source_freshness_statuses(sources: Iterable[str]) -> dict[str, dict[str, object]]:
+    """Return source freshness with heartbeat-first lookup and raw fallback.
+
+    This avoids recursively listing raw S3 objects on every scheduled
+    reconciler tick once a source has written a heartbeat.
+    """
+    selected_sources = list(sources)
+    stats: dict[str, dict[str, object]] = {}
+    missing_sources: list[str] = []
+    for source in selected_sources:
+        status = load_source_status(source)
+        if not status:
+            missing_sources.append(source)
+            continue
+        last_update = _status_last_update(status)
+        stats[source] = {
+            "doc_count": int(status.get("documents_written") or 0),
+            "active": status.get("state") == "success",
+            "last_update": last_update,
+            "last_status": status.get("state"),
+            "last_status_payload": status,
+        }
+
+    if missing_sources:
+        if shared_data_backend() == "s3":
+            for source in missing_sources:
+                stats[source] = {
+                    "doc_count": 0,
+                    "active": False,
+                    "last_update": None,
+                    "last_status": None,
+                    "missing_status": True,
+                }
+        else:
+            stats.update(scan_source_directories({source: get_raw_data_dir() / source for source in missing_sources}))
+    return stats
 
 
 def load_processed_json(*parts: str, default: Any = None) -> Any:
@@ -956,18 +1399,46 @@ def load_json_docs_from_paths(
     limit: int | None = None,
     on_error: Callable[[Path | SharedDataPath, Exception], None] | None = None,
 ) -> list[dict]:
-    docs: list[dict] = []
-    for json_file in paths:
+    path_list = list(paths)
+
+    def _load_one(json_file: Path | SharedDataPath) -> dict | None:
         try:
             raw_bytes = read_file_bytes(json_file, default=None)
             if raw_bytes is None:
-                continue
+                return None
             parsed = json.loads(raw_bytes.decode("utf-8"))
         except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
             if on_error is not None:
                 on_error(json_file, exc)
-            continue
-        if not isinstance(parsed, dict):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    if any(isinstance(path, SharedDataPath) for path in path_list):
+        try:
+            max_workers = max(
+                1,
+                int(os.getenv(
+                    "ALEITHIA_SHARED_DATA_READ_CONCURRENCY",
+                    str(DEFAULT_SHARED_DATA_READ_CONCURRENCY),
+                )),
+            )
+        except ValueError:
+            max_workers = DEFAULT_SHARED_DATA_READ_CONCURRENCY
+        docs: list[dict] = []
+        selected_paths = path_list[:limit] if limit is not None else path_list
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for parsed in executor.map(_load_one, selected_paths):
+                if parsed is None:
+                    continue
+                docs.append(parsed)
+                if limit is not None and len(docs) >= limit:
+                    break
+        return docs
+
+    docs: list[dict] = []
+    for json_file in path_list:
+        parsed = _load_one(json_file)
+        if parsed is None:
             continue
         docs.append(parsed)
         if limit is not None and len(docs) >= limit:

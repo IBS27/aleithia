@@ -8,23 +8,27 @@ interface Props {
 export default function Timer({ running, onComplete }: Props) {
   const [elapsed, setElapsed] = useState(0)
   const startTimeRef = useRef<number>(0)
-  const frameRef = useRef<number>(0)
+  const intervalRef = useRef<number>(0)
 
   useEffect(() => {
     if (running) {
       startTimeRef.current = performance.now()
+      setElapsed(0)
       const tick = () => {
-        const now = performance.now()
-        setElapsed(now - startTimeRef.current)
-        frameRef.current = requestAnimationFrame(tick)
+        setElapsed(performance.now() - startTimeRef.current)
       }
-      frameRef.current = requestAnimationFrame(tick)
-    } else if (elapsed > 0) {
-      cancelAnimationFrame(frameRef.current)
-      onComplete?.(elapsed)
+      tick()
+      intervalRef.current = window.setInterval(tick, 100)
+      return () => window.clearInterval(intervalRef.current)
     }
 
-    return () => cancelAnimationFrame(frameRef.current)
+    if (startTimeRef.current > 0) {
+      window.clearInterval(intervalRef.current)
+      const finalElapsed = performance.now() - startTimeRef.current
+      setElapsed(finalElapsed)
+      onComplete?.(finalElapsed)
+      startTimeRef.current = 0
+    }
   }, [running])
 
   const seconds = (elapsed / 1000).toFixed(1)

@@ -251,6 +251,42 @@ function computeRiskScore(data: NeighborhoodData, profile: UserProfile): RiskSco
   }
 }
 
+function fallbackSocialTrends(data: NeighborhoodData, profile: UserProfile): SocialTrend[] {
+  const redditDocs = data.reddit || []
+  const tiktokDocs = data.tiktok || []
+  const socialDocs = [...redditDocs, ...tiktokDocs]
+  if (socialDocs.length === 0) return []
+
+  const business = profile.business_type || 'business'
+  const neighborhood = profile.neighborhood || data.neighborhood
+  const trends: SocialTrend[] = []
+
+  if (tiktokDocs.length > 0) {
+    const topTikTok = tiktokDocs[0]
+    const title = (topTikTok.title || 'Short-form attention').trim()
+    trends.push({
+      title: 'Short-Form Attention',
+      detail: `${tiktokDocs.length} TikTok signal${tiktokDocs.length === 1 ? '' : 's'} mention nearby demand patterns. The strongest visible cue is "${title}", which is worth checking against daypart traffic before positioning a ${business.toLowerCase()} in ${neighborhood}.`,
+    })
+  }
+
+  if (redditDocs.length > 0) {
+    const topReddit = redditDocs[0]
+    const title = (topReddit.title || 'local discussion').trim()
+    trends.push({
+      title: 'Local Discussion Watch',
+      detail: `${redditDocs.length} Reddit discussion${redditDocs.length === 1 ? '' : 's'} are indexed for this area, led by "${title}". Treat this as qualitative neighborhood context for pricing, hours, and customer expectations.`,
+    })
+  }
+
+  trends.push({
+    title: 'Community Signal Overview',
+    detail: `${socialDocs.length} social item${socialDocs.length === 1 ? '' : 's'} are available for ${neighborhood}. Use them as directional evidence alongside reviews, permits, and inspections rather than as a standalone demand forecast.`,
+  })
+
+  return trends.slice(0, 3)
+}
+
 interface Props {
   profile: UserProfile
   onReset: () => void
@@ -308,7 +344,7 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
 
         setSources(snapshot.sources)
         setSourcesMetadataReady(true)
-        setSourcesWarning(null)
+        setSourcesWarning(snapshot.warning ?? null)
       } catch (err) {
         setSourcesMetadataReady(false)
         setSourcesWarning(`Source metadata unavailable: ${toErrorMessage(err)}`)
@@ -355,6 +391,13 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
       return
     }
 
+    if (!neighborhoodData || neighborhoodData.neighborhood !== profile.neighborhood) {
+      setSocialTrends([])
+      setSocialLoading(true)
+      setSocialError(null)
+      return
+    }
+
     let cancelled = false
     setSocialLoading(true)
     setSocialError(null)
@@ -362,17 +405,25 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
 
     api.socialTrends(profile.neighborhood, profile.business_type)
       .then((data) => {
-        if (!cancelled) setSocialTrends(data.trends)
+        if (!cancelled) setSocialTrends(data.trends.length > 0 ? data.trends : fallbackSocialTrends(neighborhoodData, profile))
       })
       .catch((err) => {
-        if (!cancelled) setSocialError(err instanceof Error ? err.message : 'Failed to load social trends')
+        if (!cancelled) {
+          const fallback = fallbackSocialTrends(neighborhoodData, profile)
+          if (fallback.length > 0) {
+            setSocialTrends(fallback)
+            setSocialError(null)
+          } else {
+            setSocialError(err instanceof Error ? err.message : 'Failed to load social trends')
+          }
+        }
       })
       .finally(() => {
         if (!cancelled) setSocialLoading(false)
       })
 
     return () => { cancelled = true }
-  }, [profile.neighborhood, profile.business_type])
+  }, [profile.neighborhood, profile.business_type, neighborhoodData])
 
   const sourceList = sources
     ? (Object.entries(sources) as Array<[string, { count: number; active: boolean }]>).map(([name, info]) => ({
@@ -417,6 +468,18 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
     }
   }, [visibleTabKeys, activeTab])
 
+  const sessionState = error ? 'ERROR' : loading ? 'ANALYZING' : 'READY'
+  const sessionTone = error
+    ? 'text-red-400/75'
+    : loading
+      ? 'text-blue-400/70'
+      : 'text-emerald-400/70'
+  const sessionDot = error
+    ? 'bg-red-400'
+    : loading
+      ? 'bg-blue-400 animate-pulse'
+      : 'bg-emerald-400'
+
   return (
     <div className="h-screen flex flex-col bg-[#06080d]">
       {/* Top bar */}
@@ -452,9 +515,9 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
             >
               <span className="text-[9px] font-mono uppercase tracking-wider text-white/25">Session</span>
               <Timer running={loading} />
-              <span className={`flex items-center gap-1.5 text-[10px] font-mono ${loading ? 'text-blue-400/70' : 'text-emerald-400/70'}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-blue-400 animate-pulse' : 'bg-emerald-400'}`} />
-                {loading ? 'ANALYZING' : 'READY'}
+              <span className={`flex items-center gap-1.5 text-[10px] font-mono ${sessionTone}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${sessionDot}`} />
+                {sessionState}
               </span>
             </div>
             <div className="flex items-stretch">
@@ -510,7 +573,7 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
           )}
 
           {/* Tabs — segmented workspace navigation */}
-          <div className="flex gap-0 border-b border-white/[0.06] items-stretch">
+          {!error && <div className="flex gap-0 border-b border-white/[0.06] items-stretch">
             {tabs.map(tab => {
               const isActive = activeTab === tab.key
               return (
@@ -534,9 +597,9 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
                 </button>
               )
             })}
-          </div>
+          </div>}
 
-          {loading ? (
+          {error ? null : loading ? (
             <LoadingFlow neighborhood={profile.neighborhood} />
           ) : (
             <>
@@ -1037,10 +1100,19 @@ interface EvidenceEntry {
 
 function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
   const entries: EvidenceEntry[] = []
+  const seenIds = new Map<string, number>()
+  const nextId = (source: string, rawId: unknown, title: string) => {
+    const idText = String(rawId ?? '').trim()
+    const titleText = title.trim().toLowerCase().replace(/\s+/g, '-').slice(0, 80)
+    const base = `${source}-${idText || titleText || 'record'}`
+    const count = seenIds.get(base) || 0
+    seenIds.set(base, count + 1)
+    return count === 0 ? base : `${base}-${count + 1}`
+  }
 
   for (const n of data.news || []) {
     entries.push({
-      id: `news-${n.id}`,
+      id: nextId('news', n.id, n.title),
       title: n.title,
       snippet: (n.content || '').slice(0, 180),
       family: 'news',
@@ -1054,7 +1126,7 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
 
   for (const p of data.politics || []) {
     entries.push({
-      id: `politics-${p.id}`,
+      id: nextId('politics', p.id, p.title),
       title: p.title,
       snippet: (p.content || '').slice(0, 180),
       family: 'policy',
@@ -1069,7 +1141,7 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
 
   for (const r of data.federal_register || []) {
     entries.push({
-      id: `fed-${r.id}`,
+      id: nextId('federal', r.id, r.title),
       title: r.title,
       snippet: (r.content || '').slice(0, 180),
       family: 'policy',
@@ -1084,7 +1156,7 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
 
   for (const r of data.reddit || []) {
     entries.push({
-      id: `reddit-${r.id}`,
+      id: nextId('reddit', r.id, r.title),
       title: r.title,
       snippet: (r.content || '').slice(0, 180),
       family: 'community',
@@ -1099,7 +1171,7 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
 
   for (const t of data.tiktok || []) {
     entries.push({
-      id: `tiktok-${t.id}`,
+      id: nextId('tiktok', t.id, t.title || 'TikTok video'),
       title: t.title || 'TikTok video',
       snippet: (t.content || '').slice(0, 180),
       family: 'community',
@@ -1114,7 +1186,7 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
 
   for (const rv of data.reviews || []) {
     entries.push({
-      id: `review-${rv.id}`,
+      id: nextId('review', rv.id, rv.title),
       title: rv.title,
       snippet: ((rv.metadata?.categories as string[]) || []).join(', '),
       family: 'market',
@@ -1129,7 +1201,7 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
 
   for (const re of data.realestate || []) {
     entries.push({
-      id: `re-${re.id}`,
+      id: nextId('realestate', re.id, re.title),
       title: re.title,
       snippet: `${(re.metadata?.property_type as string) || ''} · ${(re.metadata?.size_sqft as number) || ''} sqft`,
       family: 'market',
@@ -1144,9 +1216,10 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
 
   for (const i of data.inspections || []) {
     const raw = i.metadata?.raw_record as Record<string, string> | undefined
+    const title = raw?.dba_name || i.title
     entries.push({
-      id: `insp-${i.id}`,
-      title: raw?.dba_name || i.title,
+      id: nextId('inspection', i.id, title),
+      title,
       snippet: `${raw?.inspection_type || 'Inspection'} — ${raw?.results || 'Unknown'}`,
       family: 'regulatory',
       source: 'inspections',
@@ -1160,9 +1233,10 @@ function buildEvidence(data: NeighborhoodData): EvidenceEntry[] {
 
   for (const p of data.permits || []) {
     const raw = p.metadata?.raw_record as Record<string, string> | undefined
+    const title = raw?.work_type || p.title
     entries.push({
-      id: `permit-${p.id}`,
-      title: raw?.work_type || p.title,
+      id: nextId('permit', p.id, title),
+      title,
       snippet: (raw?.work_description || '').slice(0, 180),
       family: 'regulatory',
       source: 'permits',

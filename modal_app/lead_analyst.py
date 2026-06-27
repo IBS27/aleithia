@@ -17,17 +17,44 @@ from pathlib import Path
 import modal
 from pydantic import BaseModel, Field
 
+from backend.shared_data import (
+    get_dedup_data_dir,
+    get_processed_data_dir,
+    get_raw_data_dir,
+    iter_files,
+    load_json_file,
+    shared_data_lock,
+    write_json_file,
+)
 from modal_app.costs import track_cost
 from modal_app.runtime import get_impact_queue
-from modal_app.volume import app, volume, lead_analyst_image, VOLUME_MOUNT, RAW_DATA_PATH, PROCESSED_DATA_PATH
+from modal_app.volume import app, volume, lead_analyst_image
 
 # Queue: classify.py pushes high-confidence docs here after enrichment
 impact_queue = get_impact_queue()
 
-IMPACT_BRIEFS_PATH = f"{PROCESSED_DATA_PATH}/impact_briefs"
-DEDUP_PATH = f"{VOLUME_MOUNT}/dedup"
+IMPACT_BRIEFS_PATH = None
+DEDUP_PATH = None
 MAX_ANALYZED_IDS = 5000
 DEFAULT_LEAD_ANALYST_MODEL = "gpt-5-mini"
+
+
+def _impact_briefs_dir():
+    if IMPACT_BRIEFS_PATH is not None:
+        return Path(IMPACT_BRIEFS_PATH)
+    return get_processed_data_dir() / "impact_briefs"
+
+
+def _impact_dedup_file():
+    if DEDUP_PATH is not None:
+        return Path(DEDUP_PATH) / "impact_analyzed.json"
+    return get_dedup_data_dir() / "impact_analyzed.json"
+
+
+def _impact_dedup_lock_file():
+    if DEDUP_PATH is not None:
+        return Path(DEDUP_PATH) / "impact_analyzed.lock"
+    return get_dedup_data_dir() / "impact_analyzed.lock"
 
 
 # ---------------------------------------------------------------------------
@@ -119,10 +146,10 @@ WORKER_DATA_SOURCES = {
 
 def _load_analyzed_ids(lock_fd=None) -> set[str]:
     """Load analyzed doc IDs. If lock_fd provided, caller holds the lock."""
-    path = Path(DEDUP_PATH) / "impact_analyzed.json"
+    path = _impact_dedup_file()
     try:
-        if path.exists():
-            data = json.loads(path.read_text())
+        data = load_json_file(path, default=None)
+        if data is not None:
             return set(data.get("ids", []) if isinstance(data, dict) else data)
     except Exception as e:
         print(f"Lead Analyst: dedup load error: {e}")
@@ -131,31 +158,23 @@ def _load_analyzed_ids(lock_fd=None) -> set[str]:
 
 def _save_analyzed_ids(ids: set[str], lock_fd=None) -> None:
     """Save analyzed doc IDs. If lock_fd provided, caller holds the lock."""
-    path = Path(DEDUP_PATH) / "impact_analyzed.json"
+    path = _impact_dedup_file()
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
         id_list = list(ids)
         if len(id_list) > MAX_ANALYZED_IDS:
             id_list = id_list[-MAX_ANALYZED_IDS:]
-        path.write_text(json.dumps({"ids": id_list}))
+        write_json_file(path, {"ids": id_list}, indent=None)
     except Exception as e:
         print(f"Lead Analyst: dedup save error: {e}")
 
 
 def _with_analyzed_lock(fn):
     """Run fn(analyzed_ids) under an exclusive file lock, then save."""
-    import fcntl
-    lock_path = Path(DEDUP_PATH) / "impact_analyzed.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "w") as lock_fd:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        try:
-            ids = _load_analyzed_ids(lock_fd)
-            result = fn(ids)
-            _save_analyzed_ids(ids, lock_fd)
-            return result
-        finally:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    with shared_data_lock(_impact_dedup_lock_file()):
+        ids = _load_analyzed_ids(None)
+        result = fn(ids)
+        _save_analyzed_ids(ids, None)
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -329,12 +348,12 @@ def _gather_worker_context(worker_type: str, neighborhoods: list[str], limit: in
     sources = WORKER_DATA_SOURCES.get(worker_type, [])
     context_docs = []
     for source in sources:
-        source_dir = Path(RAW_DATA_PATH) / source
-        if not source_dir.exists():
-            continue
-        for json_file in sorted(source_dir.rglob("*.json"), reverse=True)[:limit]:
+        source_dir = get_raw_data_dir() / source
+        for json_file in iter_files(source_dir, pattern="*.json")[:limit]:
             try:
-                doc = json.loads(json_file.read_text())
+                doc = load_json_file(json_file, default=None)
+                if not isinstance(doc, dict):
+                    continue
                 # If neighborhoods specified, prefer docs from those areas
                 doc_hood = doc.get("geo", {}).get("neighborhood", "")
                 if neighborhoods and doc_hood and doc_hood not in neighborhoods:
@@ -769,15 +788,12 @@ async def _synthesize_brief(
 
 def _save_brief(brief: ImpactBrief) -> str:
     """Save an ImpactBrief to volume. Returns the file path."""
-    briefs_dir = Path(IMPACT_BRIEFS_PATH)
-    briefs_dir.mkdir(parents=True, exist_ok=True)
-
     ts = brief.timestamp.strftime("%Y%m%d-%H%M%S")
     slug = brief.trigger_title[:40].lower().replace(" ", "-").replace("/", "-")
     slug = "".join(c for c in slug if c.isalnum() or c == "-")
     filename = f"{ts}-{slug}.json"
 
-    path = briefs_dir / filename
+    path = _impact_briefs_dir() / filename
     path.write_text(brief.model_dump_json(indent=2))
     print(f"Lead Analyst: saved brief to {path}")
     return str(path)
@@ -785,14 +801,12 @@ def _save_brief(brief: ImpactBrief) -> str:
 
 def _load_briefs(limit: int = 50, min_score: float = 0.0) -> list[dict]:
     """Load impact briefs from volume."""
-    briefs_dir = Path(IMPACT_BRIEFS_PATH)
-    if not briefs_dir.exists():
-        return []
-
     briefs = []
-    for json_file in sorted(briefs_dir.rglob("*.json"), reverse=True)[:limit]:
+    for json_file in iter_files(_impact_briefs_dir(), pattern="*.json")[:limit]:
         try:
-            brief = json.loads(json_file.read_text())
+            brief = load_json_file(json_file, default=None)
+            if not isinstance(brief, dict):
+                continue
             if brief.get("impact_score", 0) >= min_score:
                 briefs.append(brief)
         except Exception:
@@ -802,13 +816,11 @@ def _load_briefs(limit: int = 50, min_score: float = 0.0) -> list[dict]:
 
 def _load_brief_by_id(brief_id: str) -> dict | None:
     """Load a single brief by its ID."""
-    briefs_dir = Path(IMPACT_BRIEFS_PATH)
-    if not briefs_dir.exists():
-        return None
-
-    for json_file in briefs_dir.rglob("*.json"):
+    for json_file in iter_files(_impact_briefs_dir(), pattern="*.json"):
         try:
-            brief = json.loads(json_file.read_text())
+            brief = load_json_file(json_file, default=None)
+            if not isinstance(brief, dict):
+                continue
             if brief.get("id") == brief_id:
                 return brief
         except Exception:
@@ -953,23 +965,23 @@ async def analyze_impact(doc_id: str) -> dict:
     volume.reload()
 
     # Find the document in enriched storage
-    enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
+    enriched_dir = get_processed_data_dir() / "enriched"
     doc = None
 
-    if enriched_dir.exists():
-        target_file = enriched_dir / f"{doc_id}.json"
-        if target_file.exists():
-            doc = json.loads(target_file.read_text())
-        else:
-            # Search all enriched files
-            for json_file in enriched_dir.rglob("*.json"):
-                try:
-                    candidate = json.loads(json_file.read_text())
-                    if candidate.get("id") == doc_id:
-                        doc = candidate
-                        break
-                except Exception:
-                    continue
+    target_file = enriched_dir / f"{doc_id}.json"
+    direct = load_json_file(target_file, default=None)
+    if isinstance(direct, dict):
+        doc = direct
+    else:
+        # Search all enriched files
+        for json_file in iter_files(enriched_dir, pattern="*.json"):
+            try:
+                candidate = load_json_file(json_file, default=None)
+                if isinstance(candidate, dict) and candidate.get("id") == doc_id:
+                    doc = candidate
+                    break
+            except Exception:
+                continue
 
     if not doc:
         return {"error": f"Document {doc_id} not found in enriched storage"}

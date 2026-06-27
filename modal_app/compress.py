@@ -3,20 +3,371 @@ neighborhood-level summaries (~32:1 ratio).
 
 Produces GeoJSON at /data/processed/geo/neighborhood_metrics.json for frontend Mapbox GL.
 """
-import json
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+import json
+import os
+import tempfile
 from pathlib import Path
 
 import modal
 
+from backend.shared_data import (
+    SharedDataPath,
+    get_processed_data_dir,
+    get_raw_data_dir,
+    iter_files,
+    load_json_file,
+    write_json_file,
+)
+from modal_app.api.services.documents import (
+    cta_ridership_by_station_from_docs,
+    neighborhood_from_coordinates,
+)
 from modal_app.common import (
     CHICAGO_NEIGHBORHOODS,
     COMMUNITY_AREA_MAP,
     NEIGHBORHOOD_CENTROIDS,
-    NeighborhoodGeoMetrics,
+    detect_neighborhood,
 )
-from modal_app.volume import app, volume, data_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
+from modal_app.volume import app, volume, data_image
+
+
+PUBLIC_DATA_INDEX_DATASETS = ("food_inspections", "building_permits", "business_licenses")
+DEFAULT_PUBLIC_DATA_INDEX_MAX_FILES_PER_DATASET = 1200
+DEFAULT_CTA_RIDERSHIP_MAX_FILES = 1200
+
+
+def _read_concurrency() -> int:
+    try:
+        return max(1, int(os.environ.get("COMPRESS_READ_CONCURRENCY", "32")))
+    except ValueError:
+        return 32
+
+
+def _load_json_records(json_files: list, source: str) -> list[dict]:
+    """Load source JSON concurrently because object storage reads are network-bound."""
+    records: list[dict] = []
+
+    def _load_one(jf):
+        try:
+            record = load_json_file(jf, default=None)
+            return record if isinstance(record, dict) else None
+        except Exception as e:
+            print(f"Compress [{source}]: error reading {jf.name}: {e}")
+            return None
+
+    with ThreadPoolExecutor(max_workers=_read_concurrency()) as executor:
+        for record in executor.map(_load_one, json_files):
+            if record is not None:
+                records.append(record)
+
+    return records
+
+
+def _normalize_neighborhood(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        area_num = int(raw)
+        return COMMUNITY_AREA_MAP.get(area_num, str(area_num))
+    except (ValueError, TypeError):
+        return raw
+
+
+def _record_coordinates(record: dict) -> tuple[float, float] | None:
+    metadata = record.get("metadata", {}) or {}
+    raw_record = metadata.get("raw_record", {}) or {}
+    geo = record.get("geo", {}) or {}
+    location = raw_record.get("location") or {}
+    if not isinstance(location, dict):
+        location = {}
+
+    lat_candidates = (
+        geo.get("lat"),
+        geo.get("latitude"),
+        record.get("lat"),
+        record.get("latitude"),
+        raw_record.get("latitude"),
+        raw_record.get("lat"),
+        location.get("latitude"),
+    )
+    lng_candidates = (
+        geo.get("lng"),
+        geo.get("lon"),
+        geo.get("longitude"),
+        record.get("lng"),
+        record.get("lon"),
+        record.get("longitude"),
+        raw_record.get("longitude"),
+        raw_record.get("lng"),
+        raw_record.get("lon"),
+        location.get("longitude"),
+    )
+
+    if isinstance(location.get("coordinates"), list) and len(location["coordinates"]) >= 2:
+        lng_candidates = (*lng_candidates, location["coordinates"][0])
+        lat_candidates = (*lat_candidates, location["coordinates"][1])
+
+    for lat_raw in lat_candidates:
+        for lng_raw in lng_candidates:
+            try:
+                lat = float(lat_raw)
+                lng = float(lng_raw)
+            except (TypeError, ValueError):
+                continue
+            if lat == 0 or lng == 0:
+                continue
+            return lat, lng
+    return None
+
+
+def _record_neighborhood(record: dict) -> str:
+    metadata = record.get("metadata", {}) or {}
+    raw_record = metadata.get("raw_record", {}) or {}
+    geo = record.get("geo", {}) or {}
+
+    for value in (
+        geo.get("neighborhood"),
+        geo.get("community_area"),
+        raw_record.get("community_area_name"),
+        raw_record.get("community_area"),
+    ):
+        neighborhood = _normalize_neighborhood(value)
+        if neighborhood:
+            return neighborhood
+
+    coords = _record_coordinates(record)
+    if coords is not None:
+        neighborhood = neighborhood_from_coordinates(*coords)
+        if neighborhood:
+            return neighborhood
+
+    address = str(raw_record.get("address") or "").strip()
+    if address:
+        return detect_neighborhood(address)
+    return ""
+
+
+def _record_dedupe_key(record: dict, dataset: str) -> str:
+    metadata = record.get("metadata", {}) or {}
+    raw_record = metadata.get("raw_record", {}) or {}
+    for value in (
+        record.get("id"),
+        raw_record.get("inspection_id"),
+        raw_record.get("id"),
+        raw_record.get("permit_"),
+        raw_record.get("license_id"),
+    ):
+        if value not in (None, ""):
+            return f"{dataset}:{value}"
+    return ":".join(
+        str(part or "").strip().lower()
+        for part in (
+            dataset,
+            record.get("title"),
+            record.get("timestamp"),
+            raw_record.get("address"),
+            raw_record.get("license_description"),
+        )
+    )
+
+
+def _build_public_data_neighborhood_index(
+    records: list[dict],
+    *,
+    per_dataset_limit: int = 160,
+) -> dict:
+    """Build a compact real-document index for fast dashboard public-data reads."""
+    neighborhoods: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    seen: dict[tuple[str, str], set[str]] = defaultdict(set)
+
+    for record in records:
+        metadata = record.get("metadata", {}) or {}
+        dataset = str(metadata.get("dataset") or record.get("source") or "unknown")
+        neighborhood = _record_neighborhood(record)
+        if not neighborhood:
+            continue
+
+        seen_key = (neighborhood, dataset)
+        dedupe_key = _record_dedupe_key(record, dataset)
+        if dedupe_key in seen[seen_key]:
+            continue
+        seen[seen_key].add(dedupe_key)
+
+        counts[neighborhood][dataset] += 1
+        bucket = neighborhoods[neighborhood][dataset]
+        if len(bucket) < per_dataset_limit:
+            bucket.append(record)
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "per_dataset_limit": per_dataset_limit,
+        "neighborhoods": {
+            neighborhood: {
+                dataset: docs
+                for dataset, docs in datasets.items()
+            }
+            for neighborhood, datasets in neighborhoods.items()
+        },
+        "counts": {
+            neighborhood: dict(datasets)
+            for neighborhood, datasets in counts.items()
+        },
+    }
+
+
+def _public_data_partition_dirs(raw_public_dir: Path | SharedDataPath) -> list[Path | SharedDataPath]:
+    if isinstance(raw_public_dir, SharedDataPath):
+        entries = raw_public_dir.accessor.list_entries(raw_public_dir.relative_path, recursive=False)
+        dirs = [
+            SharedDataPath(raw_public_dir.accessor, entry.path)
+            for entry in entries
+            if entry.is_dir
+        ]
+    else:
+        if not raw_public_dir.exists():
+            return []
+        dirs = [path for path in raw_public_dir.iterdir() if path.is_dir()]
+    return sorted(dirs, key=lambda path: str(path.name), reverse=True)
+
+
+def _public_data_dataset_paths(
+    raw_public_dir: Path | SharedDataPath,
+    dataset: str,
+    *,
+    max_files: int = DEFAULT_PUBLIC_DATA_INDEX_MAX_FILES_PER_DATASET,
+) -> list[Path | SharedDataPath]:
+    prefix = f"public-{dataset}-"
+    paths: list[Path | SharedDataPath] = []
+
+    for partition in _public_data_partition_dirs(raw_public_dir):
+        remaining = max_files - len(paths)
+        if remaining <= 0:
+            break
+
+        if isinstance(partition, SharedDataPath):
+            list_with_prefix = getattr(partition.accessor, "list_entries_with_name_prefix", None)
+            if callable(list_with_prefix):
+                entries = list_with_prefix(
+                    partition.relative_path,
+                    name_prefix=prefix,
+                    recursive=False,
+                )
+            else:
+                entries = [
+                    entry
+                    for entry in partition.accessor.list_entries(partition.relative_path, recursive=False)
+                    if entry.name.startswith(prefix)
+                ]
+            entries = [
+                entry
+                for entry in entries
+                if entry.is_file and entry.name.startswith(prefix) and entry.name.endswith(".json")
+            ]
+            entries.sort(key=lambda entry: (entry.mtime, entry.path), reverse=True)
+            paths.extend(SharedDataPath(partition.accessor, entry.path) for entry in entries[:remaining])
+            continue
+
+        files = [
+            path
+            for path in partition.glob(f"{prefix}*.json")
+            if path.is_file()
+        ]
+        files.sort(key=lambda path: (path.stat().st_mtime, path.name), reverse=True)
+        paths.extend(files[:remaining])
+
+    return paths
+
+
+def _build_public_data_neighborhood_index_from_paths(
+    dataset_paths: dict[str, list[Path | SharedDataPath]],
+    *,
+    per_dataset_limit: int = 160,
+) -> dict:
+    neighborhoods: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    loaded_by_dataset: dict[str, int] = defaultdict(int)
+    seen: dict[tuple[str, str], set[str]] = defaultdict(set)
+
+    items = [
+        (dataset, path)
+        for dataset, paths in dataset_paths.items()
+        for path in paths
+    ]
+
+    def _load_one(item: tuple[str, Path | SharedDataPath]) -> tuple[str, dict | None]:
+        dataset, path = item
+        try:
+            record = load_json_file(path, default=None)
+        except Exception as exc:
+            print(f"Public data index: error reading {path}: {exc}")
+            return dataset, None
+        return dataset, record if isinstance(record, dict) else None
+
+    with ThreadPoolExecutor(max_workers=_read_concurrency()) as executor:
+        for dataset, record in executor.map(_load_one, items):
+            if record is None:
+                continue
+            loaded_by_dataset[dataset] += 1
+
+            neighborhood = _record_neighborhood(record)
+            if not neighborhood:
+                continue
+
+            seen_key = (neighborhood, dataset)
+            dedupe_key = _record_dedupe_key(record, dataset)
+            if dedupe_key in seen[seen_key]:
+                continue
+            seen[seen_key].add(dedupe_key)
+
+            counts[neighborhood][dataset] += 1
+            bucket = neighborhoods[neighborhood][dataset]
+            if len(bucket) < per_dataset_limit:
+                bucket.append(record)
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "per_dataset_limit": per_dataset_limit,
+        "files_by_dataset": {
+            dataset: len(paths)
+            for dataset, paths in dataset_paths.items()
+        },
+        "loaded_by_dataset": dict(loaded_by_dataset),
+        "neighborhoods": {
+            neighborhood: {
+                dataset: docs
+                for dataset, docs in datasets.items()
+            }
+            for neighborhood, datasets in neighborhoods.items()
+        },
+        "counts": {
+            neighborhood: dict(datasets)
+            for neighborhood, datasets in counts.items()
+        },
+    }
+
+
+def _load_docs_from_paths(paths: list[Path | SharedDataPath], *, source: str) -> list[dict]:
+    items = list(paths)
+
+    def _load_one(path: Path | SharedDataPath) -> dict | None:
+        try:
+            record = load_json_file(path, default=None)
+        except Exception as exc:
+            print(f"{source}: error reading {path}: {exc}")
+            return None
+        return record if isinstance(record, dict) else None
+
+    records: list[dict] = []
+    with ThreadPoolExecutor(max_workers=_read_concurrency()) as executor:
+        for record in executor.map(_load_one, items):
+            if record is not None:
+                records.append(record)
+    return records
 
 
 class DatasetSummary:
@@ -131,6 +482,7 @@ def _build_geo_metrics(summaries: dict[str, DatasetSummary]) -> dict:
         pd_summary = summaries["public_data"]
         for hood, count in pd_summary.counts_by_neighborhood.items():
             neighborhood_data[hood]["active_permits"] += count
+            neighborhood_data[hood]["regulatory_density"] = min(count * 3.0, 100.0)
 
     # Aggregate from CCTV summary — foot traffic intensity
     if "cctv" in summaries:
@@ -145,130 +497,7 @@ def _build_geo_metrics(summaries: dict[str, DatasetSummary]) -> dict:
             neighborhood_data[hood]["review_count"] += count
             neighborhood_data[hood]["business_activity"] += min(count * 2.0, 100.0)
 
-    # Aggregate from enriched documents — classification + sentiment
-    # Per-neighborhood accumulators for averaging
-    sentiment_totals: dict[str, list[float]] = defaultdict(list)
-    regulatory_counts: dict[str, int] = defaultdict(int)
-    business_counts: dict[str, int] = defaultdict(int)
-    safety_counts: dict[str, int] = defaultdict(int)
-    enriched_count = 0
-
-    enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
-    if enriched_dir.exists():
-        for jf in enriched_dir.rglob("*.json"):
-            try:
-                doc = json.loads(jf.read_text())
-            except Exception:
-                continue
-
-            hood = doc.get("geo", {}).get("neighborhood", "")
-            if not hood:
-                continue
-            # Normalize community area numbers to names
-            try:
-                area_num = int(hood)
-                hood = COMMUNITY_AREA_MAP.get(area_num, str(area_num))
-            except (ValueError, TypeError):
-                pass
-
-            enriched_count += 1
-
-            # Classification — count by top label
-            classification = doc.get("classification", {})
-            labels = classification.get("labels", [])
-            if labels:
-                top_label = labels[0].lower()
-                if top_label == "regulatory":
-                    regulatory_counts[hood] += 1
-                elif top_label in ("economic", "business"):
-                    business_counts[hood] += 1
-                elif top_label == "safety":
-                    safety_counts[hood] += 1
-
-            # Sentiment — accumulate for averaging
-            sentiment = doc.get("sentiment", {})
-            slabel = sentiment.get("label", "").lower()
-            sscore = sentiment.get("score", 0.0)
-            if slabel == "positive":
-                sentiment_totals[hood].append(sscore)
-            elif slabel == "negative":
-                sentiment_totals[hood].append(-sscore)
-            elif slabel == "neutral":
-                sentiment_totals[hood].append(0.0)
-
-    # Fallback: if no enriched docs, classify raw docs via keyword heuristics
-    if enriched_count == 0:
-        print("Compress [enriched]: no enriched docs found, using keyword heuristic fallback")
-        _REGULATORY_KW = {"permit", "license", "zoning", "regulation", "inspection", "ordinance", "violation", "compliance", "code", "fine"}
-        _BUSINESS_KW = {"restaurant", "store", "shop", "cafe", "bar", "business", "opening", "closing", "lease", "rent", "revenue", "commerce"}
-        _SAFETY_KW = {"crime", "theft", "shooting", "fire", "accident", "hazard", "unsafe", "emergency", "arrest", "robbery"}
-        _POSITIVE_KW = {"great", "excellent", "love", "amazing", "best", "wonderful", "fantastic", "recommend", "impressed", "perfect"}
-        _NEGATIVE_KW = {"terrible", "worst", "awful", "horrible", "disgusting", "avoid", "bad", "poor", "dirty", "rude", "complaint", "fail"}
-
-        for source in ["public_data", "news", "reddit", "reviews", "politics", "federal_register"]:
-            raw_dir = Path(RAW_DATA_PATH) / source
-            if not raw_dir.exists():
-                continue
-            for jf in raw_dir.rglob("*.json"):
-                try:
-                    doc = json.loads(jf.read_text())
-                except Exception:
-                    continue
-                hood = doc.get("geo", {}).get("neighborhood", "")
-                if not hood:
-                    continue
-                try:
-                    area_num = int(hood)
-                    hood = COMMUNITY_AREA_MAP.get(area_num, str(area_num))
-                except (ValueError, TypeError):
-                    pass
-
-                text = (doc.get("title", "") + " " + doc.get("content", "")[:500]).lower()
-                words = set(text.split())
-
-                if words & _REGULATORY_KW:
-                    regulatory_counts[hood] += 1
-                if words & _BUSINESS_KW:
-                    business_counts[hood] += 1
-                if words & _SAFETY_KW:
-                    safety_counts[hood] += 1
-
-                pos = len(words & _POSITIVE_KW)
-                neg = len(words & _NEGATIVE_KW)
-                if pos > neg:
-                    sentiment_totals[hood].append(0.6)
-                elif neg > pos:
-                    sentiment_totals[hood].append(-0.6)
-                elif pos > 0 or neg > 0:
-                    sentiment_totals[hood].append(0.0)
-
-    # Apply classification + sentiment metrics to neighborhood data
-    for hood in set(regulatory_counts) | set(business_counts) | set(sentiment_totals) | set(safety_counts):
-        props = neighborhood_data[hood]
-
-        # regulatory_density: normalized count of regulatory-classified docs
-        if hood in regulatory_counts:
-            props["regulatory_density"] = min(regulatory_counts[hood] * 3.0, 100.0)
-
-        # business_activity: supplement with economic/business-classified docs
-        if hood in business_counts:
-            props["business_activity"] = min(
-                props["business_activity"] + business_counts[hood] * 2.0, 100.0
-            )
-
-        # avg_review_rating: average sentiment mapped to 0-5 scale
-        if hood in sentiment_totals and sentiment_totals[hood]:
-            avg_sentiment = sum(sentiment_totals[hood]) / len(sentiment_totals[hood])
-            props["avg_review_rating"] = round((avg_sentiment + 1.0) * 2.5, 2)
-            props["sentiment"] = round(avg_sentiment, 4)
-
-        # risk_score: weighted combination of regulatory + safety + negative sentiment
-        reg = regulatory_counts.get(hood, 0)
-        safe = safety_counts.get(hood, 0)
-        neg_sent = sum(1 for s in sentiment_totals.get(hood, []) if s < -0.5)
-        props["risk_score"] = min((reg * 2.0 + safe * 3.0 + neg_sent * 2.5), 100.0)
-
-    print(f"Compress [enriched]: processed docs across {len(sentiment_totals)} neighborhoods (enriched: {enriched_count})")
+    print("Compress [geo]: building metrics from source summaries")
 
     # Min-max normalize metrics to 0-100 for comparable heatmap rendering
     def _minmax(values: dict[str, float]) -> dict[str, float]:
@@ -320,6 +549,159 @@ def _build_geo_metrics(summaries: dict[str, DatasetSummary]) -> dict:
 @app.function(
     image=data_image,
     volumes={"/data": volume},
+    secrets=[modal.Secret.from_name("alethia-secrets")],
+    timeout=1200,
+)
+def build_public_data_index(
+    per_dataset_limit: int = 160,
+    max_files_per_dataset: int = DEFAULT_PUBLIC_DATA_INDEX_MAX_FILES_PER_DATASET,
+):
+    """Build the processed public-data neighborhood index used by dashboard routes."""
+    raw_dir = get_raw_data_dir() / "public_data"
+    dataset_paths = {
+        dataset: _public_data_dataset_paths(
+            raw_dir,
+            dataset,
+            max_files=max_files_per_dataset,
+        )
+        for dataset in PUBLIC_DATA_INDEX_DATASETS
+    }
+    if not any(dataset_paths.values()):
+        print("Public data index: no raw public_data files found")
+        return {"total_records": 0, "neighborhoods": 0}
+
+    index = _build_public_data_neighborhood_index_from_paths(
+        dataset_paths,
+        per_dataset_limit=per_dataset_limit,
+    )
+    index_path = get_processed_data_dir() / "cache" / "public_data_by_neighborhood.json"
+    raw_index = json.dumps(index, indent=2, default=str)
+    write_json_file(index_path, index)
+
+    mounted_index_path = Path("/data/processed/cache/public_data_by_neighborhood.json")
+    mounted_index_path.parent.mkdir(parents=True, exist_ok=True)
+    mounted_index_path.write_text(raw_index, encoding="utf-8")
+
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
+        tmp.write(raw_index)
+        upload_path = Path(tmp.name)
+    try:
+        with volume.batch_upload(force=True) as batch:
+            batch.put_file(str(upload_path), "/processed/cache/public_data_by_neighborhood.json")
+    finally:
+        if upload_path.exists():
+            upload_path.unlink()
+    volume.commit()
+
+    result = {
+        "total_records": sum(index.get("loaded_by_dataset", {}).values()),
+        "neighborhoods": len(index["neighborhoods"]),
+        "files_by_dataset": index.get("files_by_dataset", {}),
+        "loaded_by_dataset": index.get("loaded_by_dataset", {}),
+        "generated_at": index["generated_at"],
+        "index_path": str(index_path),
+        "mounted_index_exists": mounted_index_path.exists(),
+        "mounted_index_size": mounted_index_path.stat().st_size if mounted_index_path.exists() else 0,
+    }
+    print(f"Public data index complete: {result}")
+    return result
+
+
+@app.function(
+    image=data_image,
+    volumes={"/data": volume},
+    secrets=[modal.Secret.from_name("alethia-secrets")],
+    timeout=900,
+)
+def build_transit_cache(max_files: int = DEFAULT_CTA_RIDERSHIP_MAX_FILES):
+    """Build the processed CTA ridership cache used by neighborhood transit scoring."""
+    mounted_station_cache_path = Path("/data/processed/cache/cta_stations.json")
+    station_cache = load_json_file(mounted_station_cache_path, default=None)
+    station_count = len(station_cache) if isinstance(station_cache, list) else 0
+    active_station_cache_path = get_processed_data_dir() / "cache" / "cta_stations.json"
+    if isinstance(station_cache, list):
+        write_json_file(active_station_cache_path, station_cache)
+    active_station_cache = load_json_file(active_station_cache_path, default=None)
+    active_station_count = len(active_station_cache) if isinstance(active_station_cache, list) else 0
+
+    raw_public_dir = get_raw_data_dir() / "public_data"
+    paths = _public_data_dataset_paths(
+        raw_public_dir,
+        "cta_ridership_L",
+        max_files=max_files,
+    )
+    if not paths:
+        print("Transit cache: no cta_ridership_L files found")
+        empty_payload = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "files": 0,
+            "records": 0,
+            "stations": {},
+        }
+        cache_path = get_processed_data_dir() / "cache" / "cta_l_ridership_by_station.json"
+        raw_empty_payload = json.dumps(empty_payload, indent=2, default=str)
+        write_json_file(cache_path, empty_payload)
+        mounted_cache_path = Path("/data/processed/cache/cta_l_ridership_by_station.json")
+        mounted_cache_path.parent.mkdir(parents=True, exist_ok=True)
+        mounted_cache_path.write_text(raw_empty_payload, encoding="utf-8")
+        volume.commit()
+        return {
+            "records": 0,
+            "stations": 0,
+            "station_cache_records": station_count,
+            "active_station_cache_records": active_station_count,
+            "empty_ridership_cache_written": True,
+        }
+
+    docs = _load_docs_from_paths(paths, source="Transit cache")
+    stations = cta_ridership_by_station_from_docs(docs)
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "files": len(paths),
+        "records": len(docs),
+        "stations": stations,
+    }
+
+    cache_path = get_processed_data_dir() / "cache" / "cta_l_ridership_by_station.json"
+    raw_payload = json.dumps(payload, indent=2, default=str)
+    write_json_file(cache_path, payload)
+
+    mounted_cache_path = Path("/data/processed/cache/cta_l_ridership_by_station.json")
+    mounted_cache_path.parent.mkdir(parents=True, exist_ok=True)
+    mounted_cache_path.write_text(raw_payload, encoding="utf-8")
+
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
+        tmp.write(raw_payload)
+        upload_path = Path(tmp.name)
+    try:
+        with volume.batch_upload(force=True) as batch:
+            batch.put_file(str(upload_path), "/processed/cache/cta_l_ridership_by_station.json")
+            if isinstance(station_cache, list):
+                batch.put_file(str(mounted_station_cache_path), "/processed/cache/cta_stations.json")
+    finally:
+        if upload_path.exists():
+            upload_path.unlink()
+    volume.commit()
+
+    result = {
+        "files": len(paths),
+        "records": len(docs),
+        "stations": len(stations),
+        "station_cache_records": station_count,
+        "active_station_cache_records": active_station_count,
+        "generated_at": payload["generated_at"],
+        "cache_path": str(cache_path),
+        "mounted_cache_exists": mounted_cache_path.exists(),
+        "mounted_cache_size": mounted_cache_path.stat().st_size if mounted_cache_path.exists() else 0,
+    }
+    print(f"Transit cache complete: {result}")
+    return result
+
+
+@app.function(
+    image=data_image,
+    volumes={"/data": volume},
+    secrets=[modal.Secret.from_name("alethia-secrets")],
     timeout=600,
 )
 def compress_raw_data(days: int = 7):
@@ -338,38 +720,40 @@ def compress_raw_data(days: int = 7):
 
     for source in sources:
         summary = DatasetSummary(source)
-        raw_dir = Path(RAW_DATA_PATH) / source
-
-        if not raw_dir.exists():
-            print(f"Compress [{source}]: no raw data directory")
-            continue
+        raw_dir = get_raw_data_dir() / source
 
         # Read all JSON files in date subdirectories
-        json_files = list(raw_dir.rglob("*.json"))
-        for jf in json_files:
-            try:
-                record = json.loads(jf.read_text())
-                summary.add_record(record)
-            except Exception as e:
-                print(f"Compress [{source}]: error reading {jf.name}: {e}")
+        json_files = iter_files(raw_dir, pattern="*.json")
+        if not json_files:
+            print(f"Compress [{source}]: no raw data directory")
+            continue
+        records = _load_json_records(json_files, source)
+        for record in records:
+            summary.add_record(record)
 
         summaries[source] = summary
         print(f"Compress [{source}]: {summary.total_records} records → 1 summary ({summary.to_dict()['compression_ratio']})")
 
+        if source == "public_data":
+            index_path = get_processed_data_dir() / "cache" / "public_data_by_neighborhood.json"
+            index = _build_public_data_neighborhood_index(records)
+            write_json_file(index_path, index)
+            print(
+                "Compress [public_data]: wrote neighborhood index "
+                f"for {len(index['neighborhoods'])} neighborhoods"
+            )
+
     # Write summaries
-    summary_dir = Path(PROCESSED_DATA_PATH) / "summaries"
-    summary_dir.mkdir(parents=True, exist_ok=True)
+    summary_dir = get_processed_data_dir() / "summaries"
 
     for source, summary in summaries.items():
         out_path = summary_dir / f"{source}_summary.json"
-        out_path.write_text(json.dumps(summary.to_dict(), indent=2, default=str))
+        write_json_file(out_path, summary.to_dict())
 
     # Write GeoJSON
-    geo_dir = Path(PROCESSED_DATA_PATH) / "geo"
-    geo_dir.mkdir(parents=True, exist_ok=True)
-    geo_path = geo_dir / "neighborhood_metrics.json"
+    geo_path = get_processed_data_dir() / "geo" / "neighborhood_metrics.json"
     geojson = _build_geo_metrics(summaries)
-    geo_path.write_text(json.dumps(geojson, indent=2))
+    write_json_file(geo_path, geojson)
 
     volume.commit()
 

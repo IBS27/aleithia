@@ -97,6 +97,28 @@ def test_modal_route_ownership_boundaries():
     assert paths.isdisjoint(backend_owned)
 
 
+def test_streetscape_empty_response_includes_neighborhood(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from modal_app.api.routes import vision as vision_routes
+    from modal_app.web import web_app
+
+    (tmp_path / "vision" / "analysis").mkdir(parents=True)
+    monkeypatch.setattr(vision_routes, "volume", SimpleNamespace(reload=lambda: None))
+    monkeypatch.setattr(vision_routes, "PROCESSED_DATA_PATH", tmp_path)
+
+    resp = TestClient(web_app).get("/vision/streetscape/Loop")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data == {
+        "neighborhood": "Loop",
+        "counts": None,
+        "indicators": None,
+        "analysis_count": 0,
+    }
+
+
 @pytest.mark.asyncio
 async def test_generated_analysis_reads_outputs_before_sandbox_cleanup(monkeypatch):
     from modal_app.api.routes import analysis as analysis_routes

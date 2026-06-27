@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import modal
 
 from modal_app.runtime import get_modal_cls, get_modal_function
-from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
+from modal_app.volume import app, volume, base_image
 
 DEMO_NEIGHBORHOODS = [
     "Logan Square", "Wicker Park", "Pilsen", "Hyde Park", "Lincoln Park",

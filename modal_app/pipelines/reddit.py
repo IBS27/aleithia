@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 import httpx
 import modal
 
+from backend.shared_data import get_raw_data_dir, write_source_status
 from modal_app.common import (
     REDDIT_SIGNAL_SUBREDDITS,
     REDDIT_SUBREDDITS,
@@ -33,7 +34,7 @@ from modal_app.common import (
 )
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
-from modal_app.volume import RAW_DATA_PATH, app, reddit_image, volume
+from modal_app.volume import app, reddit_image, volume
 
 HOURLY_HOT_LIMIT = 25
 HOURLY_NEW_LIMIT = 15
@@ -44,12 +45,19 @@ FALLBACK_PER_ATTEMPT_TIMEOUT_SECONDS = 0.9
 FALLBACK_BUDGET_MS = 3000
 FALLBACK_MIN_SCORE = 3
 INGEST_MIN_SCORE = 2
+RAW_DATA_PATH = None
 
 HOURLY_SEARCH_TERMS = [
     "opening OR closing chicago",
     "permit OR license OR zoning chicago",
     "gym OR fitness OR health club chicago",
 ]
+
+
+def _raw_data_dir():
+    if RAW_DATA_PATH is not None:
+        return Path(RAW_DATA_PATH)
+    return get_raw_data_dir()
 
 
 def _collapse_whitespace(value: str) -> str:
@@ -755,17 +763,19 @@ async def _persist_reddit_docs(docs: list[dict], ingestion_mode: str) -> int:
     print(f"Reddit persist [{ingestion_mode}]: {len(docs)} received, {len(new_docs)} new")
     if not new_docs:
         seen.save()
+        write_source_status("reddit", documents_seen=len(docs), documents_written=0, metadata={"ingestion_mode": ingestion_mode})
         await safe_volume_commit(volume, "reddit")
         return 0
 
     suffix = "_fallback" if ingestion_mode == "query_fallback" else ""
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M") + suffix
-    out_dir = Path(RAW_DATA_PATH) / "reddit" / date_str
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = _raw_data_dir() / "reddit" / date_str
 
     for i, doc_data in enumerate(new_docs):
         doc = build_document(doc_data)
         out_path = out_dir / f"{doc.id}.json"
+        if isinstance(out_path, Path):
+            out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(doc.model_dump_json(indent=2))
         if i < 2:
             print(
@@ -782,6 +792,12 @@ async def _persist_reddit_docs(docs: list[dict], ingestion_mode: str) -> int:
 
     await safe_queue_push(doc_queue, new_docs, f"reddit-{ingestion_mode}")
     seen.save()
+    write_source_status(
+        "reddit",
+        documents_seen=len(docs),
+        documents_written=len(new_docs),
+        metadata={"ingestion_mode": ingestion_mode},
+    )
     await safe_volume_commit(volume, "reddit")
     print(f"Reddit persist [{ingestion_mode}] complete: {len(new_docs)} saved to {out_dir}")
     return len(new_docs)

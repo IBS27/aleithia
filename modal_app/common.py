@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from datetime import datetime, timezone
 from enum import Enum
@@ -709,8 +710,53 @@ async def safe_queue_push(queue, docs: list[dict], source: str) -> int:
 async def safe_volume_commit(vol, source: str) -> bool:
     """Commit volume with error logging. Returns True on success."""
     try:
+        from backend.shared_data import shared_data_backend
+
+        if shared_data_backend() == "s3":
+            return True
+    except ImportError as exc:
+        print(f"safe_volume_commit [{source}]: shared backend check unavailable: {exc}")
+
+    try:
         await vol.commit.aio()
         return True
     except Exception as e:
         print(f"safe_volume_commit [{source}]: failed: {e}")
+        return False
+
+
+async def safe_volume_reload(vol, source: str = "") -> bool:
+    """Reload a Modal Volume only when shared data is volume-backed."""
+    try:
+        from backend.shared_data import shared_data_backend
+
+        if shared_data_backend() == "s3":
+            return True
+    except ImportError as exc:
+        label = f" [{source}]" if source else ""
+        print(f"safe_volume_reload{label}: shared backend check unavailable: {exc}")
+
+    try:
+        try:
+            timeout_seconds = max(
+                0.1,
+                float(os.getenv("ALEITHIA_MODAL_VOLUME_RELOAD_TIMEOUT_SECONDS", "5")),
+            )
+        except ValueError:
+            timeout_seconds = 5.0
+
+        reload_attr = getattr(vol, "reload", None)
+        if reload_attr is None:
+            return True
+        reload_aio = getattr(reload_attr, "aio", None)
+        if callable(reload_aio):
+            await asyncio.wait_for(reload_aio(), timeout=timeout_seconds)
+        else:
+            result = reload_attr()
+            if hasattr(result, "__await__"):
+                await asyncio.wait_for(result, timeout=timeout_seconds)
+        return True
+    except Exception as e:
+        label = f" [{source}]" if source else ""
+        print(f"safe_volume_reload{label}: failed: {e}")
         return False

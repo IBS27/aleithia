@@ -920,18 +920,19 @@
         <h2>Step 2 Storage Implementation</h2>
         <p>
           The backend shared-data layer now has an explicit S3-compatible object-storage accessor
-          beside the existing Modal Volume accessor, and the Modal document service resolves raw
-          and processed JSON reads through that same shared-data layer. Modal remains the default.
-          Object storage is only used when configured through environment variables, so local and
-          Modal-backed reads do not silently switch data roots.
+          beside the existing Modal Volume accessor. Backend reads, Modal route reads, and Modal
+          worker reads and writes now use the shared-data layer for runtime raw documents,
+          processed documents, generated images, impact briefs, caches, and dedup state. Modal
+          remains the default. Object storage is only used when configured through environment
+          variables, so local and Modal-backed reads do not silently switch data roots.
         </p>
 
         <div class="callout ok">
           <strong>Implemented:</strong> <code>backend/shared_data.py</code> can list, stat, read, and
           write shared paths through either <code>modal://</code> or <code>s3://</code> roots while
-          preserving the existing <code>raw</code> and <code>processed</code> path contract.
-          <code>modal_app/api/services/documents.py</code> now uses those shared roots for document,
-          demographics, CTA cache, and source freshness reads.
+          preserving the existing <code>raw</code> and <code>processed</code> path contract. Direct
+          storage access in Modal API routes, CPU ingesters, CCTV/parking outputs, graph/summarization
+          jobs, impact briefs, fallback caches, and dedup files now goes through those shared roots.
         </div>
 
         <table>
@@ -977,10 +978,19 @@
         </table>
 
         <p>
-          This completes the first storage portability cut for backend shared reads. The next storage
-          work is to move Modal worker writes off direct <code>Path("/data/...")</code> operations in
-          small groups, starting with low-risk generated JSON outputs before image-heavy or GPU-owned
+          This completes Step 2 for the active route and worker storage paths. Remaining migration
+          work belongs to later stages: route consolidation, queue and small-state adapters, GPU
+          benchmarking, and sandbox replacement. Local scratch paths remain where the current runtime
+          still needs a filesystem boundary, such as generated-code sandboxes and YOLO training
           artifacts.
+        </p>
+
+        <p>
+          Before switching a runtime to <code>ALEITHIA_SHARED_DATA_BACKEND=s3</code>, run
+          <code>.venv/bin/python scripts/maintenance/sync_shared_data_to_s3.py</code> as a dry-run,
+          then rerun with <code>--write</code> once the destination bucket and prefix are confirmed.
+          An empty <code>runtime/raw</code> or <code>runtime/processed</code> prefix will make the UI
+          look healthy but sparsely populated.
         </p>
       </section>
 

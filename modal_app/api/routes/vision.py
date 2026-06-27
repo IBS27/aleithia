@@ -3,11 +3,17 @@ from __future__ import annotations
 
 import base64
 import json
-from pathlib import Path
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
 
+from backend.shared_data import (
+    get_processed_data_dir,
+    get_raw_data_dir,
+    iter_files,
+    load_json_file,
+    read_file_bytes,
+)
 from modal_app.api.services.cctv import (
     aggregate_timeseries_for_neighborhood,
     analysis_timestamp_epoch,
@@ -15,10 +21,30 @@ from modal_app.api.services.cctv import (
     load_cctv_latest_index,
     load_parking_for_neighborhood,
 )
+from modal_app.common import safe_volume_reload
 from modal_app.runtime import ENABLE_CCTV_ANALYSIS
-from modal_app.volume import PROCESSED_DATA_PATH, RAW_DATA_PATH, volume
+from modal_app.volume import volume
 
 router = APIRouter()
+
+RAW_DATA_PATH = None
+PROCESSED_DATA_PATH = None
+
+
+def _raw_data_dir():
+    if RAW_DATA_PATH is not None:
+        from pathlib import Path
+
+        return Path(RAW_DATA_PATH)
+    return get_raw_data_dir()
+
+
+def _processed_data_dir():
+    if PROCESSED_DATA_PATH is not None:
+        from pathlib import Path
+
+        return Path(PROCESSED_DATA_PATH)
+    return get_processed_data_dir()
 
 
 @router.get("/cctv/latest")
@@ -37,18 +63,23 @@ async def cctv_latest():
 
 @router.get("/cctv/frame/{camera_id}")
 async def cctv_frame(camera_id: str):
-    volume.reload()
-    frame_dirs: list[tuple[Path, str]] = []
+    await safe_volume_reload(volume, "cctv_frame")
+    frame_dirs = []
     if ENABLE_CCTV_ANALYSIS:
-        frame_dirs.append((Path(PROCESSED_DATA_PATH) / "cctv" / "annotated", "annotated"))
-    frame_dirs.append((Path(RAW_DATA_PATH) / "cctv" / "frames", "raw"))
+        frame_dirs.append((_processed_data_dir() / "cctv" / "annotated", "annotated"))
+    frame_dirs.append((_raw_data_dir() / "cctv" / "frames", "raw"))
 
     for frame_dir, frame_type in frame_dirs:
-        if not frame_dir.exists():
-            continue
-        frames = sorted(frame_dir.glob(f"{camera_id}_*.jpg"), reverse=True)
+        frame_prefix = f"{camera_id}_"
+        frames = [
+            frame
+            for frame in iter_files(frame_dir, recursive=False, pattern="*.jpg")
+            if frame.name.startswith(frame_prefix)
+        ]
         if frames:
-            return Response(content=frames[0].read_bytes(), media_type="image/jpeg")
+            content = read_file_bytes(frames[0], default=None)
+            if content is not None:
+                return Response(content=content, media_type="image/jpeg")
         print("cctv_frame_lookup_miss", {"camera_id": camera_id, "frame_type": frame_type})
 
     return JSONResponse({"error": f"no frames for camera {camera_id}"}, status_code=404)
@@ -63,10 +94,9 @@ async def cctv_timeseries(neighborhood: str):
 
 @router.get("/vision/streetscape/{neighborhood}")
 async def vision_streetscape(neighborhood: str):
-    volume.reload()
-    analysis_dir = Path(PROCESSED_DATA_PATH) / "vision" / "analysis"
-    if not analysis_dir.exists():
-        return {"counts": None, "indicators": None, "analysis_count": 0}
+    await safe_volume_reload(volume, "vision_streetscape")
+    analysis_dir = _processed_data_dir() / "vision" / "analysis"
+    analysis_paths = iter_files(analysis_dir, recursive=False, pattern="*.json")
 
     totals = {
         "person": 0,
@@ -81,9 +111,11 @@ async def vision_streetscape(neighborhood: str):
     analysis_count = 0
     slug = neighborhood.lower().replace(" ", "_")
 
-    for jf in analysis_dir.glob("*.json"):
+    for jf in analysis_paths:
         try:
-            data = json.loads(jf.read_text())
+            data = load_json_file(jf, default=None)
+            if not isinstance(data, dict):
+                continue
             counts = data.get("counts")
             if not counts:
                 continue
@@ -98,7 +130,7 @@ async def vision_streetscape(neighborhood: str):
             continue
 
     if analysis_count == 0:
-        return {"counts": None, "indicators": None, "analysis_count": 0}
+        return {"neighborhood": neighborhood, "counts": None, "indicators": None, "analysis_count": 0}
 
     total_storefronts = totals["storefront_open"] + totals["storefront_closed"] + totals["for_lease_sign"]
     if total_storefronts > 0:
@@ -112,6 +144,7 @@ async def vision_streetscape(neighborhood: str):
     growth_signal = "active" if totals["construction"] > 0 else "stable"
 
     return {
+        "neighborhood": neighborhood,
         "counts": totals,
         "indicators": {
             "vacancy_signal": vacancy_signal,
@@ -124,15 +157,15 @@ async def vision_streetscape(neighborhood: str):
 
 @router.get("/parking/latest")
 async def parking_latest():
-    volume.reload()
-    analysis_dir = Path(PROCESSED_DATA_PATH) / "parking" / "analysis"
-    if not analysis_dir.exists():
-        return {"neighborhoods": [], "count": 0}
+    await safe_volume_reload(volume, "parking_latest")
+    analysis_dir = _processed_data_dir() / "parking" / "analysis"
 
     latest_by_nb: dict[str, dict] = {}
-    for jf in sorted(analysis_dir.glob("*.json"), reverse=True)[:500]:
+    for jf in iter_files(analysis_dir, recursive=False, pattern="*.json")[:500]:
         try:
-            data = json.loads(jf.read_text())
+            data = load_json_file(jf, default=None)
+            if not isinstance(data, dict):
+                continue
             nb = data.get("neighborhood", "")
             if nb and nb not in latest_by_nb:
                 latest_by_nb[nb] = data
@@ -153,12 +186,13 @@ async def parking_neighborhood(neighborhood: str):
 
 @router.get("/parking/annotated/{neighborhood}")
 async def parking_annotated(neighborhood: str):
-    volume.reload()
+    await safe_volume_reload(volume, "parking_annotated")
     slug = neighborhood.lower().replace(" ", "_")
-    ann_path = Path(PROCESSED_DATA_PATH) / "parking" / "annotated" / f"{slug}.jpg"
-    if not ann_path.exists():
+    ann_path = _processed_data_dir() / "parking" / "annotated" / f"{slug}.jpg"
+    content = read_file_bytes(ann_path, default=None)
+    if content is None:
         return JSONResponse({"error": f"No annotated image for {neighborhood}"}, status_code=404)
-    return Response(content=ann_path.read_bytes(), media_type="image/jpeg")
+    return Response(content=content, media_type="image/jpeg")
 
 
 @router.get("/vision/assess/{neighborhood}")
@@ -171,23 +205,25 @@ async def vision_assess(neighborhood: str):
             status_code=503,
         )
 
-    volume.reload()
+    await safe_volume_reload(volume, "vision_assess")
     slug = neighborhood.lower().replace(" ", "_")
-    frame_paths: list[Path] = []
+    frame_paths = []
 
-    cctv_dir = Path(PROCESSED_DATA_PATH) / "cctv" / "annotated"
-    if cctv_dir.exists():
-        for fp in sorted(cctv_dir.glob("*.jpg"), reverse=True)[:5]:
-            frame_paths.append(fp)
+    cctv_dir = _processed_data_dir() / "cctv" / "annotated"
+    for fp in iter_files(cctv_dir, recursive=False, pattern="*.jpg"):
+        if not fp.name.lower().replace("-", "_").startswith(slug):
+            continue
+        frame_paths.append(fp)
+        if len(frame_paths) >= 5:
+            break
 
-    vision_dir = Path(RAW_DATA_PATH) / "vision" / "frames"
-    if vision_dir.exists():
-        for fp in sorted(vision_dir.glob(f"{slug}*.jpg"), reverse=True)[:5]:
-            frame_paths.append(fp)
-        if len(frame_paths) < 3:
-            for fp in sorted(vision_dir.glob("*.jpg"), reverse=True)[:5]:
-                if fp not in frame_paths:
-                    frame_paths.append(fp)
+    vision_dir = _raw_data_dir() / "vision" / "frames"
+    for fp in iter_files(vision_dir, recursive=False, pattern="*.jpg"):
+        if not fp.name.lower().replace("-", "_").startswith(slug):
+            continue
+        frame_paths.append(fp)
+        if len(frame_paths) >= 10:
+            break
 
     frame_paths = frame_paths[:3]
     if not frame_paths:
@@ -196,7 +232,10 @@ async def vision_assess(neighborhood: str):
     image_content = []
     for fp in frame_paths:
         try:
-            b64 = base64.b64encode(fp.read_bytes()).decode("utf-8")
+            raw = read_file_bytes(fp, default=None)
+            if raw is None:
+                continue
+            b64 = base64.b64encode(raw).decode("utf-8")
             image_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "low"}})
         except Exception:
             continue

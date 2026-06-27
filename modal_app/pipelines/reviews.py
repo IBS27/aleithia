@@ -7,15 +7,15 @@ Pattern: async + FallbackChain + gather_with_limit + review velocity
 import json
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 import httpx
 import modal
 
+from backend.shared_data import get_raw_data_dir, write_source_status
 from modal_app.common import SourceType, CHICAGO_NEIGHBORHOODS, build_document, detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
-from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
+from modal_app.volume import app, volume, base_image
 
 # Business categories to monitor
 YELP_CATEGORIES = [
@@ -25,10 +25,13 @@ YELP_CATEGORIES = [
 
 # Search neighborhoods
 SEARCH_NEIGHBORHOODS = [
+    "Loop, Chicago, IL",
     "Lincoln Park, Chicago, IL",
     "Wicker Park, Chicago, IL",
     "Logan Square, Chicago, IL",
     "West Loop, Chicago, IL",
+    "River North, Chicago, IL",
+    "South Loop, Chicago, IL",
     "Pilsen, Chicago, IL",
     "Hyde Park, Chicago, IL",
     "Andersonville, Chicago, IL",
@@ -97,7 +100,7 @@ async def _fetch_yelp(api_key: str) -> list[dict]:
 
     coros = [
         _fetch_yelp_location(api_key, location, category)
-        for location in SEARCH_NEIGHBORHOODS[:4]
+        for location in SEARCH_NEIGHBORHOODS
         for category in YELP_CATEGORIES[:3]
     ]
     results = await gather_with_limit(coros, max_concurrent=5)
@@ -162,7 +165,7 @@ async def _fetch_google_places(api_key: str) -> list[dict]:
         print("GOOGLE_PLACES_API_KEY not set, skipping Google Places")
         return []
 
-    coros = [_fetch_google_location(api_key, loc) for loc in SEARCH_NEIGHBORHOODS[:4]]
+    coros = [_fetch_google_location(api_key, loc) for loc in SEARCH_NEIGHBORHOODS]
     results = await gather_with_limit(coros, max_concurrent=5)
     docs = []
     for result in results:
@@ -231,14 +234,14 @@ async def review_ingester():
 
     if not new_docs:
         seen.save()
+        write_source_status("reviews", documents_seen=len(all_docs), documents_written=0)
         await safe_volume_commit(volume, "reviews")
         print("Review ingester: no new documents")
         return 0
 
     # Save to volume
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    out_dir = Path(RAW_DATA_PATH) / "reviews" / date_str
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = get_raw_data_dir() / "reviews" / date_str
     ingested_at = datetime.now(timezone.utc).isoformat()
 
     for doc_data in new_docs:
@@ -253,6 +256,7 @@ async def review_ingester():
     await safe_queue_push(doc_queue, new_docs, "reviews")
 
     seen.save()
+    write_source_status("reviews", documents_seen=len(all_docs), documents_written=len(new_docs))
     await safe_volume_commit(volume, "reviews")
     print(f"Review ingester complete: {len(new_docs)} documents saved to {out_dir}")
     return len(new_docs)

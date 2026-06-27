@@ -8,17 +8,30 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import modal
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from backend.shared_data import (
+    SharedDataPath,
+    count_files,
+    get_processed_data_dir,
+    get_raw_data_dir,
+    iter_files,
+    load_json_file,
+    read_file_bytes,
+)
+from modal_app.common import safe_volume_reload
+from modal_app.cost_controls import demos_enabled
 from modal_app.runtime import ENABLE_CCTV_ANALYSIS, get_modal_cls, get_modal_function
-from modal_app.volume import PROCESSED_DATA_PATH, RAW_DATA_PATH, app, sandbox_image, volume
+from modal_app.volume import app, sandbox_image, volume
 
 router = APIRouter()
+
+PROCESSED_DATA_PATH = None
 
 ANALYSIS_EXEC_TIMEOUT_SECONDS = 90
 ANALYSIS_SANDBOX_LIFETIME_SECONDS = ANALYSIS_EXEC_TIMEOUT_SECONDS + 60
@@ -26,7 +39,7 @@ ANALYSIS_SANDBOX_LIFETIME_SECONDS = ANALYSIS_EXEC_TIMEOUT_SECONDS + 60
 CODEGEN_SYSTEM_PROMPT = """You are a data analyst. Write a self-contained Python script that answers the user's question using real data files.
 
 Rules:
-- Read data from /data/raw/{source}/ and /data/processed/enriched/ (JSON files)
+- Read the prepared JSON files from /data/raw/{source}/ and /data/processed/enriched/
 - Write results to /output/result.json (required) and optionally /output/chart.png
 - result.json must have: {"title": str, "summary": str, "stats": {key: value}}
 - Only use: json, os, pathlib, glob, collections, datetime, pandas, numpy, matplotlib, seaborn
@@ -39,7 +52,7 @@ Rules:
 CODEGEN_SYSTEM_PROMPT_GPT4O = """You are a senior data analyst. Write a self-contained Python script that answers the user's question using real data files.
 
 Rules:
-- Read data from /data/raw/{source}/ and /data/processed/enriched/ (JSON files)
+- Read the prepared JSON files from /data/raw/{source}/ and /data/processed/enriched/
 - Write results to /output/result.json (required) and optionally /output/chart.png
 - result.json must have: {"title": str, "summary": str, "stats": {key: value}}
 - Only use: json, os, pathlib, glob, collections, datetime, pandas, numpy, matplotlib, seaborn
@@ -55,49 +68,79 @@ Rules:
 - Output only the Python code in a ```python``` fence. No explanation."""
 
 
+@dataclass(frozen=True)
+class AnalysisInputArtifact:
+    source_path: Path | SharedDataPath
+    sandbox_path: str
+
+
+def _relative_artifact_path(path, root) -> str:
+    try:
+        relative = path.relative_to(root)
+    except Exception:
+        relative = PurePosixPath(path.name)
+    return relative.as_posix() if hasattr(relative, "as_posix") else str(relative).replace("\\", "/")
+
+
+def _analysis_artifact(path, root, sandbox_root: str) -> AnalysisInputArtifact:
+    relative = _relative_artifact_path(path, root)
+    return AnalysisInputArtifact(source_path=path, sandbox_path=f"{sandbox_root.rstrip('/')}/{relative}")
+
+
 def discover_data_files(neighborhood: str | None = None) -> dict:
     del neighborhood
     sources = {}
-    raw = Path(RAW_DATA_PATH)
-    if not raw.exists():
-        return sources
+    raw = get_raw_data_dir()
 
     for source_dir in sorted(raw.iterdir()):
         if not source_dir.is_dir():
             continue
-        json_files = list(source_dir.rglob("*.json"))[:20]
+        json_files = iter_files(source_dir, recursive=True, pattern="*.json")[:20]
         if not json_files:
             continue
         schema_keys = []
         try:
-            sample = json.loads(json_files[0].read_text())
+            sample = load_json_file(json_files[0], default=None)
             if isinstance(sample, dict):
                 schema_keys = list(sample.keys())[:10]
         except Exception:
             pass
         sources[source_dir.name] = {
-            "count": len(list(source_dir.rglob("*.json"))),
+            "count": count_files(source_dir, pattern="*.json"),
             "sample_path": str(json_files[0]),
             "schema_keys": schema_keys,
+            "_artifacts": [
+                _analysis_artifact(path, source_dir, f"/data/raw/{source_dir.name}")
+                for path in json_files
+            ],
         }
 
-    enriched = Path(PROCESSED_DATA_PATH) / "enriched"
-    if enriched.exists():
-        json_files = list(enriched.rglob("*.json"))[:20]
-        if json_files:
-            schema_keys = []
-            try:
-                sample = json.loads(json_files[0].read_text())
-                if isinstance(sample, dict):
-                    schema_keys = list(sample.keys())[:10]
-            except Exception:
-                pass
-            sources["enriched"] = {
-                "count": len(list(enriched.rglob("*.json"))),
-                "sample_path": str(json_files[0]),
-                "schema_keys": schema_keys,
-            }
+    enriched = _processed_data_dir() / "enriched"
+    json_files = iter_files(enriched, recursive=True, pattern="*.json")[:20]
+    if json_files:
+        schema_keys = []
+        try:
+            sample = load_json_file(json_files[0], default=None)
+            if isinstance(sample, dict):
+                schema_keys = list(sample.keys())[:10]
+        except Exception:
+            pass
+        sources["enriched"] = {
+            "count": count_files(enriched, pattern="*.json"),
+            "sample_path": str(json_files[0]),
+            "schema_keys": schema_keys,
+            "_artifacts": [
+                _analysis_artifact(path, enriched, "/data/processed/enriched")
+                for path in json_files
+            ],
+        }
     return sources
+
+
+def _processed_data_dir():
+    if PROCESSED_DATA_PATH is not None:
+        return Path(PROCESSED_DATA_PATH)
+    return get_processed_data_dir()
 
 
 def build_codegen_prompt(question: str, brief: str, neighborhood: str, business_type: str, available_sources: dict) -> str:
@@ -116,9 +159,10 @@ User question: {question}
 Intelligence brief context:
 {brief_truncated}
 
-Available data on the volume:
+Available data prepared inside the sandbox:
 {source_listing}
 
+The listed files are materialized under /data before your script runs.
 Write a Python script to analyze this data and answer the question. Include a chart if appropriate."""
 
 
@@ -156,6 +200,21 @@ class AnalysisSandboxTimeout(Exception):
     pass
 
 
+def _analysis_input_artifacts(available_sources: dict) -> list[AnalysisInputArtifact]:
+    artifacts: list[AnalysisInputArtifact] = []
+    for info in available_sources.values():
+        if not isinstance(info, dict):
+            continue
+        source_artifacts = info.get("_artifacts", [])
+        if isinstance(source_artifacts, list):
+            artifacts.extend(
+                artifact
+                for artifact in source_artifacts
+                if isinstance(artifact, AnalysisInputArtifact)
+            )
+    return artifacts
+
+
 async def _modal_call(method, *args, **kwargs):
     aio = getattr(method, "aio", None)
     if callable(aio):
@@ -187,6 +246,44 @@ async def _sandbox_read_file(sb, path: str, mode: str):
         await _modal_call(file_obj.close)
 
 
+async def _sandbox_mkdir(sb, directory: str) -> None:
+    if directory in {"", ".", "/"}:
+        return
+    process = await _modal_call(
+        sb.exec,
+        "python",
+        "-c",
+        f"import os; os.makedirs({directory!r}, exist_ok=True)",
+        timeout=15,
+    )
+    await _modal_call(process.wait)
+
+
+async def _sandbox_write_file(sb, path: str, data: bytes) -> None:
+    await _sandbox_mkdir(sb, str(PurePosixPath(path).parent))
+
+    filesystem = getattr(sb, "filesystem", None)
+    if filesystem is not None:
+        write_bytes = getattr(filesystem, "write_bytes", None)
+        if write_bytes is not None:
+            await _modal_call(write_bytes, path, data)
+            return
+
+    file_obj = await _modal_call(sb.open, path, "wb")
+    try:
+        await _modal_call(file_obj.write, data)
+    finally:
+        await _modal_call(file_obj.close)
+
+
+async def _materialize_analysis_inputs(sb, artifacts: list[AnalysisInputArtifact]) -> None:
+    for artifact in artifacts:
+        raw = read_file_bytes(artifact.source_path, default=None)
+        if raw is None:
+            continue
+        await _sandbox_write_file(sb, artifact.sandbox_path, raw)
+
+
 async def _terminate_sandbox(sb) -> None:
     try:
         await _modal_call(sb.terminate, wait=True)
@@ -196,7 +293,10 @@ async def _terminate_sandbox(sb) -> None:
         pass
 
 
-async def execute_generated_analysis(code: str) -> SandboxAnalysisResult:
+async def execute_generated_analysis(
+    code: str,
+    input_artifacts: list[AnalysisInputArtifact] | None = None,
+) -> SandboxAnalysisResult:
     sb = None
     try:
         # Keep the Sandbox container alive while the generated script runs as a
@@ -211,6 +311,8 @@ async def execute_generated_analysis(code: str) -> SandboxAnalysisResult:
             timeout=ANALYSIS_SANDBOX_LIFETIME_SECONDS,
             app=app,
         )
+        if input_artifacts:
+            await _materialize_analysis_inputs(sb, input_artifacts)
         process = await _modal_call(
             sb.exec,
             "python",
@@ -288,25 +390,19 @@ async def gpu_metrics(probe_h100: bool = False):
     await asyncio.gather(*[_fetch(name, key) for name, key in gpu_classes], return_exceptions=True)
 
     try:
-        enriched_dir = Path(PROCESSED_DATA_PATH) / "enriched"
-        if enriched_dir.exists():
-            enriched_files = list(enriched_dir.rglob("*.json"))
-            enriched_count = len(enriched_files)
-            if enriched_files:
-                latest = max(enriched_files, key=lambda path: path.stat().st_mtime)
-                age_seconds = time.time() - latest.stat().st_mtime
-                if age_seconds < 240:
-                    warm_status = {"status": "active", "gpu_name": "NVIDIA T4", "inferred": True, "enriched_count": enriched_count}
-                    results["t4_classifier"] = warm_status
-                    results["t4_sentiment"] = warm_status
-                else:
-                    idle_status = {"status": "cold", "reason": "idle", "enriched_count": enriched_count, "last_run_ago_s": round(age_seconds)}
-                    results["t4_classifier"] = idle_status
-                    results["t4_sentiment"] = idle_status
+        enriched_files = iter_files(_processed_data_dir() / "enriched", pattern="*.json")
+        enriched_count = len(enriched_files)
+        if enriched_files:
+            latest = max(enriched_files, key=lambda path: path.stat().st_mtime)
+            age_seconds = time.time() - latest.stat().st_mtime
+            if age_seconds < 240:
+                warm_status = {"status": "active", "gpu_name": "NVIDIA T4", "inferred": True, "enriched_count": enriched_count}
+                results["t4_classifier"] = warm_status
+                results["t4_sentiment"] = warm_status
             else:
-                no_data = {"status": "cold", "reason": "no_data", "enriched_count": 0}
-                results["t4_classifier"] = no_data
-                results["t4_sentiment"] = no_data
+                idle_status = {"status": "cold", "reason": "idle", "enriched_count": enriched_count, "last_run_ago_s": round(age_seconds)}
+                results["t4_classifier"] = idle_status
+                results["t4_sentiment"] = idle_status
         else:
             no_data = {"status": "cold", "reason": "no_data", "enriched_count": 0}
             results["t4_classifier"] = no_data
@@ -319,6 +415,14 @@ async def gpu_metrics(probe_h100: bool = False):
 
 @router.post("/demo/scale")
 async def demo_scale(request: Request):
+    if not demos_enabled():
+        return JSONResponse(
+            {
+                "error": "Scaling demo is disabled by default to prevent accidental Modal spend.",
+                "enable_with": "ALETHIA_MODAL_ENABLE_DEMOS=1",
+            },
+            status_code=403,
+        )
     body = await request.json() if request.headers.get("content-type") == "application/json" else {}
     demo_fn = get_modal_function("scaling_demo")
     return await demo_fn.remote.aio(
@@ -383,7 +487,7 @@ async def analyze(payload: AnalyzePayload):
         if not code:
             return JSONResponse({"error": "Failed to generate valid analysis code", "raw_response": response[:500]}, status_code=500)
 
-        sandbox_result = await execute_generated_analysis(code)
+        sandbox_result = await execute_generated_analysis(code, _analysis_input_artifacts(available))
         stderr_text = sandbox_result.stderr
         stdout_text = sandbox_result.stdout
         result_data = sandbox_result.result
@@ -430,15 +534,15 @@ async def analyze(payload: AnalyzePayload):
 
 @router.get("/impact-briefs")
 async def list_impact_briefs(limit: int = 20, min_score: float = 0.0):
-    volume.reload()
-    briefs_dir = Path(PROCESSED_DATA_PATH) / "impact_briefs"
-    if not briefs_dir.exists():
-        return {"briefs": [], "count": 0}
+    await safe_volume_reload(volume, "impact_briefs")
+    briefs_dir = _processed_data_dir() / "impact_briefs"
 
     briefs = []
-    for json_file in sorted(briefs_dir.rglob("*.json"), reverse=True)[:limit]:
+    for json_file in iter_files(briefs_dir, pattern="*.json")[:limit]:
         try:
-            brief = json.loads(json_file.read_text())
+            brief = load_json_file(json_file, default=None)
+            if not isinstance(brief, dict):
+                continue
             if brief.get("impact_score", 0) >= min_score:
                 briefs.append(brief)
         except Exception:
@@ -448,14 +552,14 @@ async def list_impact_briefs(limit: int = 20, min_score: float = 0.0):
 
 @router.get("/impact-briefs/{brief_id}")
 async def get_impact_brief(brief_id: str):
-    volume.reload()
-    briefs_dir = Path(PROCESSED_DATA_PATH) / "impact_briefs"
-    if not briefs_dir.exists():
-        return JSONResponse({"error": "No impact briefs found"}, status_code=404)
+    await safe_volume_reload(volume, "impact_brief")
+    briefs_dir = _processed_data_dir() / "impact_briefs"
 
-    for json_file in briefs_dir.rglob("*.json"):
+    for json_file in iter_files(briefs_dir, pattern="*.json"):
         try:
-            brief = json.loads(json_file.read_text())
+            brief = load_json_file(json_file, default=None)
+            if not isinstance(brief, dict):
+                continue
             if brief.get("id") == brief_id:
                 return brief
         except Exception:

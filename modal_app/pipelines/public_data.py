@@ -10,18 +10,18 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 
 import httpx
 import modal
 
+from backend.shared_data import get_raw_data_dir, write_source_status
 from modal_app.common import (
     SourceType, SOCRATA_DATASETS, COMMUNITY_AREA_MAP, build_document,
     detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit,
 )
 from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
-from modal_app.volume import app, volume, data_image, RAW_DATA_PATH
+from modal_app.volume import app, volume, data_image
 
 SOCRATA_BASE = "https://data.cityofchicago.org/resource"
 
@@ -149,6 +149,8 @@ async def public_data_ingester():
     ])
 
     if not all_docs:
+        write_source_status("public_data", state="empty", documents_seen=0, documents_written=0)
+        await safe_volume_commit(volume, "public_data")
         print("Public data ingester: no data from any source")
         return 0
 
@@ -167,14 +169,14 @@ async def public_data_ingester():
 
     if not new_docs:
         seen.save()
+        write_source_status("public_data", documents_seen=len(all_docs), documents_written=0)
         await safe_volume_commit(volume, "public_data")
         print("Public data ingester: no new documents")
         return 0
 
     # Save to volume
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    out_dir = Path(RAW_DATA_PATH) / "public_data" / date_str
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = get_raw_data_dir() / "public_data" / date_str
     ingested_at = datetime.now(timezone.utc).isoformat()
 
     for doc_data in new_docs:
@@ -190,6 +192,7 @@ async def public_data_ingester():
     await safe_queue_push(doc_queue, new_docs, "public_data")
 
     seen.save()
+    write_source_status("public_data", documents_seen=len(all_docs), documents_written=len(new_docs))
     await safe_volume_commit(volume, "public_data")
     print(f"Public data ingester complete: {len(new_docs)} documents saved to {out_dir}")
     return len(new_docs)

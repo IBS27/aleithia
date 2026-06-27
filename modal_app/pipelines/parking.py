@@ -9,7 +9,6 @@ GPU: T4 for SegFormer + YOLO inference via @modal.cls + @modal.enter
 """
 from __future__ import annotations
 
-import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +16,15 @@ from pathlib import Path
 import httpx
 import modal
 
+from backend.shared_data import (
+    get_processed_data_dir,
+    get_raw_data_dir,
+    load_json_file,
+    read_file_bytes,
+    shared_data_backend,
+    write_file_bytes,
+    write_json_file,
+)
 from modal_app.common import (
     Document,
     SourceType,
@@ -27,7 +35,7 @@ from modal_app.common import (
 )
 from modal_app.costs import track_cost
 from modal_app.runtime import get_raw_doc_queue
-from modal_app.volume import app, volume, base_image, parking_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
+from modal_app.volume import app, volume, base_image, parking_image
 
 
 # ── Tile math (slippy map) ────────────────────────────────────────────────────
@@ -72,7 +80,7 @@ async def _download_tile_grid(
     lat: float,
     lng: float,
     token: str,
-    out_dir: Path,
+    out_dir,
 ) -> list[dict]:
     """Download a 3x3 tile grid around center lat/lng. Returns tile metadata list."""
     cx, cy = _latlng_to_tile(lat, lng, TILE_ZOOM)
@@ -93,7 +101,7 @@ async def _download_tile_grid(
                 content = resp.content
                 if len(content) < 500:
                     continue
-                out_path.write_bytes(content)
+                write_file_bytes(out_path, content, content_type="image/jpeg")
                 nw_lat, nw_lng = _tile_to_latlng(tx, ty, TILE_ZOOM)
                 se_lat, se_lng = _tile_to_latlng(tx + 1, ty + 1, TILE_ZOOM)
                 tiles.append({
@@ -137,8 +145,7 @@ async def parking_ingester(neighborhoods: list[str] | None = None):
 
             lat, lng = centroid
             slug = _neighborhood_slug(name)
-            tile_dir = Path(RAW_DATA_PATH) / "parking" / "tiles" / slug
-            tile_dir.mkdir(parents=True, exist_ok=True)
+            tile_dir = get_raw_data_dir() / "parking" / "tiles" / slug
 
             tiles = await _download_tile_grid(client, lat, lng, token, tile_dir)
             print(f"Parking: {name} — downloaded {len(tiles)} tiles")
@@ -146,14 +153,14 @@ async def parking_ingester(neighborhoods: list[str] | None = None):
             if tiles:
                 # Save tile metadata
                 meta_path = tile_dir / "tiles_meta.json"
-                meta_path.write_text(json.dumps({
+                write_json_file(meta_path, {
                     "neighborhood": name,
                     "center_lat": lat,
                     "center_lng": lng,
                     "tile_count": len(tiles),
                     "tiles": tiles,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
-                }, indent=2))
+                })
 
     await safe_volume_commit(volume, "parking")
 
@@ -195,7 +202,8 @@ class ParkingAnalyzer:
         from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
         from ultralytics import YOLO
 
-        volume.reload()
+        if shared_data_backend() != "s3":
+            volume.reload()
 
         # Stage 1: SegFormer-b5 for semantic segmentation
         model_name = "nvidia/segformer-b5-finetuned-cityscapes-1024-1024"
@@ -231,6 +239,19 @@ class ParkingAnalyzer:
         if not tiles:
             return {"neighborhood": neighborhood, "parking_lots": [], "error": "no tiles"}
 
+        missing_tile_bytes = [
+            str(tile.get("path", ""))
+            for tile in tiles
+            if not isinstance(tile.get("bytes"), bytes) or not tile.get("bytes")
+        ]
+        if missing_tile_bytes:
+            return {
+                "neighborhood": neighborhood,
+                "parking_lots": [],
+                "error": "missing tile bytes",
+                "missing_tiles": missing_tile_bytes,
+            }
+
         # 1. Stitch tiles into composite image
         grid_positions = {}
         for t in tiles:
@@ -248,10 +269,8 @@ class ParkingAnalyzer:
                 tile = grid_positions.get((dx, dy))
                 if not tile:
                     continue
-                tile_path = Path(tile["path"])
-                if not tile_path.exists():
-                    continue
-                img = cv2.imread(str(tile_path))
+                tile_bytes = tile.get("bytes")
+                img = cv2.imdecode(np.frombuffer(tile_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
                 if img is None:
                     continue
                 # Resize to expected tile size
@@ -436,10 +455,10 @@ class ParkingAnalyzer:
         cv2.putText(annotated, banner, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
         slug = _neighborhood_slug(neighborhood)
-        ann_dir = Path(PROCESSED_DATA_PATH) / "parking" / "annotated"
-        ann_dir.mkdir(parents=True, exist_ok=True)
-        ann_path = ann_dir / f"{slug}.jpg"
-        cv2.imwrite(str(ann_path), annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        ann_path = get_processed_data_dir() / "parking" / "annotated" / f"{slug}.jpg"
+        ok, encoded = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        if ok:
+            write_file_bytes(ann_path, encoded.tobytes(), content_type="image/jpeg")
 
         return {
             "neighborhood": neighborhood,
@@ -465,8 +484,7 @@ async def analyze_parking_batch(neighborhoods: list[str] | None = None):
     """Dispatch ParkingAnalyzer for each neighborhood. Saves JSON results + creates Documents."""
     targets = neighborhoods or list(NEIGHBORHOOD_CENTROIDS.keys())
 
-    analysis_dir = Path(PROCESSED_DATA_PATH) / "parking" / "analysis"
-    analysis_dir.mkdir(parents=True, exist_ok=True)
+    analysis_dir = get_processed_data_dir() / "parking" / "analysis"
 
     analyzer = ParkingAnalyzer()
 
@@ -476,20 +494,41 @@ async def analyze_parking_batch(neighborhoods: list[str] | None = None):
             return None
 
         slug = _neighborhood_slug(name)
-        tile_dir = Path(RAW_DATA_PATH) / "parking" / "tiles" / slug
+        tile_dir = get_raw_data_dir() / "parking" / "tiles" / slug
         meta_path = tile_dir / "tiles_meta.json"
-        if not meta_path.exists():
+        meta = load_json_file(meta_path, default=None)
+        if not isinstance(meta, dict):
             return None
 
-        try:
-            meta = json.loads(meta_path.read_text())
-        except Exception:
-            return None
+        tiles = []
+        missing_tiles = []
+        for tile in meta.get("tiles", []):
+            if not isinstance(tile, dict):
+                continue
+            tile_copy = dict(tile)
+            tile_name = Path(str(tile.get("path", ""))).name
+            if not tile_name:
+                missing_tiles.append(str(tile.get("path", "")))
+                continue
+            tile_bytes = read_file_bytes(tile_dir / tile_name, default=None)
+            if not tile_bytes:
+                missing_tiles.append(tile_name)
+                continue
+            tile_copy["bytes"] = tile_bytes
+            tiles.append(tile_copy)
+
+        if missing_tiles:
+            return {
+                "neighborhood": name,
+                "parking_lots": [],
+                "error": "missing tile bytes",
+                "missing_tiles": missing_tiles,
+            }
 
         try:
             return await analyzer.analyze_tiles.remote.aio({
                 "neighborhood": name,
-                "tiles": meta["tiles"],
+                "tiles": tiles,
                 "center_lat": centroid[0],
                 "center_lng": centroid[1],
             })
@@ -513,7 +552,7 @@ async def analyze_parking_batch(neighborhoods: list[str] | None = None):
 
         # Save analysis JSON
         out_path = analysis_dir / f"{slug}_{ts}.json"
-        out_path.write_text(json.dumps(result, indent=2, default=str))
+        write_json_file(out_path, result)
 
         # Create Document
         centroid = NEIGHBORHOOD_CENTROIDS.get(name, (0, 0))

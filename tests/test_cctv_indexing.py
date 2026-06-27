@@ -82,6 +82,7 @@ def test_load_cctv_latest_index_handles_missing_and_corrupt(tmp_path, monkeypatc
 
 
 def test_load_cctv_for_neighborhood_is_capped_and_stable(monkeypatch) -> None:
+    monkeypatch.setattr(web.cctv_service, "ENABLE_CCTV_ANALYSIS", True)
     clat, clng = NEIGHBORHOOD_CENTROIDS["Loop"]
     index_data = {}
     for i in range(30):
@@ -111,6 +112,7 @@ def test_load_cctv_for_neighborhood_is_capped_and_stable(monkeypatch) -> None:
 
 
 def test_load_cctv_for_neighborhood_real_only_uses_real_summary(monkeypatch) -> None:
+    monkeypatch.setattr(web.cctv_service, "ENABLE_CCTV_ANALYSIS", True)
     clat, clng = NEIGHBORHOOD_CENTROIDS["Loop"]
     index_data = {
         "cam-a": {
@@ -150,6 +152,7 @@ def test_load_cctv_for_neighborhood_real_only_uses_real_summary(monkeypatch) -> 
 
 
 def test_load_cctv_for_neighborhood_uses_fake_fallback_when_needed(monkeypatch) -> None:
+    monkeypatch.setattr(web.cctv_service, "ENABLE_CCTV_ANALYSIS", True)
     fake_entry = {
         "cameras": [{
             "camera_id": "fake-loop-1",

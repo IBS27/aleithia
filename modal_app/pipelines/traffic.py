@@ -9,11 +9,11 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 import httpx
 import modal
 
+from backend.shared_data import get_processed_data_dir, get_raw_data_dir, write_json_file, write_source_status
 from modal_app.common import (
     Document,
     SourceType,
@@ -25,7 +25,7 @@ from modal_app.common import (
 from modal_app.costs import track_cost
 from modal_app.fallback import FallbackChain
 from modal_app.runtime import get_raw_doc_queue
-from modal_app.volume import app, volume, base_image, RAW_DATA_PATH, PROCESSED_DATA_PATH
+from modal_app.volume import app, volume, base_image
 
 
 def _traffic_probe_points(lat: float, lng: float) -> list[tuple[float, float]]:
@@ -254,6 +254,7 @@ async def traffic_ingester():
         all_raw_data.extend(traffic_data)
         print(f"TomTom: {len(traffic_data)} neighborhoods processed")
     else:
+        write_source_status("traffic", state="empty", documents_seen=0, documents_written=0)
         print("TomTom: No data retrieved (fallback used or API unavailable)")
         return 0
     
@@ -264,26 +265,24 @@ async def traffic_ingester():
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     hour_str = datetime.now(timezone.utc).strftime("%H")
     
-    raw_dir = Path(RAW_DATA_PATH) / "traffic" / date_str
-    raw_dir.mkdir(parents=True, exist_ok=True)
+    raw_dir = get_raw_data_dir() / "traffic" / date_str
     
     # Save each neighborhood's traffic snapshot
     for data in all_raw_data:
         neighborhood = data.get("neighborhood", "unknown").lower().replace(" ", "_")
         fpath = raw_dir / f"{neighborhood}_{hour_str}.json"
-        fpath.write_text(json.dumps(data, indent=2))
+        write_json_file(fpath, data)
     
     # Convert to documents and save processed version
     documents = _convert_to_documents(all_raw_data)
     
-    processed_dir = Path(PROCESSED_DATA_PATH) / "traffic" / date_str
-    processed_dir.mkdir(parents=True, exist_ok=True)
+    processed_dir = get_processed_data_dir() / "traffic" / date_str
     
     anomalies = []
     for doc in documents:
         fpath = processed_dir / f"{doc.id}.json"
-        fpath.write_text(doc.model_dump_json(indent=2))
-        
+        write_json_file(fpath, doc.model_dump(mode="json"))
+
         if doc.metadata.get("is_anomaly"):
             anomalies.append({
                 "neighborhood": doc.metadata.get("neighborhood"),
@@ -295,7 +294,7 @@ async def traffic_ingester():
     # Save anomaly summary
     if anomalies:
         anomaly_path = processed_dir / "anomalies.json"
-        anomaly_path.write_text(json.dumps(anomalies, indent=2))
+        write_json_file(anomaly_path, anomalies)
         print(f"Traffic anomalies detected: {len(anomalies)}")
 
     # Push new traffic docs to classification queue for downstream enrichment.
@@ -306,6 +305,7 @@ async def traffic_ingester():
     except Exception as e:
         print(f"Traffic queue push failed: {e}")
     
+    write_source_status("traffic", documents_seen=len(all_raw_data), documents_written=len(documents))
     await safe_volume_commit(volume, "traffic")
     print(f"Traffic ingester complete: {len(documents)} documents saved to {processed_dir}")
     

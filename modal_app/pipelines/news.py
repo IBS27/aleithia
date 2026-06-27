@@ -4,9 +4,10 @@ Cadence: Every 30 minutes
 Sources: RSS (Block Club Chicago, Chicago Tribune, Crain's), NewsAPI
 Pattern: async + FallbackChain + gather_with_limit + detect_neighborhood
 """
+import asyncio
 import hashlib
-import json
 import os
+import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -14,10 +15,17 @@ import feedparser
 import httpx
 import modal
 
+from backend.shared_data import (
+    get_dedup_data_dir,
+    get_raw_data_dir,
+    load_json_file,
+    shared_data_lock,
+    write_json_file,
+    write_source_status,
+)
 from modal_app.common import SourceType, build_document, detect_neighborhood, gather_with_limit, safe_queue_push, safe_volume_commit
-from modal_app.dedup import SeenSet
 from modal_app.fallback import FallbackChain
-from modal_app.volume import app, volume, base_image, RAW_DATA_PATH
+from modal_app.volume import app, volume, base_image
 
 # RSS feeds for Chicago local news
 RSS_FEEDS = [
@@ -40,6 +48,233 @@ NEWSAPI_KEYWORDS = [
     "Chicago city council",
     "Chicago restaurant",
 ]
+
+DEFAULT_CLASSIFICATION_QUEUE_TIMEOUT_SECONDS = 30.0
+DEFAULT_RAW_WRITE_CONCURRENCY = 8
+DEFAULT_NEWS_DEDUP_LOCK_TIMEOUT_SECONDS = 45.0
+DEFAULT_NEWS_DEDUP_LOCK_STALE_SECONDS = 30.0
+DEFAULT_NEWS_CLAIM_TTL_SECONDS = 15 * 60
+
+
+def _classification_queue_timeout_seconds() -> float:
+    raw = os.environ.get("NEWS_CLASSIFICATION_QUEUE_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return DEFAULT_CLASSIFICATION_QUEUE_TIMEOUT_SECONDS
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        return DEFAULT_CLASSIFICATION_QUEUE_TIMEOUT_SECONDS
+
+
+def _raw_write_concurrency() -> int:
+    raw = os.environ.get("NEWS_RAW_WRITE_CONCURRENCY", "").strip()
+    if not raw:
+        return DEFAULT_RAW_WRITE_CONCURRENCY
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return DEFAULT_RAW_WRITE_CONCURRENCY
+
+
+def _news_dedup_lock_settings() -> tuple[float, float, float]:
+    timeout_raw = os.environ.get("NEWS_DEDUP_LOCK_TIMEOUT_SECONDS", "").strip()
+    stale_raw = os.environ.get("NEWS_DEDUP_LOCK_STALE_SECONDS", "").strip()
+    poll_raw = os.environ.get("NEWS_DEDUP_LOCK_POLL_SECONDS", "").strip()
+
+    try:
+        stale_seconds = max(5.0, float(stale_raw)) if stale_raw else DEFAULT_NEWS_DEDUP_LOCK_STALE_SECONDS
+    except ValueError:
+        stale_seconds = DEFAULT_NEWS_DEDUP_LOCK_STALE_SECONDS
+
+    try:
+        timeout_seconds = max(10.0, float(timeout_raw)) if timeout_raw else DEFAULT_NEWS_DEDUP_LOCK_TIMEOUT_SECONDS
+    except ValueError:
+        timeout_seconds = DEFAULT_NEWS_DEDUP_LOCK_TIMEOUT_SECONDS
+    if timeout_seconds <= stale_seconds:
+        timeout_seconds = stale_seconds + 5.0
+
+    try:
+        poll_seconds = max(0.1, float(poll_raw)) if poll_raw else 1.0
+    except ValueError:
+        poll_seconds = 1.0
+
+    return timeout_seconds, poll_seconds, stale_seconds
+
+
+def _news_claim_ttl_seconds() -> float:
+    raw = os.environ.get("NEWS_CLAIM_TTL_SECONDS", "").strip()
+    if not raw:
+        return DEFAULT_NEWS_CLAIM_TTL_SECONDS
+    try:
+        return max(60.0, float(raw))
+    except ValueError:
+        return DEFAULT_NEWS_CLAIM_TTL_SECONDS
+
+
+def _parse_claim_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _news_dedup_paths():
+    directory = get_dedup_data_dir()
+    return directory / "news.json", directory / "news.lock"
+
+
+def _load_news_dedup_state(path) -> tuple[list[str], dict[str, str], dict[str, dict]]:
+    parsed = load_json_file(path, default=None)
+    if isinstance(parsed, list):
+        return [str(item) for item in parsed if str(item)], {}, {}
+
+    if not isinstance(parsed, dict):
+        return [], {}, {}
+
+    ids_raw = parsed.get("ids", [])
+    ids = [str(item) for item in ids_raw if str(item)] if isinstance(ids_raw, list) else []
+
+    seen_at_raw = parsed.get("seen_at", {})
+    seen_at = {}
+    if isinstance(seen_at_raw, dict):
+        seen_at = {
+            str(key): str(value)
+            for key, value in seen_at_raw.items()
+            if str(key)
+        }
+
+    claims_raw = parsed.get("claims", {})
+    claims = {}
+    if isinstance(claims_raw, dict):
+        claims = {
+            str(key): dict(value)
+            for key, value in claims_raw.items()
+            if str(key) and isinstance(value, dict)
+        }
+    return ids, seen_at, claims
+
+
+def _write_news_dedup_state(path, ids: list[str], seen_at: dict[str, str], claims: dict[str, dict]) -> None:
+    write_json_file(path, {"ids": ids, "seen_at": seen_at, "claims": claims}, indent=None)
+
+
+def _active_news_claims(claims: dict[str, dict], now: datetime) -> dict[str, dict]:
+    active: dict[str, dict] = {}
+    for doc_id, claim in claims.items():
+        expires_at = _parse_claim_timestamp(claim.get("expires_at"))
+        if expires_at is not None and expires_at > now:
+            active[doc_id] = claim
+    return active
+
+
+def _normalize_news_docs(all_docs: list[dict]) -> list[dict]:
+    normalized_docs: list[dict] = []
+    batch_ids: set[str] = set()
+    for doc in all_docs:
+        if not isinstance(doc, dict):
+            continue
+        doc_id = str(doc.get("id", "") or "").strip()
+        if not doc_id or doc_id in batch_ids:
+            continue
+        normalized = dict(doc)
+        normalized["id"] = doc_id
+        normalized_docs.append(normalized)
+        batch_ids.add(doc_id)
+    return normalized_docs
+
+
+def _claim_news_docs_for_attempt(all_docs: list[dict]) -> tuple[str, list[dict], dict[str, int]]:
+    """Create temporary durable claims for docs this attempt may process."""
+    owner = str(uuid.uuid4())
+    candidate_docs = _normalize_news_docs(all_docs)
+    data_path, lock_path = _news_dedup_paths()
+    timeout_seconds, poll_seconds, stale_seconds = _news_dedup_lock_settings()
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=_news_claim_ttl_seconds())
+    claimed_docs: list[dict] = []
+    skipped_seen = 0
+    skipped_claimed = 0
+
+    with shared_data_lock(
+        lock_path,
+        timeout_seconds=timeout_seconds,
+        poll_seconds=poll_seconds,
+        stale_seconds=stale_seconds,
+    ):
+        ids, seen_at, claims = _load_news_dedup_state(data_path)
+        seen_ids = set(ids)
+        claims = _active_news_claims(claims, now)
+
+        for doc in candidate_docs:
+            doc_id = doc["id"]
+            if doc_id in seen_ids:
+                skipped_seen += 1
+                continue
+            if doc_id in claims:
+                skipped_claimed += 1
+                continue
+            claims[doc_id] = {
+                "owner": owner,
+                "claimed_at": now.isoformat(),
+                "expires_at": expires_at.isoformat(),
+            }
+            claimed_docs.append(doc)
+
+        _write_news_dedup_state(data_path, ids, seen_at, claims)
+
+    return owner, claimed_docs, {
+        "candidates": len(candidate_docs),
+        "claimed": len(claimed_docs),
+        "skipped_seen": skipped_seen,
+        "skipped_claimed": skipped_claimed,
+    }
+
+
+def _finalize_news_claims(
+    owner: str,
+    *,
+    completed_ids: set[str] | None = None,
+    release_ids: set[str] | None = None,
+) -> None:
+    """Finalize or release claims owned by this attempt."""
+    completed_ids = completed_ids or set()
+    release_ids = release_ids or set()
+    if not completed_ids and not release_ids:
+        return
+
+    data_path, lock_path = _news_dedup_paths()
+    timeout_seconds, poll_seconds, stale_seconds = _news_dedup_lock_settings()
+    now = datetime.now(timezone.utc)
+
+    with shared_data_lock(
+        lock_path,
+        timeout_seconds=timeout_seconds,
+        poll_seconds=poll_seconds,
+        stale_seconds=stale_seconds,
+    ):
+        ids, seen_at, claims = _load_news_dedup_state(data_path)
+        seen_ids = set(ids)
+        claims = _active_news_claims(claims, now)
+
+        for doc_id in completed_ids:
+            claim = claims.get(doc_id)
+            if claim and claim.get("owner") != owner:
+                continue
+            if doc_id not in seen_ids:
+                ids.append(doc_id)
+                seen_ids.add(doc_id)
+            seen_at[doc_id] = now.isoformat()
+            claims.pop(doc_id, None)
+
+        for doc_id in release_ids:
+            claim = claims.get(doc_id)
+            if claim and claim.get("owner") == owner:
+                claims.pop(doc_id, None)
+
+        _write_news_dedup_state(data_path, ids, seen_at, claims)
 
 
 async def _fetch_single_rss(feed_name: str, feed_url: str) -> list[dict]:
@@ -162,6 +397,129 @@ async def _fetch_newsapi(api_key: str) -> list[dict]:
     return docs
 
 
+async def _enqueue_news_docs_for_classification(docs: list[dict]) -> dict[str, object]:
+    """Best-effort classification enqueue after raw ingestion is durable."""
+    from modal_app.classify import doc_queue
+
+    timeout_seconds = _classification_queue_timeout_seconds()
+    try:
+        failures = await asyncio.wait_for(
+            safe_queue_push(doc_queue, docs, "news"),
+            timeout=timeout_seconds,
+        )
+        return {
+            "state": "enqueued" if failures == 0 else "partial_failure",
+            "failures": failures,
+            "timeout_seconds": timeout_seconds,
+        }
+    except TimeoutError:
+        print(f"News classification enqueue timed out after {timeout_seconds:g}s; ingestion state is already persisted")
+        return {
+            "state": "timeout",
+            "failures": len(docs),
+            "timeout_seconds": timeout_seconds,
+        }
+    except Exception as e:
+        print(f"News classification enqueue failed after persistence: {e}")
+        return {
+            "state": "failed",
+            "failures": len(docs),
+            "timeout_seconds": timeout_seconds,
+            "error": str(e),
+        }
+
+
+async def _write_news_doc(doc_data: dict, out_dir) -> dict | None:
+    """Write one raw news document without blocking the event loop."""
+
+    def _write() -> dict:
+        doc = build_document(doc_data)
+        fpath = out_dir / f"{doc.id}.json"
+        if isinstance(fpath, Path):
+            fpath.parent.mkdir(parents=True, exist_ok=True)
+        fpath.write_text(doc.model_dump_json(indent=2))
+        return doc_data
+
+    try:
+        return await asyncio.to_thread(_write)
+    except Exception as e:
+        print(f"News raw write failed for {doc_data.get('id', '<missing-id>')}: {e}")
+        return None
+
+
+async def _persist_news_docs(all_docs: list[dict]) -> int:
+    """Persist raw news docs and durable ingestion state before queueing."""
+    claim_owner, new_docs, claim_stats = await asyncio.to_thread(_claim_news_docs_for_attempt, all_docs)
+    print(
+        "News: "
+        f"{len(all_docs)} fetched, {len(new_docs)} claimed "
+        f"(seen {claim_stats['skipped_seen']}, active claims {claim_stats['skipped_claimed']})"
+    )
+
+    if not new_docs:
+        if claim_stats["skipped_claimed"]:
+            print("News ingester: no unclaimed documents; another attempt is already processing them")
+        else:
+            write_source_status("news", documents_seen=len(all_docs), documents_written=0)
+            await safe_volume_commit(volume, "news")
+            print("News ingester: no new documents")
+        return 0
+
+    ingested_at = datetime.now(timezone.utc).isoformat()
+    for doc_data in new_docs:
+        doc_data["status"] = "raw"
+        metadata = dict(doc_data.get("metadata", {}) or {})
+        metadata.setdefault("ingested_at", ingested_at)
+        doc_data["metadata"] = metadata
+
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M")
+    out_dir = get_raw_data_dir() / "news" / date_str
+    write_results = await gather_with_limit(
+        [_write_news_doc(doc_data, out_dir) for doc_data in new_docs],
+        max_concurrent=_raw_write_concurrency(),
+    )
+    written_docs = [doc for doc in write_results if isinstance(doc, dict)]
+    raw_write_failures = len(new_docs) - len(written_docs)
+    written_ids = {str(doc["id"]) for doc in written_docs if str(doc.get("id", "") or "")}
+    failed_ids = {str(doc["id"]) for doc in new_docs if str(doc.get("id", "") or "")} - written_ids
+
+    if failed_ids:
+        await asyncio.to_thread(_finalize_news_claims, claim_owner, release_ids=failed_ids)
+
+    if not await safe_volume_commit(volume, "news"):
+        print("News ingester: raw documents were written but commit failed before classification enqueue")
+        return 0
+
+    if not written_docs:
+        print(f"News ingester incomplete: 0 documents saved to {out_dir} ({raw_write_failures} raw write failures)")
+        return 0
+
+    enqueue_result = await _enqueue_news_docs_for_classification(written_docs)
+    if enqueue_result.get("state") != "enqueued":
+        print(
+            "News ingester incomplete: classification enqueue did not finish; "
+            "claims will expire for retry"
+        )
+        return 0
+
+    await asyncio.to_thread(_finalize_news_claims, claim_owner, completed_ids=written_ids)
+    write_source_status(
+        "news",
+        documents_seen=len(all_docs),
+        documents_written=len(written_docs),
+        metadata={
+            "classification_queue": enqueue_result,
+            "raw_write_failures": raw_write_failures,
+            "new_documents": len(new_docs),
+        },
+    )
+    await safe_volume_commit(volume, "news")
+
+    failure_suffix = f" ({raw_write_failures} raw write failures)" if raw_write_failures else ""
+    print(f"News ingester complete: {len(written_docs)} documents saved to {out_dir}{failure_suffix}")
+    return len(written_docs)
+
+
 @app.function(
     image=base_image,
     volumes={"/data": volume},
@@ -193,36 +551,4 @@ async def news_ingester():
     except Exception as e:
         print(f"NewsAPI error: {e}")
 
-    # Dedup: skip already-seen documents
-    seen = SeenSet("news")
-    new_docs = [d for d in all_docs if not seen.contains(d["id"])]
-    print(f"News: {len(all_docs)} fetched, {len(new_docs)} new (deduped {len(all_docs) - len(new_docs)})")
-
-    if not new_docs:
-        seen.save()
-        await safe_volume_commit(volume, "news")
-        print("News ingester: no new documents")
-        return 0
-
-    # Save new docs to volume
-    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M")
-    out_dir = Path(RAW_DATA_PATH) / "news" / date_str
-    out_dir.mkdir(parents=True, exist_ok=True)
-    ingested_at = datetime.now(timezone.utc).isoformat()
-
-    for doc_data in new_docs:
-        doc_data["status"] = "raw"
-        doc_data.setdefault("metadata", {})["ingested_at"] = ingested_at
-        doc = build_document(doc_data)
-        fpath = out_dir / f"{doc.id}.json"
-        fpath.write_text(doc.model_dump_json(indent=2))
-        seen.add(doc_data["id"])
-
-    # Push to classification queue
-    from modal_app.classify import doc_queue
-    await safe_queue_push(doc_queue, new_docs, "news")
-
-    seen.save()
-    await safe_volume_commit(volume, "news")
-    print(f"News ingester complete: {len(new_docs)} documents saved to {out_dir}")
-    return len(new_docs)
+    return await _persist_news_docs(all_docs)
