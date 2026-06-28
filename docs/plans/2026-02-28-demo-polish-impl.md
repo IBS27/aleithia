@@ -350,7 +350,7 @@ async def get_trends(neighborhood: str):
 
 **Step 3: Verify backend**
 
-Run: `cd /home/gt120/projects/hackillinois2026 && python -c "from modal_app.web import web_app; print('OK')"`
+Run: `cd /path/to/aleithia && python -c "from modal_app.web import web_app; print('OK')"`
 Expected: OK (no import errors)
 
 **Step 4: Commit**
@@ -717,7 +717,7 @@ Add after the existing imports inside the `if not MODAL_IS_REMOTE` block:
 
 **Step 4: Verify**
 
-Run: `cd /home/gt120/projects/hackillinois2026 && python -c "from modal_app.graph import build_city_graph; print('OK')"`
+Run: `cd /path/to/aleithia && python -c "from modal_app.graph import build_city_graph; print('OK')"`
 Expected: OK
 
 **Step 5: Commit**
@@ -784,7 +784,7 @@ async def get_graph_stats():
 
 **Step 2: Verify**
 
-Run: `cd /home/gt120/projects/hackillinois2026 && python -c "from modal_app.web import web_app; print('OK')"`
+Run: `cd /path/to/aleithia && python -c "from modal_app.web import web_app; print('OK')"`
 Expected: OK
 
 **Step 3: Commit**

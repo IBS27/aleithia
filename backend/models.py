@@ -10,7 +10,7 @@ class UserProfile(Base):
 
     __tablename__ = "user_profiles"
 
-    clerk_user_id = Column(String(255), primary_key=True, index=True)
+    user_id = Column(String(255), primary_key=True, index=True)
     business_type = Column(String(255), nullable=True)
     neighborhood = Column(String(255), nullable=True)
     risk_tolerance = Column(String(50), default="medium", nullable=False)
@@ -28,7 +28,7 @@ class QueryResult(Base):
     __tablename__ = "query_results"
 
     id = Column(Integer, primary_key=True, index=True)
-    clerk_user_id = Column(String(255), index=True, nullable=False)
+    user_id = Column(String(255), index=True, nullable=False)
     business_type = Column(String(255), nullable=False)
     neighborhood = Column(String(255), nullable=False)
     query_text = Column(String(1000), nullable=False)

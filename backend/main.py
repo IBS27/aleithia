@@ -5,11 +5,11 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routes import modal_router, data_router
+from routes import data_router
 from routes.data_routes import prime_route_data_snapshots
 from database import init_db
 
-app = FastAPI(title="HackIllinois 2026 API")
+app = FastAPI(title="Aleithia API")
 
 # Initialize database tables
 init_db()
@@ -22,7 +22,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(modal_router, prefix="/api/modal")
 app.include_router(data_router, prefix="/api/data")
 
 

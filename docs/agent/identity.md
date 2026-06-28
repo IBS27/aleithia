@@ -7,7 +7,7 @@
 - **Tagline:** Democratizing regulatory intelligence for small businesses
 - **Type:** AI-powered regulatory and business intelligence platform
 - **Event:** HackIllinois 2026
-- **Repo:** https://github.com/gt12889/hackillinois2026
+- **Repo:** https://github.com/IBS27/aleithia
 
 ## Tracks & Judging Criteria
 

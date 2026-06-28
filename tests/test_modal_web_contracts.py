@@ -78,7 +78,8 @@ def test_modal_route_ownership_boundaries():
     modal_owned = {"/status", "/gpu-metrics", "/graph/full"}
     backend_owned = {
         "/metrics",
-        "/user/settings",
+        "/user/profile",
+        "/user/queries",
         "/sources",
         "/summary",
         "/geo",

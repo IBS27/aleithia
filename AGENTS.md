@@ -11,7 +11,6 @@
 - CCTV/vision frontend flows should be treated as Modal-owned unless you verify otherwise. The local backend has a `/cctv/timeseries/{neighborhood}` fallback, but Modal owns current CCTV frame/latest, vision, and parking routes. When `ENABLE_CCTV_ANALYSIS=false`, Modal serves synthetic CCTV analytics for counts/timeseries and skips GPU analysis; do not assume those synthetic analytics correspond to a real analyzed frame.
 - Simple read-only routes such as `/sources`, `/summary`, `/geo`, `/news`, `/politics`, `/inspections`, `/permits`, `/licenses`, `/reddit`, `/reviews`, `/realestate`, and `/tiktok` now belong in `backend/`, not `modal_app/`.
 - Status split rule: document/source freshness belongs in `backend/` (`/status`, `/metrics`), while Modal keeps runtime-only status such as GPU/cost reporting (`/status`, `/gpu-metrics`).
-- Actian VectorAI DB is no longer part of the supported `modal_app` architecture. Do not add new `vectordb` wiring, health fields, image config, or Modal discovery imports unless the task explicitly restores that integration.
 - `modal_app/agents.py::regulatory_agent` should be understood as a live-fetch plus cache fallback flow: fetch Legistar and Federal Register inline, deduplicate against raw volume data under `politics/` and `federal_register/`, then optionally write fresh live results back to the volume.
 - Do not add or modify a route in `backend/` if the frontend call is supposed to hit the deployed Modal API. Verify the real owner first.
 - New Modal functions and endpoints must remain discoverable from `modal_app/__init__.py`. If a new module is not imported there, `modal deploy modal_app/__init__.py` may not pick it up.
@@ -31,10 +30,6 @@
 
 ## Known repo hazards
 
-- The real Modal app object is `modal.App("alethia")` in `modal_app/volume.py`, but some legacy code still references other app names. In particular, `backend/routes/modal_routes.py` defaults `MODAL_APP_NAME` to `hackillinois2026` and still mentions `modal/app.py` in an error message. Verify `modal.Function.from_name(...)` usage before changing deployment-related code; the current deploy entrypoint is `modal_app/__init__.py`.
-- Auth was removed from the app, but several database columns, Pydantic models, and frontend types still use the name `clerk_user_id`. Preserve those field names unless the task explicitly includes a contract/schema migration.
-- Product-facing frontend pages and old planning docs may still mention VectorAI DB or VectorDB health/status. Treat live code paths as source of truth and update copy narrowly when it would otherwise become false.
-- Some older docs, scripts, or comments may still mention repo-local runtime data roots. Treat `backend/shared_data.py`, `modal_app/volume.py`, and `tests/test_backend_shared_data.py` as the current source of truth.
 - `backend/database.py` defaults to `sqlite:///./test.db`. Run backend commands from `backend/` or set `DATABASE_URL` explicitly, otherwise SQLite may be created in an unexpected directory.
 
 ## Frontend guidance
@@ -45,10 +40,10 @@
 
 - Preserve JSON key names unless the task explicitly changes the contract.
 - Keep local user resolution compatible with the current unauthenticated flow in `backend/auth.py`: optional `x-user-id` override plus `ALEITHIA_DEFAULT_USER_ID` fallback.
-- User profile/settings/query ownership now lives in `backend/`; do not reintroduce Modal-owned `/user/settings` routes or separate Modal settings storage.
-- If you touch `modal_app/api/routes/core.py`, verify the real emitted contract before adding status fields. `/status` should reflect active pipeline/GPU/cost reporting, not removed VectorDB health metadata.
+- User profile and query ownership lives in `backend/`; do not add separate Modal settings storage.
+- If you touch `modal_app/api/routes/core.py`, verify the real emitted contract before adding status fields. `/status` should reflect active pipeline/GPU/cost reporting.
 - `ENABLE_CCTV_ANALYSIS` is controlled through the Modal secret `alethia-secrets`. If you add or change CCTV env-gated behavior in Modal functions/classes, verify those functions/classes mount that secret before assuming the flag is available everywhere.
-- If you touch `modal_app/agents.py::regulatory_agent`, preserve the non-VectorDB path: concurrent live API fetches, dedup against cached volume docs, cached-freshness reporting, and live-result write-back.
+- If you touch `modal_app/agents.py::regulatory_agent`, preserve concurrent live API fetches, dedup against cached volume docs, cached-freshness reporting, and live-result write-back.
 - When adding or renaming source/document fields, update downstream readers, ranking logic, and tests in the same change.
 
 ## Instructions for writing HTML documents when asked by the user

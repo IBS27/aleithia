@@ -94,7 +94,7 @@ Create `docs/agent/identity.md` with this exact content:
 - **Tagline:** We can't tell you what it is, but we know it's not Palantir.
 - **Type:** Data analysis platform
 - **Event:** HackIllinois 2026
-- **Repo:** https://github.com/gt12889/hackillinois2026
+- **Repo:** https://github.com/IBS27/aleithia
 
 ## Mission
 
@@ -224,7 +224,7 @@ Create `docs/agent/tools.md` with this exact content:
 ## Project Structure
 
 ```
-hackillinois2026/
+aleithia/
 ├── backend/
 │   ├── main.py              # FastAPI app entry point
 │   ├── requirements.txt     # Python dependencies

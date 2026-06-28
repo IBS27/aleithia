@@ -45,7 +45,7 @@ class UserProfileSchema(BaseModel):
 
 
 class UserProfileResponse(UserProfileSchema):
-    clerk_user_id: str
+    user_id: str
     created_at: str
     updated_at: str
 
@@ -60,7 +60,7 @@ class UserQueryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    clerk_user_id: str
+    user_id: str
     query_text: str
     business_type: str
     neighborhood: str
@@ -428,11 +428,11 @@ async def get_user_profile(
     user_id: str = Depends(extract_user_id),
 ):
     """Get user's saved profile settings."""
-    profile = db.query(UserProfile).filter(UserProfile.clerk_user_id == user_id).first()
+    profile = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
     if not profile:
         raise HTTPException(status_code=404, detail="No profile found for user")
     return {
-        "clerk_user_id": profile.clerk_user_id,
+        "user_id": profile.user_id,
         "business_type": profile.business_type,
         "neighborhood": profile.neighborhood,
         "risk_tolerance": profile.risk_tolerance,
@@ -448,9 +448,9 @@ async def update_user_profile(
     user_id: str = Depends(extract_user_id),
 ):
     """Save or update user's profile settings."""
-    profile = db.query(UserProfile).filter(UserProfile.clerk_user_id == user_id).first()
+    profile = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
     if not profile:
-        profile = UserProfile(clerk_user_id=user_id)
+        profile = UserProfile(user_id=user_id)
         db.add(profile)
     
     if payload.business_type is not None:
@@ -464,7 +464,7 @@ async def update_user_profile(
     db.refresh(profile)
     
     return {
-        "clerk_user_id": profile.clerk_user_id,
+        "user_id": profile.user_id,
         "business_type": profile.business_type,
         "neighborhood": profile.neighborhood,
         "risk_tolerance": profile.risk_tolerance,
@@ -481,7 +481,7 @@ async def create_user_query(
 ):
     """Persist a user's query to query history."""
     query = QueryResult(
-        clerk_user_id=user_id,
+        user_id=user_id,
         query_text=payload.query_text,
         business_type=payload.business_type,
         neighborhood=payload.neighborhood,
@@ -493,7 +493,7 @@ async def create_user_query(
 
     return {
         "id": query.id,
-        "clerk_user_id": query.clerk_user_id,
+        "user_id": query.user_id,
         "query_text": query.query_text,
         "business_type": query.business_type,
         "neighborhood": query.neighborhood,
@@ -510,7 +510,7 @@ async def get_user_queries(
     """Get most recent queries for a user."""
     queries = (
         db.query(QueryResult)
-        .filter(QueryResult.clerk_user_id == user_id)
+        .filter(QueryResult.user_id == user_id)
         .order_by(QueryResult.created_at.desc())
         .limit(limit)
         .all()
@@ -519,7 +519,7 @@ async def get_user_queries(
     return [
         {
             "id": query.id,
-            "clerk_user_id": query.clerk_user_id,
+            "user_id": query.user_id,
             "query_text": query.query_text,
             "business_type": query.business_type,
             "neighborhood": query.neighborhood,
@@ -527,26 +527,6 @@ async def get_user_queries(
         }
         for query in queries
     ]
-
-
-# Legacy endpoints for backward compatibility
-@router.get("/user/settings", response_model=UserProfileResponse)
-async def get_user_settings(
-    db: Session = Depends(get_db),
-    user_id: str = Depends(extract_user_id),
-):
-    """Get saved query settings for a user (legacy, use /user/profile)."""
-    return await get_user_profile(db, user_id)
-
-
-@router.put("/user/settings", response_model=UserProfileResponse)
-async def put_user_settings(
-    payload: UserProfileSchema,
-    db: Session = Depends(get_db),
-    user_id: str = Depends(extract_user_id),
-):
-    """Save last queried settings for a user (legacy, use /user/profile)."""
-    return await update_user_profile(payload, db, user_id)
 
 
 @router.get("/sources")

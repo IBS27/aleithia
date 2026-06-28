@@ -87,7 +87,7 @@ async function fetchBackendJSON<T>(path: string, init?: RequestInit, options?: F
 }
 
 export interface SavedSettings {
-  clerk_user_id: string
+  user_id: string
   business_type: string | null
   neighborhood: string | null
   risk_tolerance: string
@@ -97,7 +97,7 @@ export interface SavedSettings {
 
 export interface UserQuery {
   id: number
-  clerk_user_id: string
+  user_id: string
   query_text: string
   business_type: string
   neighborhood: string
