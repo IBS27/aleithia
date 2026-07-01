@@ -24,6 +24,7 @@ import ProfilePage from './ProfilePage.tsx'
 import LoadingFlow from './LoadingFlow.tsx'
 import { InspectionOutcomesChart, TopViolationsPareto, AlertHoursStackedArea } from './VaultCharts.tsx'
 import { dedupeNews, dedupePolicy } from '../feedDedup.ts'
+import { notifyAnalysisCompletion, requestAnalysisNotificationPermission } from '../notifications.ts'
 
 type Tab = 'overview' | 'command' | 'regulatory' | 'intel' | 'community' | 'market' | 'vision' | 'evidence'
 
@@ -287,6 +288,10 @@ function fallbackSocialTrends(data: NeighborhoodData, profile: UserProfile): Soc
   return trends.slice(0, 3)
 }
 
+function toErrorMessage(value: unknown): string {
+  return value instanceof Error ? value.message : String(value)
+}
+
 interface Props {
   profile: UserProfile
   onReset: () => void
@@ -317,9 +322,6 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
   const sourcesRetryTimeoutRef = useRef<number | null>(null)
 
   const refreshData = async () => {
-    const toErrorMessage = (value: unknown) =>
-      value instanceof Error ? value.message : String(value)
-
     if (sourcesRetryTimeoutRef.current !== null) {
       window.clearTimeout(sourcesRetryTimeoutRef.current)
       sourcesRetryTimeoutRef.current = null
@@ -357,18 +359,44 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
       setRiskScore(computeRiskScore(neighborhood, profile))
       setError(null)
       setLoading(false)
+      notifyAnalysisCompletion({
+        workflow: 'analysis',
+        status: 'success',
+        neighborhood: profile.neighborhood,
+        businessType: profile.business_type,
+      })
 
       fetchTrends(profile.neighborhood).then(t => setTrends(t)).catch(() => {})
     } catch (err) {
       setNeighborhoodData(null)
       setRiskScore(null)
       setTrends(null)
-      setError(`Neighborhood data: ${toErrorMessage(err)}`)
+      const message = toErrorMessage(err)
+      setError(`Neighborhood data: ${message}`)
       setLoading(false)
+      notifyAnalysisCompletion({
+        workflow: 'analysis',
+        status: 'error',
+        neighborhood: profile.neighborhood,
+        businessType: profile.business_type,
+        detail: message,
+      })
       return
     }
 
     void loadSources()
+  }
+
+  const handleRefresh = () => {
+    requestAnalysisNotificationPermission()
+    void refreshData()
+  }
+
+  const handleRetry = () => {
+    requestAnalysisNotificationPermission()
+    setError(null)
+    setLoading(true)
+    void refreshData()
   }
 
   useEffect(() => {
@@ -405,17 +433,33 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
 
     api.socialTrends(profile.neighborhood, profile.business_type)
       .then((data) => {
-        if (!cancelled) setSocialTrends(data.trends.length > 0 ? data.trends : fallbackSocialTrends(neighborhoodData, profile))
+        if (!cancelled) {
+          setSocialTrends(data.trends.length > 0 ? data.trends : fallbackSocialTrends(neighborhoodData, profile))
+          notifyAnalysisCompletion({
+            workflow: 'social-trends',
+            status: 'success',
+            neighborhood: profile.neighborhood,
+            businessType: profile.business_type,
+          })
+        }
       })
       .catch((err) => {
         if (!cancelled) {
+          const message = toErrorMessage(err)
           const fallback = fallbackSocialTrends(neighborhoodData, profile)
           if (fallback.length > 0) {
             setSocialTrends(fallback)
             setSocialError(null)
           } else {
-            setSocialError(err instanceof Error ? err.message : 'Failed to load social trends')
+            setSocialError(message || 'Failed to load social trends')
           }
+          notifyAnalysisCompletion({
+            workflow: 'social-trends',
+            status: 'error',
+            neighborhood: profile.neighborhood,
+            businessType: profile.business_type,
+            detail: fallback.length > 0 ? `${message}; showing available local social signals.` : message,
+          })
         }
       })
       .finally(() => {
@@ -522,7 +566,7 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
             </div>
             <div className="flex items-stretch">
               <button
-                onClick={refreshData}
+                onClick={handleRefresh}
                 className="h-full px-4 border-l border-white/[0.06] text-[10px] font-mono uppercase tracking-wider text-white/35 hover:text-white hover:bg-white/[0.03] transition-colors cursor-pointer"
               >
                 Refresh
@@ -551,7 +595,7 @@ export default function Dashboard({ profile, onReset, onProfileUpdate, initialPr
             Modal API: {API_BASE} · Backend API: {BACKEND_API_BASE} — Restart dev server after changing <code className="bg-white/10 px-1">frontend/.env</code>. Deploy: <code className="bg-white/10 px-1">modal deploy modal_app/__init__.py</code>
           </p>
           <button
-            onClick={() => { setError(null); setLoading(true); refreshData() }}
+            onClick={handleRetry}
             className="mt-2 px-3 py-1.5 text-[10px] font-medium border border-white/20 text-white/70 hover:text-white hover:border-white/40 transition-colors cursor-pointer"
           >
             Retry

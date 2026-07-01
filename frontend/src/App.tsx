@@ -9,6 +9,7 @@ import ProfilePage from './components/ProfilePage.tsx'
 import Drawer from './components/Drawer.tsx'
 import WhyUs from './components/WhyUs.tsx'
 import LeadAnalystPage from './components/LeadAnalystPage.tsx'
+import { requestAnalysisNotificationPermission } from './notifications.ts'
 
 // Lazy-load pages that import @supermemory/memory-graph (its CSS has a global
 // button reset that conflicts with Tailwind's bg-white utility)
@@ -22,6 +23,7 @@ function App() {
   const navigate = useNavigate()
 
   const handleProfileSubmit = async (p: UserProfile) => {
+    requestAnalysisNotificationPermission()
     setProfile(p)
     setSessionDrawerOpen(false)
     navigate('/analysis')
